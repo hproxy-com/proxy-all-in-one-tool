@@ -1,0 +1,29 @@
+[package]
+name = "hproxy-relay"
+description = "Makes an authenticated proxy usable from software that cannot log in to one: listens on localhost with no password and forwards upstream with the credentials attached."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "hproxy_relay"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hproxy-relay"
+path = "src/main.rs"
+
+[dependencies]
+# Kept deliberately small. This binary is downloaded and run by customers on
+# their own machines, so every crate in its tree is one we are asking them to
+# trust. The HTTP and SOCKS5 framing is a few dozen lines each and lives here.
+hproxy-probe = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Free-pool mode talks to hproxy.com/api/vpn/*, which is HTTPS, and hand-rolling
+# TLS is not a thing anyone should do. Lean rustls feature set, no OpenSSL.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "socks"] }
