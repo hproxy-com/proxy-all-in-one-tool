@@ -1,0 +1,13 @@
+# Build output (store zips)
+dist/
+
+# Chrome regenerates this when the unpacked extension is loaded
+_metadata/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+
+# Research notes and any competitor material stay out of this public
+# repository entirely; the written analysis is kept privately.
+research/
