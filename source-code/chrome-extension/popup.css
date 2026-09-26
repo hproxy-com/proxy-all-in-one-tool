@@ -1,0 +1,1380 @@
+/* The HProxy popup in the desktop app's look (2026-09-24): the Connect card on
+   top, filled surfaces without borders, and every control you press carrying
+   the H's corners (round where the crossbar is round, square where it meets
+   the stems). DM Sans only; elevation is blue-tinted, never grey.
+
+   ⛔ THIS FILE DECLARES NO COLOURS OF ITS OWN. Every colour comes from
+   tokens.css, which is GENERATED from the website's app/globals.css by
+   scripts/sync-tokens.mjs and regenerated on every build. The greys the app
+   uses (raised, well, track) are mixed below from those tokens, never typed.
+
+   That rule is not stylistic. This file used to declare its own copy of the
+   palette, and on 2026-07-31 the website retuned its three status colours for
+   WCAG AA while the copy here kept the old ones. A copy cannot receive a fix.
+   So: no hex literals, and no hand-typed rgba() triples (those are copies
+   too). Use rgba(var(--digi-rgb), 0.07) and friends. White is the one
+   exception, as it is no brand decision.
+
+   Light only, on purpose (decided 2026-07-23): `color-scheme: light` lives in
+   tokens.css and stops the browser darkening inputs on a dark system.
+
+   The type ruler (scripts/verify-design.mjs): 10, 11, 12, 13, 13.5 and 15 px.
+   Anything else says why on its own line (`ruler-exempt:`). */
+
+:root {
+  /* The app's greys, mixed from the tokens. */
+  --raised: color-mix(in srgb, var(--ink) 6%, var(--surface));
+  --well: color-mix(in srgb, var(--ink) 3.5%, var(--surface));
+  --track: color-mix(in srgb, var(--ink) 15%, var(--surface));
+  --knob-mark: var(--ink-soft);
+  --divider: var(--hairline);
+  --route-dot: var(--digi);
+  --card-shadow: 0 1px 2px rgba(var(--ink-rgb), 0.05), 0 16px 34px -22px rgba(var(--digi-night-rgb), 0.45),
+    0 0 0 1px rgba(var(--ink-rgb), 0.06);
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+}
+/* The popup is as wide as its page. Once the lists outgrow Chrome's 600 px
+   the page scrolls, and a scrollbar taken out of a fixed-width body pushed
+   the right edge off screen with a sideways scrollbar under it. So the
+   scrollbar's room is kept from the start and nothing scrolls sideways. */
+html {
+  width: 384px;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--ink-rgb), 0.25) transparent;
+}
+body {
+  font: 450 13px/1.5 "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--ink);
+  background: var(--canvas);
+  /* No -webkit-font-smoothing:antialiased (it thins DM Sans on 1080p Windows). */
+}
+@font-face {
+  font-family: "DM Sans";
+  src: url("fonts/DMSans-Variable.woff2") format("woff2");
+  font-weight: 100 1000;
+  font-display: swap;
+}
+button {
+  font: inherit;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   THE CONNECTION CARD
+
+   The app's card (desktop-app/src/components/connect/ConnectionCard.tsx):
+   the state in words, the switch top right, and the route from this browser
+   through the H to the exit. `.conn` carries data-phase (off, connecting,
+   on, rotating) and data-failing; popup.js sets them.
+
+   Connecting, a light runs round the H's edge and dashes flow along the
+   route. Connected: the H fills from its middle and pops, one ring leaves
+   it, the lines light outward from it, the card turns blue spreading from
+   the H (--hub-x/--hub-y, measured by popup.js), takes the H's corners and
+   gives a small thump; then a slow ping says it is live. A failing
+   connection drops back to the plain card, so the decoration never claims
+   more than the connection does.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.conn {
+  position: relative;
+  isolation: isolate;
+  padding: 12px 12px 0;
+}
+/* Its own layer, so the blue can sit between the card and its words. */
+.card {
+  position: relative;
+  z-index: 0;
+  overflow: clip;
+  padding: 16px 16px 12px;
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--card-shadow);
+  transition:
+    box-shadow 600ms ease,
+    border-radius 700ms cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.words {
+  min-width: 0;
+  flex: 1;
+}
+
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ok);
+  transition: color 300ms ease;
+}
+.live > i {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: breathe 2.4s ease-in-out infinite;
+}
+.conn[data-phase="off"] .live {
+  color: var(--ink-soft);
+}
+.conn[data-phase="off"] .live > i {
+  background: var(--ink-soft);
+  animation: none;
+}
+.conn:is([data-phase="connecting"], [data-phase="rotating"], [data-failing]) .live {
+  color: var(--warn);
+}
+.conn:is([data-phase="connecting"], [data-phase="rotating"], [data-failing]) .live > i {
+  background: var(--warn);
+  animation: pulse-warn 900ms ease-out infinite;
+}
+
+.head {
+  margin-top: 4px;
+  font-size: 22px; /* ruler-exempt: the connection card's title, the app's own title size fitted to the popup */
+  font-weight: 750;
+  line-height: 1.15;
+  letter-spacing: -0.024em;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.conn:not([data-phase="on"]) .head {
+  color: var(--ink-mute);
+}
+.sub {
+  margin-top: 3px;
+  min-height: 18px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-mute);
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+/* A changed line fades up (popup.js replays it). */
+.head.is-new,
+.sub.is-new {
+  animation: fade-up 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* The switch: not a round knob on a pill (that one is Apple's) but a cut
+   knob carrying the H, which slides across and lights up blue. */
+.switch {
+  position: relative;
+  width: 64px;
+  height: 36px;
+  flex: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 13px 4px 13px 4px;
+  background-color: var(--track);
+  transition:
+    background-color 220ms ease,
+    box-shadow 220ms ease;
+}
+.switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(var(--digi-rgb), 0.4);
+}
+.switch.is-on {
+  background-color: var(--digi);
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 50%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 10px 22px -12px var(--digi);
+}
+.switch .knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px 3px 10px 3px;
+  background: #fff;
+  color: var(--knob-mark);
+  box-shadow: 0 2px 6px rgba(var(--digi-night-rgb), 0.28);
+  transition:
+    transform 480ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    color 220ms ease;
+}
+.switch.is-on .knob {
+  transform: translateX(28px);
+  color: var(--digi);
+}
+.switch .knob svg {
+  width: 11px;
+  height: 13px;
+  fill: currentColor;
+}
+/* Busy (connecting, finding a new exit): stripes run across the track. */
+.switch.is-busy {
+  background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.22) 0 6px, rgba(255, 255, 255, 0) 6px 12px);
+  background-size: 17px 17px;
+  animation: busy 600ms linear infinite;
+}
+.switch:active:not(:disabled) .knob {
+  scale: 1.14 0.88;
+}
+
+/* This browser, through the H, out of the exit: the route. */
+.route {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.route .end {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.route .end > svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.route .end .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* This browser is its picture alone (the word is its tooltip): the H and
+   the name of where traffic comes out need the room, 328 px across. */
+.route .end:not(.exit) .name {
+  display: none;
+}
+.route .exit {
+  max-width: 44%;
+  transition:
+    opacity 300ms ease,
+    filter 300ms ease,
+    color 350ms ease 120ms;
+}
+.conn[data-phase="off"] .route .exit {
+  opacity: 0.6;
+}
+.conn[data-phase="on"] .route .exit {
+  color: var(--ink);
+}
+.exit-flag {
+  display: inline-grid;
+  flex: none;
+}
+.exit-flag:empty {
+  display: none;
+}
+.exit-flag img,
+.exit-flag svg {
+  display: block;
+  width: 18px;
+  height: 13px;
+  border-radius: 2px;
+}
+.exit-flag svg {
+  width: 15px;
+  height: 15px;
+  border-radius: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.exit-flag.arrived {
+  animation: flag-pop 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* The track stays dashed until something runs on it. */
+.wire {
+  position: relative;
+  flex: 1;
+  min-width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: repeating-linear-gradient(90deg, var(--raised) 0 5px, transparent 5px 9px);
+}
+.wire > i {
+  position: absolute;
+  inset: 0;
+  border-radius: 1px;
+  background: var(--digi);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 650ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* The left line lights from the H outward, like the right one. */
+.wire.left > i {
+  transform-origin: right;
+}
+.conn:is([data-phase="connecting"], [data-phase="rotating"], [data-phase="on"]) .wire > i {
+  transform: scaleX(1);
+}
+/* While connecting or finding a new exit, dashes flow toward the exit. */
+.conn[data-phase="connecting"] .wire > i,
+.conn[data-phase="rotating"] .wire.right > i {
+  background: repeating-linear-gradient(90deg, var(--digi) 0 7px, rgba(var(--digi-rgb), 0.25) 7px 12px);
+  animation: flow 480ms linear infinite;
+}
+.conn[data-phase="on"]:not([data-failing]) .wire > i {
+  animation: wire-light 700ms cubic-bezier(0.16, 1, 0.3, 1) 120ms both;
+}
+.conn[data-failing] .wire.right > i {
+  background: repeating-linear-gradient(90deg, var(--warn) 0 7px, transparent 7px 12px);
+}
+.wire > b {
+  position: absolute;
+  top: -2px;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--route-dot);
+  box-shadow: 0 0 8px 2px rgba(var(--digi-rgb), 0.9);
+  opacity: 0;
+}
+/* Connected: a light keeps running from this browser, through the H, out. */
+.conn[data-phase="on"]:not([data-failing]) .wire > b {
+  animation: travel 2.2s linear infinite;
+}
+.conn[data-phase="on"] .wire.left > b {
+  animation-delay: 500ms;
+}
+.conn[data-phase="on"] .wire.right > b {
+  animation-delay: 1.6s;
+}
+
+/* The H: a button. Dashed edge when off, a light running round it while
+   connecting, filled when connected. .hbutton around it never moves, the
+   face (.hface) presses and pops. */
+.hbutton {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.hface {
+  --cut-big: 18px;
+  --cut-small: 6px;
+  position: relative;
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  border-radius: var(--cut-big) var(--cut-small) var(--cut-big) var(--cut-small);
+  color: var(--ink-soft);
+  background: var(--raised);
+  transition:
+    color 300ms ease,
+    background-color 300ms ease,
+    box-shadow 400ms ease,
+    translate 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hface > svg {
+  position: relative;
+  width: 18px;
+  height: 21px;
+  fill: currentColor;
+}
+.hface:disabled {
+  cursor: default;
+}
+.hface:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(var(--digi-rgb), 0.4);
+}
+.hface > .fill,
+.hface > .edge,
+.hface > .wave,
+.hface > .ping {
+  position: absolute;
+  pointer-events: none;
+}
+.hface > .fill {
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(155deg, var(--digi-light) 0%, var(--digi) 50%, var(--digi-deep) 100%);
+  clip-path: circle(0% at 50% 50%);
+  transition: clip-path 520ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hface > .edge,
+.hface > .wave,
+.hface > .ping {
+  inset: -5px;
+  border-radius: calc(var(--cut-big) + 5px) calc(var(--cut-small) + 5px) calc(var(--cut-big) + 5px) calc(var(--cut-small) + 5px);
+}
+.hface > .edge {
+  border: 1.5px dashed rgba(var(--ink-rgb), 0.2);
+  transition: border-color 300ms ease;
+}
+.hface > .wave,
+.hface > .ping {
+  border: 2px solid var(--digi);
+  opacity: 0;
+}
+.conn[data-phase="off"] .hface:not(:disabled):hover {
+  color: var(--digi);
+  translate: 0 -1px;
+}
+.conn[data-phase="off"] .hface:not(:disabled):hover > .edge {
+  border-color: rgba(var(--digi-rgb), 0.6);
+}
+.hface:active:not(:disabled) {
+  scale: 0.9;
+  transition: scale 90ms ease-out;
+}
+
+/* Connecting, or finding a new exit: a light runs round the edge. The edge
+   becomes a 2 px frame (the mask keeps only the padding) with a turning
+   gradient behind it. */
+@property --sweep {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+.conn:is([data-phase="connecting"], [data-phase="rotating"]) .hface {
+  color: var(--digi);
+}
+.conn:is([data-phase="connecting"], [data-phase="rotating"]) .hface > svg {
+  animation: h-wait 900ms ease-in-out infinite alternate;
+}
+.conn:is([data-phase="connecting"], [data-phase="rotating"]) .hface > .edge {
+  border: 0;
+  padding: 2px;
+  background: conic-gradient(from var(--sweep), transparent 0deg 190deg, var(--digi) 340deg, transparent 360deg);
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box exclude,
+    linear-gradient(#fff 0 0);
+  animation: sweep 1s linear infinite;
+}
+
+/* Connected: filled from the middle, the H popping in, a ring leaving once,
+   then the slow ping. On the blue card the face is white with a blue H. */
+.conn:is([data-phase="on"], [data-phase="rotating"]):not([data-failing]) .hface > .fill {
+  clip-path: circle(75% at 50% 50%);
+}
+.conn:is([data-phase="on"], [data-phase="rotating"]):not([data-failing]) .hface {
+  color: #fff;
+  box-shadow: 0 14px 28px -14px rgba(var(--digi-rgb), 0.85);
+}
+.conn[data-phase="on"]:not([data-failing]) .hface {
+  color: var(--digi);
+  box-shadow: 0 16px 30px -14px rgba(var(--digi-night-rgb), 0.55);
+}
+.conn[data-phase="on"]:not([data-failing]) .hface > .fill {
+  background: #fff;
+}
+.conn[data-phase="on"]:not([data-failing]) .hface > svg {
+  animation: h-pop 640ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.conn[data-phase="on"]:not([data-failing]) .hface > .edge {
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.45);
+}
+.conn[data-phase="on"]:not([data-failing]) .hface > .wave {
+  border-color: #fff;
+  animation: hface-wave 900ms cubic-bezier(0.2, 0.7, 0.3, 1) 80ms both;
+}
+.conn[data-phase="on"]:not([data-failing]) .hface > .ping {
+  border-width: 1.5px;
+  border-color: #fff;
+  animation: hface-ping 3.4s cubic-bezier(0.2, 0.6, 0.3, 1) 1.4s infinite;
+}
+/* Up but not answering: the H and its edge in the warning colour, no fill. */
+.conn[data-failing] .hface {
+  color: var(--warn);
+}
+.conn[data-failing] .hface > .edge {
+  border-color: rgba(var(--warn-rgb), 0.7);
+}
+
+/* The blue card: the whole card turns HProxy blue, spreading out from the
+   H, with the H itself large and faint in the corner. Everything on it
+   reads white. */
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 26'%3E%3Cg fill='white' opacity='.1'%3E%3Cpath d='M0 0V0C3.98547 0 7.21633 3.23086 7.21633 7.21633V26H0V0Z'/%3E%3Crect x='14.2188' width='7.21633' height='26'/%3E%3Cpath d='M7.2349 26H0V15.9714C0 12.4548 2.85076 9.60408 6.36735 9.60408H14.2204V0H21.4367V10.4531C21.4367 13.9696 18.586 16.8204 15.0694 16.8204H7.2349V26Z'/%3E%3C/g%3E%3C/svg%3E")
+      right -30px bottom -62px / 176px auto no-repeat,
+    linear-gradient(155deg, var(--digi-light) 0%, var(--digi) 50%, var(--digi-deep) 100%);
+  clip-path: circle(0% at var(--hub-x, 50%) var(--hub-y, 70%));
+  transition: clip-path 650ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* Going back, the blue drains into the H faster than it spread, so words
+   turning dark never sit on blue. */
+.conn:not([data-phase="on"]) .card::before {
+  transition-duration: 380ms;
+  transition-timing-function: cubic-bezier(0.55, 0, 0.45, 1);
+}
+.card .head,
+.card .sub,
+.card .route,
+.card .card-foot {
+  transition: color 350ms ease 120ms;
+}
+.conn[data-phase="on"]:not([data-failing]) .card {
+  --ink: #fff;
+  --ink-mute: rgba(255, 255, 255, 0.84);
+  --ink-soft: rgba(255, 255, 255, 0.7);
+  --ok: #fff;
+  --raised: rgba(255, 255, 255, 0.3);
+  --divider: rgba(255, 255, 255, 0.22);
+  --route-dot: #fff;
+  border-radius: 28px 9px 28px 9px;
+  box-shadow: 0 16px 36px -22px rgba(var(--digi-rgb), 0.75);
+  animation: card-thump 620ms cubic-bezier(0.34, 1.56, 0.64, 1) 60ms both;
+}
+.conn[data-phase="on"]:not([data-failing]) .card::before {
+  clip-path: circle(150% at var(--hub-x, 50%) var(--hub-y, 70%));
+}
+.conn[data-phase="on"]:not([data-failing]) .wire > i {
+  background: rgba(255, 255, 255, 0.92);
+}
+.conn[data-phase="on"]:not([data-failing]) .wire > b {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+}
+.conn[data-phase="on"]:not([data-failing]) .switch.is-on {
+  background-color: rgba(255, 255, 255, 0.24);
+  background-image: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+.conn[data-phase="on"]:not([data-failing]) .link-btn {
+  color: #fff;
+}
+
+.card-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--divider);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-mute);
+}
+.foot-text {
+  min-width: 0;
+  flex: 1;
+}
+.card-foot .link-btn[hidden] {
+  display: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   UNDER THE CARD: where to connect
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* The two places, as the app's segmented tabs: a filled track, the chosen
+   one a white chip that lifts. */
+.seg {
+  display: flex;
+  gap: 4px;
+  margin: 12px 12px 0;
+  padding: 4px;
+  border-radius: 14px 5px 14px 5px;
+  background: var(--well);
+}
+.seg-btn {
+  flex: 1;
+  border: 0;
+  padding: 7px 10px;
+  border-radius: 10px 3px 10px 3px;
+  background: transparent;
+  color: var(--ink-mute);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+.seg-btn:hover:not(.is-on) {
+  color: var(--ink);
+}
+.seg-btn.is-on {
+  background: var(--surface);
+  color: var(--digi);
+  box-shadow:
+    0 1px 2px rgba(var(--ink-rgb), 0.06),
+    0 6px 14px -10px rgba(var(--digi-night-rgb), 0.45);
+}
+
+.search {
+  padding: 10px 12px 0;
+}
+.input {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--well);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  transition:
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+}
+.input::placeholder {
+  color: var(--ink-soft);
+}
+.input:focus {
+  background: var(--surface);
+  box-shadow: 0 0 0 2px rgba(var(--digi-rgb), 0.5);
+}
+
+.panel {
+  padding: 2px 12px 6px;
+}
+/* A small label in our blue, as on the app's tiles. */
+.field-label {
+  display: block;
+  margin: 14px 2px 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--digi);
+}
+.connect-row {
+  display: flex;
+  gap: 8px;
+}
+.connect-row .input {
+  min-width: 0;
+  flex: 1;
+}
+
+.list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16px 2px 7px;
+}
+/* The `hidden` attribute must win over display:flex (author display beats the
+   UA's [hidden] rule), or the Favorites head shows with no favorites. */
+.list-head[hidden] {
+  display: none;
+}
+.list-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--digi);
+}
+.link-btn {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--digi);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 150ms ease;
+}
+.link-btn:hover {
+  opacity: 0.7;
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.hint {
+  margin: 4px 2px;
+  color: var(--ink-mute);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/* A saved proxy: a filled row, no border; the one in use is outlined blue. */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 9px 9px 12px;
+  border-radius: 12px 4px 12px 4px;
+  background: var(--well);
+  transition: background-color 160ms ease;
+}
+.row:hover {
+  background: var(--raised);
+}
+.row.is-active {
+  background: rgba(var(--digi-rgb), 0.07);
+  box-shadow: inset 0 0 0 1.5px rgba(var(--digi-rgb), 0.5);
+}
+.row .flag {
+  width: 20px;
+  height: 15px;
+  flex: none;
+  border-radius: 3px;
+  object-fit: cover;
+}
+.row-main {
+  min-width: 0;
+  flex: 1;
+}
+.row-addr {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-addr .port {
+  color: var(--ink-mute);
+  font-weight: 500;
+}
+.row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  color: var(--ink-mute);
+  font-size: 12px;
+  font-weight: 500;
+}
+.tag {
+  padding: 1px 7px;
+  border-radius: 6px 2px 6px 2px;
+  background: var(--raised);
+  color: var(--ink-mute);
+  font-size: 10px;
+  font-weight: 700;
+}
+.tag--stable {
+  background: rgba(var(--ok-rgb), 0.12);
+  color: var(--ok);
+}
+.row-acts {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Buttons carry the H's corners. */
+.btn {
+  height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 10px 3px 10px 3px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    box-shadow 150ms ease,
+    color 150ms ease,
+    opacity 150ms ease;
+}
+.btn--sm {
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 9px 3px 9px 3px;
+  font-size: 12px;
+}
+.btn--primary {
+  background: var(--digi);
+  color: #fff;
+  box-shadow: 0 8px 18px -10px rgba(var(--digi-rgb), 0.8);
+}
+.btn--primary:hover {
+  background: var(--digi-deep);
+}
+.btn--ghost {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.btn--ghost:hover {
+  color: var(--digi);
+  box-shadow: inset 0 0 0 1px rgba(var(--digi-rgb), 0.4);
+}
+.btn--dark {
+  background: var(--ink);
+  color: #fff;
+}
+.btn:active:not(:disabled) {
+  scale: 0.96;
+}
+.btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.msg {
+  margin: 10px 2px 0;
+  padding: 9px 12px;
+  border-radius: 12px 4px 12px 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  animation: panel-in 200ms ease both;
+}
+.msg[hidden] {
+  display: none;
+}
+.msg.ok {
+  background: rgba(var(--ok-rgb), 0.1);
+  color: var(--ok);
+}
+.msg.bad {
+  background: rgba(var(--danger-rgb), 0.1);
+  color: var(--danger);
+}
+.msg.info {
+  background: rgba(var(--digi-rgb), 0.08);
+  color: var(--digi-deep);
+}
+
+/* Favorite stars in the brand blue, not amber (blue system only). */
+.star {
+  border: 0;
+  padding: 2px;
+  background: transparent;
+  color: var(--bar);
+  font-size: 17px; /* ruler-exempt: sizes a star glyph as an icon, not reading copy */
+  line-height: 1;
+  cursor: pointer;
+}
+.star.on {
+  color: var(--digi);
+}
+
+/* Quick Connect, at the top of the free list: the one blue block below the
+   card, with the H's corners. */
+.quick-btn {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 2px;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 14px 5px 14px 5px;
+  background: linear-gradient(155deg, var(--digi-light) 0%, var(--digi) 55%, var(--digi-deep) 100%);
+  color: #fff;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 14px 28px -16px rgba(var(--digi-rgb), 0.8);
+  transition:
+    box-shadow 200ms ease,
+    background 300ms ease;
+}
+.quick-btn:active {
+  scale: 0.985;
+}
+.quick-bolt {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  flex: none;
+  place-items: center;
+  border-radius: 10px 3px 10px 3px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.quick-bolt svg {
+  width: 16px;
+  height: 16px;
+  fill: #fff;
+}
+.quick-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+.quick-main {
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+.quick-sub {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  font-weight: 500;
+}
+.quick-btn .crow-go {
+  color: rgba(255, 255, 255, 0.85);
+}
+/* Connected through it: the block turns ink, and says Disconnect. Green is a
+   status colour on this brand, never a button surface. */
+.quick-btn.is-connected {
+  background: var(--ink);
+  box-shadow: 0 14px 30px -18px rgba(var(--digi-night-rgb), 0.5);
+}
+.quick-btn.is-busy {
+  animation: pulse-btn 1.1s ease-in-out infinite;
+}
+
+/* A country: a filled row, the flag, the name and its count of free IPs. */
+.crow {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 10px 9px 12px;
+  border-radius: 12px 4px 12px 4px;
+  background: var(--well);
+  cursor: pointer;
+  transition: background-color 160ms ease;
+  animation: crow-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 22ms);
+}
+.crow:hover {
+  background: var(--raised);
+}
+.crow:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--digi-rgb), 0.5);
+}
+.crow .flag {
+  width: 22px;
+  height: 16px;
+  flex: none;
+  border-radius: 3px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px rgba(var(--ink-rgb), 0.05);
+}
+/* Flag stub for the rare row without a country: a quiet swatch. */
+.flag--none {
+  display: inline-block;
+  width: 22px;
+  height: 16px;
+  flex: none;
+  border-radius: 3px;
+  background: var(--bar);
+}
+/* The name and its count on one line, so more countries fit. */
+.crow-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+}
+.crow-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crow-meta {
+  color: var(--ink-mute);
+  font-size: 12px;
+  font-weight: 500;
+}
+.crow-star {
+  padding: 2px 4px;
+  border-radius: 8px;
+  color: var(--bar);
+  font-size: 16px; /* ruler-exempt: a star glyph as an icon, one step down from .star to sit in a row */
+  line-height: 1;
+  transition:
+    color 150ms ease,
+    transform 150ms ease;
+}
+.crow-star:hover {
+  transform: scale(1.15);
+}
+.crow-star.on {
+  color: var(--digi);
+}
+.crow-go {
+  width: 20px;
+  flex: none;
+  color: var(--ink-soft);
+  font-weight: 700;
+  text-align: center;
+  transition:
+    color 150ms ease,
+    transform 150ms ease;
+}
+.crow:hover .crow-go {
+  color: var(--digi);
+  transform: translateX(2px);
+}
+.crow--active {
+  background: rgba(var(--digi-rgb), 0.07);
+  box-shadow: inset 0 0 0 1.5px rgba(var(--digi-rgb), 0.5);
+}
+.crow--active .crow-go {
+  color: var(--digi);
+}
+.crow--connecting {
+  box-shadow: inset 0 0 0 1.5px rgba(var(--digi-rgb), 0.3);
+}
+.spin {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  vertical-align: -2px;
+  border: 2px solid rgba(var(--digi-rgb), 0.25);
+  border-top-color: var(--digi);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   THE ANALYZER
+
+   A quiet ledger: status carried by a dot and by type weight, one hairline
+   between checks. No bordered box per row, on purpose and permanently: a
+   grid of bordered rectangles reads as generated, and a security verdict is
+   the last place that should look automated.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.analyze {
+  padding: 0;
+}
+/* The one line that answers "am I fine", coloured by its status. */
+.verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 2px 11px;
+}
+.verdict-head {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.verdict-sub {
+  color: var(--ink-mute);
+  font-size: 12px;
+  font-weight: 500;
+}
+.verdict[data-status="ok"] .verdict-head {
+  color: var(--ok);
+}
+.verdict[data-status="warn"] .verdict-head {
+  color: var(--warn);
+}
+.verdict[data-status="bad"] .verdict-head {
+  color: var(--danger);
+}
+.verdict[data-status="unknown"] .verdict-head {
+  color: var(--ink);
+}
+.verdict[data-status="skip"] .verdict-head {
+  color: var(--ink-mute);
+}
+.analyze[data-state="running"] .verdict-head {
+  color: var(--ink-mute);
+}
+.arow {
+  display: grid;
+  grid-template-columns: 9px 1fr auto;
+  grid-template-areas:
+    "dot main value"
+    ". detail state";
+  align-items: baseline;
+  gap: 2px 10px;
+  padding: 10px 2px;
+  border-top: 1px solid var(--hairline);
+}
+.arow-dot {
+  grid-area: dot;
+  width: 7px;
+  height: 7px;
+  align-self: center;
+  border-radius: 50%;
+  background: var(--bar);
+}
+.arow[data-status="ok"] .arow-dot {
+  background: var(--ok);
+}
+.arow[data-status="warn"] .arow-dot {
+  background: var(--warn);
+}
+.arow[data-status="bad"] .arow-dot {
+  background: var(--danger);
+}
+.arow[data-status="unknown"] .arow-dot {
+  background: var(--bar);
+  box-shadow: inset 0 0 0 2px var(--surface);
+}
+.arow-label {
+  grid-area: main;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.arow-value {
+  grid-area: value;
+  max-width: 172px;
+  overflow: hidden;
+  color: var(--ink-mute);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Two lines, then an ellipsis, with the whole text on hover: some details are
+   a paragraph on why a check could not run. */
+.arow-detail {
+  grid-area: detail;
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-mute);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+/* Shown only when there is something to act on, so a healthy column stays
+   quiet. The dot carries status for every row and is labelled, so nothing
+   here is encoded in colour alone. */
+.arow-state {
+  grid-area: state;
+  align-self: center;
+  color: var(--ink-mute);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-align: right;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.arow[data-status="ok"] .arow-state {
+  color: var(--ok);
+}
+.arow[data-status="warn"] .arow-state {
+  color: var(--warn);
+}
+.arow[data-status="bad"] .arow-state {
+  color: var(--danger);
+}
+.arow-fix {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-top: 8px;
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--hairline);
+  color: var(--ink-mute);
+  font-size: 12px;
+}
+
+.panel:not([hidden]) {
+  animation: panel-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── Motion ── */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes crow-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+}
+@keyframes pulse-btn {
+  0%,
+  100% {
+    box-shadow: 0 14px 28px -16px rgba(var(--digi-rgb), 0.8);
+  }
+  50% {
+    box-shadow: 0 14px 36px -12px rgba(var(--digi-rgb), 1);
+  }
+}
+@keyframes breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(var(--ok-rgb), 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(var(--ok-rgb), 0.04);
+  }
+}
+@keyframes pulse-warn {
+  from {
+    box-shadow: 0 0 0 0 rgba(var(--warn-rgb), 0.6);
+  }
+  to {
+    box-shadow: 0 0 0 7px rgba(var(--warn-rgb), 0);
+  }
+}
+@keyframes busy {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 17px 0;
+  }
+}
+@keyframes flow {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 12px 0;
+  }
+}
+@keyframes travel {
+  0% {
+    left: 0;
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    left: calc(100% - 6px);
+    opacity: 0;
+  }
+}
+@keyframes wire-light {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes sweep {
+  to {
+    --sweep: 360deg;
+  }
+}
+@keyframes h-wait {
+  from {
+    opacity: 0.45;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes h-pop {
+  from {
+    scale: 0.55;
+  }
+  60% {
+    scale: 1.16;
+  }
+  to {
+    scale: 1;
+  }
+}
+@keyframes hface-wave {
+  from {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.3);
+  }
+}
+@keyframes hface-ping {
+  0% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  55%,
+  100% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+@keyframes card-thump {
+  from {
+    scale: 0.985;
+  }
+  50% {
+    scale: 1.004;
+  }
+  to {
+    scale: 1;
+  }
+}
+@keyframes flag-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Everything lands in its finished state: the light on, the lines drawn. */
+  .conn *,
+  .conn *::before,
+  .conn *::after,
+  .crow,
+  .panel:not([hidden]),
+  .msg,
+  .quick-btn.is-busy {
+    animation: none !important;
+  }
+}
