@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>HProxy</title>
+  </head>
+  <!--
+    The popup: the desktop app's Connect card, made for the toolbar
+    (2026-09-24). The same language as the app: the state in words, the
+    switch top right, the route from this browser through the H to the exit,
+    and the H itself a button that connects. Under it the two places to go:
+    your own proxies, and free ones by country.
+
+    popup.js reads and commands; the connection itself lives in
+    background.js. The ids are the ones popup.js drives: anything it looks
+    up and does not find, it leaves alone.
+  -->
+  <body>
+    <section class="conn" id="conn" data-phase="off">
+      <div class="card" id="status">
+        <div class="top">
+          <div class="words">
+            <span class="live"><i id="statusDot"></i><span id="statusTitle">Not connected</span></span>
+            <div class="head" id="statusHead">Your own address</div>
+            <div class="sub" id="statusSub">Sites see where you really are</div>
+          </div>
+          <button type="button" class="switch" id="connSwitch" role="switch" aria-checked="false" aria-label="Connection" title="Connect">
+            <span class="knob">
+              <svg viewBox="0 0 22 26" aria-hidden="true">
+                <path d="M0 0V0C3.98547 0 7.21633 3.23086 7.21633 7.21633V26H0V0Z" />
+                <rect x="14.2188" width="7.21633" height="26" />
+                <path d="M7.2349 26H0V15.9714C0 12.4548 2.85076 9.60408 6.36735 9.60408H14.2204V0H21.4367V10.4531C21.4367 13.9696 18.586 16.8204 15.0694 16.8204H7.2349V26Z" />
+              </svg>
+            </span>
+          </button>
+        </div>
+
+        <div class="route">
+          <span class="end" title="This browser">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 9h18" /><path d="M6.5 6.5h.01M9 6.5h.01" /></svg>
+            <span class="name">This browser</span>
+          </span>
+          <span class="wire left"><i></i><b></b></span>
+          <span class="hbutton">
+            <button type="button" class="hface" id="hbutton" aria-pressed="false" aria-label="Connection" title="Connect">
+              <span class="fill"></span>
+              <span class="edge"></span>
+              <span class="wave"></span>
+              <span class="ping"></span>
+              <svg viewBox="0 0 22 26" aria-hidden="true">
+                <path d="M0 0V0C3.98547 0 7.21633 3.23086 7.21633 7.21633V26H0V0Z" />
+                <rect x="14.2188" width="7.21633" height="26" />
+                <path d="M7.2349 26H0V15.9714C0 12.4548 2.85076 9.60408 6.36735 9.60408H14.2204V0H21.4367V10.4531C21.4367 13.9696 18.586 16.8204 15.0694 16.8204H7.2349V26Z" />
+              </svg>
+            </button>
+          </span>
+          <span class="wire right"><i></i><b></b></span>
+          <span class="end exit" id="routeExit">
+            <span class="exit-flag" id="routeFlag"></span>
+            <span class="name" id="routeName">Fastest free exit</span>
+          </span>
+        </div>
+
+        <div class="card-foot">
+          <span class="foot-text" id="footState">Nothing in this browser changes until you connect</span>
+          <button type="button" id="newIpBtn" class="link-btn" hidden>New IP</button>
+        </div>
+      </div>
+    </section>
+
+    <nav class="seg" id="surfaces" role="tablist">
+      <button type="button" class="seg-btn is-on" data-surface="proxies">My proxies</button>
+      <button type="button" class="seg-btn" data-surface="vpn">Free</button>
+    </nav>
+
+    <div class="search">
+      <input id="countrySearch" class="input" placeholder="Search countries and saved proxies" autocomplete="off" spellcheck="false" />
+    </div>
+
+    <section class="panel" id="surface-proxies">
+      <!-- One field, one button. Which protocol the proxy speaks is found by
+           testing it in this browser (background.js, pinFind); the line and
+           its login never leave it. Connecting runs the checks below. -->
+      <span class="field-label">Connect a proxy</span>
+      <div class="connect-row">
+        <input id="byoInput" class="input" placeholder="host:port  or  user:pass@host:port" autocomplete="off" spellcheck="false" />
+        <button type="button" id="byoConnect" class="btn btn--primary">Connect</button>
+      </div>
+      <div id="byoMsg" class="msg" hidden></div>
+
+      <div class="list-head">
+        <span class="list-title">Saved</span>
+      </div>
+      <div id="byoList" class="list"></div>
+
+      <section class="analyze" id="analyze">
+        <div class="list-head">
+          <span class="list-title">This connection</span>
+          <button type="button" id="reanalyze" class="link-btn">Run again</button>
+        </div>
+        <div class="verdict" id="verdict" data-status="skip">
+          <span class="verdict-head" id="verdictHead">Not connected</span>
+          <span class="verdict-sub" id="verdictSub">Connect a proxy and it gets checked straight away.</span>
+        </div>
+        <div id="analyzeList"></div>
+      </section>
+
+      <!-- Hidden until "Sign in with HProxy" has its server route (popup.js,
+           PLANS_LIVE). The markup stays so switching it on is one line. -->
+      <div id="plansBlock" hidden>
+        <div class="list-head">
+          <span class="list-title">Your HProxy plans</span>
+        </div>
+        <div id="mineList" class="list"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="surface-vpn" hidden>
+      <button type="button" id="quickBtn" class="quick-btn">
+        <span class="quick-bolt" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" /></svg>
+        </span>
+        <span class="quick-text">
+          <span class="quick-main" id="quickMain">Quick Connect</span>
+          <span class="quick-sub" id="quickSub">The best free exit, tested first</span>
+        </span>
+        <span class="crow-go" aria-hidden="true">→</span>
+      </button>
+
+      <div class="list-head" id="favHead" hidden>
+        <span class="list-title">Favorites</span>
+      </div>
+      <div id="favList" class="list"></div>
+
+      <div class="list-head">
+        <span class="list-title">Countries</span>
+        <button type="button" id="reloadCountries" class="link-btn">Refresh</button>
+      </div>
+      <div id="countryList" class="list">
+        <p class="hint">Loading countries</p>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <span id="footNote"></span>
+      <a class="link-btn" href="https://hproxy.com" target="_blank" rel="noopener">hproxy.com</a>
+    </footer>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
