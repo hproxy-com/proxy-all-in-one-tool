@@ -1,0 +1,89 @@
+[package]
+name = "hproxy-checker"
+description = "HProxy: free, open-source proxy checker and connector for Windows, macOS and Linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+# The `_lib` suffix is necessary to keep the lib name distinct from the bin
+# name on Windows (rust-lang/cargo#8519).
+name = "hproxy_checker_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# The engine and the relay. Everything that checks or relays a proxy lives in
+# these two crates, shared with the CLI; this app is the window around them.
+hproxy-probe = { workspace = true }
+hproxy-relay = { workspace = true }
+hproxy-system = { workspace = true }
+# The client for hproxy.com's free doors (locations, API-mode checking),
+# shared with the CLI so the two never label a row differently.
+hproxy-api = { workspace = true }
+# The command-line tool, included: started with a command (`mcp`, `check`,
+# ...) the app runs as the tool and opens no window (src/main.rs). An AI
+# assistant starts it that way from Use with AI, with nothing to download.
+hproxy-cli = { workspace = true }
+
+# tray-icon: the icon by the clock the app keeps running in (src/tray.rs).
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+# The open and save dialogs, used from Rust only (src/files.rs): the window
+# never names a path and holds no dialog permission.
+tauri-plugin-dialog = "2"
+# Levelled logging to a rotating file in the OS log directory, so a bug report
+# from a user is diagnosable.
+tauri-plugin-log = "2"
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+# Geolocation (our free public IP API) and API-mode checking (our streaming
+# checker). rustls-tls keeps the binary free of an OpenSSL system dependency;
+# `stream` is what lets a 100k-proxy API batch reach the UI line by line.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# join_all fans out the batched geo prefetch; StreamExt reads the API stream.
+futures = "0.3"
+
+# Desktop only. Phones update through their store, and these plugins do not
+# build for them.
+#
+# Signed in-app updates: a security-adjacent tool that cannot ship a fix to the
+# people already running it is a liability. Updates are minisign-verified; see
+# the updater block in tauri.conf.json. `process` is the relaunch after one.
+#
+# One copy of the app at a time. A second one would start a second relay and
+# take a second snapshot of the system proxy, and the two would fight over a
+# setting only one of them can put back. A second launch raises the first.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "~2.10"
+# Reading when an update was signed (src/update.rs, the rule that refuses an
+# old build announced as new). The plugin already builds all three; these are
+# its own versions, named here so our code can use them.
+base64 = "0.22"
+minisign-verify = "0.2"
+semver = "1"
+tauri-plugin-process = "2"
+tauri-plugin-single-instance = "2"
+# Start with the computer, when the person asks for it in Settings.
+tauri-plugin-autostart = "2"
+
+# Counting the other running copies of this program (src/update.rs): the tool
+# an AI assistant starts is this same program, and the Windows installer ends
+# every copy, so a quiet update waits until none runs. WindowsAndMessaging and
+# winreg: the AI tool's folder goes on the user's PATH (src/tool.rs), and every
+# program is told the environment changed.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_Packaging_Appx", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_WindowsAndMessaging"] }
+winreg = "0.55"
+
+# NOTE: there is deliberately no bundled geo database. A city+ASN .mmdb is
+# 25-70 MB (this installer is a few MB, which is the whole point against the
+# Electron tools) and MaxMind's GeoLite2 terms restrict redistribution. See
+# src/checker/geo.rs for the full reasoning.

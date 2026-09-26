@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nothing of the app goes into Android's backups: not to the person's Google
+     account (cloud-backup), not to a new phone (device-transfer). Saved proxies
+     keep their passwords and fraud-service keys in the app's storage, and
+     PRIVACY.md promises they never leave the device. Android 12 and newer read
+     this file; older versions obey android:allowBackup="false" in the manifest,
+     which covers both there. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </device-transfer>
+</data-extraction-rules>

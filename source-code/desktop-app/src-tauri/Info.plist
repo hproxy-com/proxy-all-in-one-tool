@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged by Tauri into the macOS app's Info.plist. CFBundleIconName names the icon inside
+  Assets.car, which macOS 26 and later draw (without it, the app's icon sits on a grey tile).
+  Assets.car is compiled from icons/macos/AppIcon.icon on the macOS runner (release.yml) and
+  put in the app by tauri.macos.conf.json. Older macOS keeps using icon.icns (CFBundleIconFile,
+  which Tauri writes). scripts/app-icons.mjs makes both.
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleIconName</key>
+  <string>AppIcon</string>
+</dict>
+</plist>

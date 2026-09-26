@@ -1,0 +1,8 @@
+{
+  "default": "desktop.svg",
+  "bg_color": "#FFFFFF",
+  "android_bg": "android-background.svg",
+  "android_fg": "android-foreground.svg",
+  "android_monochrome": "android-monochrome.svg",
+  "android_fg_scale": 62
+}
