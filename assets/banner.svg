@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="260" viewBox="0 0 1000 260" role="img" aria-label="HProxy: Proxy Checker and Switcher">
+  <defs>
+    <linearGradient id="hp-bg" x1="0" y1="0" x2="1000" y2="260" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F3F7FF"/>
+      <stop offset="1" stop-color="#FFFFFF"/>
+    </linearGradient>
+    <!-- The blue H, on a light ground: the brand rule (never a white H, never a blue ground). -->
+    <linearGradient id="hp-h" x1="0" y1="0" x2="21.44" y2="26" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3D7BFF"/>
+      <stop offset="0.55" stop-color="#0158FF"/>
+      <stop offset="1" stop-color="#013599"/>
+    </linearGradient>
+    <pattern id="hp-dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.6" fill="#0158FF" fill-opacity="0.09"/>
+    </pattern>
+    <linearGradient id="hp-dot-fade" x1="0" y1="0" x2="1000" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="1"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="1"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <mask id="hp-dot-mask">
+      <rect width="1000" height="260" fill="url(#hp-dot-fade)"/>
+    </mask>
+  </defs>
+  <rect x="1" y="1" width="998" height="258" rx="24" fill="url(#hp-bg)" stroke="#D6E2FF" stroke-width="2"/>
+  <rect x="1" y="1" width="998" height="258" rx="24" fill="url(#hp-dots)" mask="url(#hp-dot-mask)"/>
+  <g transform="translate(80,62) scale(4.35)" fill="url(#hp-h)">
+    <path d="M0 0V0C3.98547 0 7.21633 3.23086 7.21633 7.21633V26H0V0Z"/>
+    <rect x="14.2188" width="7.21633" height="26"/>
+    <path d="M7.2349 26H0V15.9714C0 12.4548 2.85076 9.60408 6.36735 9.60408H14.2204V0H21.4367V10.4531C21.4367 13.9696 18.586 16.8204 15.0694 16.8204H7.2349V26Z"/>
+  </g>
+  <text x="226" y="114" font-family="'Geist','Inter','Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="72" font-weight="700" letter-spacing="-2.3" fill="#0A1020">HProxy</text>
+  <text x="228" y="160" font-family="'Geist','Inter','Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="34" font-weight="500" letter-spacing="-0.5" fill="#48536D">Proxy Checker and Switcher</text>
+  <text x="229" y="210" font-family="'Geist','Inter','Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="20" font-weight="600" fill="#0158FF">Windows · macOS · Linux · Android<tspan fill="#48536D" font-weight="400">   ·   free, open source, no account</tspan></text>
+</svg>
