@@ -1,0 +1,3 @@
+# The width the code was written at. rustfmt default is 100; this keeps the
+# long, plain sentences in signatures and struct literals on one line.
+max_width = 120
