@@ -1,0 +1,38 @@
+[package]
+name = "hproxy-cli"
+description = "hproxy: check proxies, connect through one, or serve both to an AI assistant over MCP. The same engine as the desktop app."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# The library is the tool; the binary is its two-line door. The desktop app
+# includes the library, so it can be started as the tool too.
+[lib]
+name = "hproxy_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hproxy"
+path = "src/main.rs"
+
+[dependencies]
+hproxy-probe = { workspace = true }
+hproxy-relay = { workspace = true }
+hproxy-api = { workspace = true }
+# `io-std`: the MCP server reads and writes stdio without blocking a thread.
+tokio = { workspace = true, features = ["io-std"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Unix only, and for one call: `setsid` for the background copy, so closing the
+# terminal that started it does not take the connection with it.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Windows only, and for two calls: the background copy must not inherit this
+# terminal's streams (see `keep_our_streams_out_of_the_child`). No new crate in
+# the binary, tokio already links this one.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
