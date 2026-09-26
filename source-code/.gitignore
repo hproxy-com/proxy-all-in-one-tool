@@ -1,0 +1,38 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Cargo workspace build output: the app, the engine, the relay, the CLI
+/target/
+
+# Installers built on this machine, kept in one place to find them (never committed)
+/builds/
+
+# The macOS 26 icon catalog, compiled from icons/macos/AppIcon.icon on the macOS runner
+desktop-app/src-tauri/icons/macos/build/
+
+# Marketing pictures: the raw screens and the PNG masters are drawn again by
+# desktop-app/scripts/marketing-shots.mjs; only the .webp for the web is kept
+desktop-app/store/marketing/raw/
+desktop-app/store/marketing/*.png
