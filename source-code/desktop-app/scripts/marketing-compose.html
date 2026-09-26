@@ -1,0 +1,203 @@
+<!doctype html>
+<!--
+  The angled pictures of the app. scripts/marketing-shots.mjs opens this page with
+  ?scene=<name>&raw=<folder URL> and captures it; every screen on it is a real one from the
+  app's preview, this page only places the screens in space.
+
+  HOW THE 3D IS MADE: plain CSS, no 3D library, no drawing program.
+
+  1. Real screenshots. The script shoots the app's own window (1440 x 900 at 2x) and its phone
+     layout (360 x 640 at 3x). Nothing on a picture is drawn by hand.
+  2. One box per screen. Each window is a <div class="win"> holding one screenshot <img>, placed
+     at a pixel position (left, top, width). Parts are listed back to front; a later part sits
+     on top of an earlier one.
+  3. One transform per box, for example
+       perspective(2600px) rotateY(-17deg) rotateX(7deg) rotateZ(0.6deg)
+     - perspective(N) gives the box its own vanishing point. A smaller N means stronger depth:
+       1800 feels close and dramatic, 2600 gentle.
+     - rotateY turns it left or right, so the near edge grows. rotateX tips it back, so the top
+       edge goes away from you. A small rotateZ adds a little roll, so it never looks set by a
+       machine.
+     - perspective() sits INSIDE each box's transform, not as a shared `perspective` with
+       `transform-style: preserve-3d` on the parent. So every box is drawn flat in its own
+       space and the boxes never cut into each other: they simply overlap in list order.
+  4. Depth cues. Rounded corners (12 px, as Windows 11 draws a window). A layered box-shadow:
+     one large soft shadow for the distance, one closer and darker for contact, and a 1 px
+     outline. The phone gets a dark gradient frame with a faint light rim.
+  5. The background. Soft radial glows in the brand blue over a light (or near-black)
+     gradient, and a faint dot grid masked so it fades toward the edges.
+  6. Sharpness. Headless Chrome renders the page at deviceScaleFactor 2, so a 1600 x 1000
+     scene becomes 3200 x 2000 pixels. The screenshots are 2x or 3x themselves, so nothing
+     is ever stretched.
+  7. Transparency. For a picture without a background, the script sets
+     Emulation.setDefaultBackgroundColorOverride to alpha 0 before the capture.
+
+  To add a picture: add a scene to SCENES below (parts back to front) and put its name and
+  size in the scenes list of marketing-shots.mjs.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HProxy marketing scene</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+  body { position: relative; font-family: system-ui, sans-serif; }
+
+  /* Backgrounds */
+  body.light {
+    background:
+      radial-gradient(900px 600px at 78% 22%, rgba(1, 88, 255, 0.13), transparent 70%),
+      radial-gradient(800px 700px at 12% 88%, rgba(61, 123, 255, 0.10), transparent 70%),
+      linear-gradient(180deg, #f7f9fe 0%, #eef2fb 100%);
+  }
+  body.dark {
+    background:
+      radial-gradient(900px 620px at 75% 20%, rgba(61, 123, 255, 0.30), transparent 70%),
+      radial-gradient(760px 700px at 10% 90%, rgba(1, 88, 255, 0.22), transparent 70%),
+      linear-gradient(180deg, #0a0f1f 0%, #060913 100%);
+  }
+  body.transparent { background: transparent; }
+  /* A faint dot grid, the site's own texture, fading toward the edges. */
+  body.light::before, body.dark::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgba(10, 16, 32, 0.07) 1px, transparent 1.2px);
+    background-size: 22px 22px;
+    mask-image: radial-gradient(900px 700px at 60% 45%, black, transparent 75%);
+  }
+  body.dark::before { background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1.2px); }
+
+  /* A window: the app's own screen (it draws its own title bar), rounded like Windows 11. */
+  .win {
+    position: absolute;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+    box-shadow:
+      0 60px 120px -30px rgba(10, 20, 50, 0.45),
+      0 24px 48px -18px rgba(10, 20, 50, 0.30),
+      0 0 0 1px rgba(10, 20, 50, 0.10);
+  }
+  body.dark .win {
+    background: #0b1020;
+    box-shadow:
+      0 70px 140px -30px rgba(0, 0, 0, 0.75),
+      0 28px 56px -18px rgba(0, 0, 0, 0.55),
+      0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+  .win img { display: block; width: 100%; height: auto; }
+
+  /* A phone: a slim dark frame around the phone screen. */
+  .phone {
+    position: absolute;
+    padding: 9px;
+    border-radius: 42px;
+    background: linear-gradient(145deg, #1d2333, #0c0f18);
+    box-shadow:
+      0 50px 100px -24px rgba(10, 20, 50, 0.55),
+      0 20px 40px -14px rgba(10, 20, 50, 0.35),
+      inset 0 0 0 1.5px rgba(255, 255, 255, 0.10);
+  }
+  body.dark .phone {
+    background: linear-gradient(145deg, #2a3146, #10131d);
+    box-shadow:
+      0 60px 110px -24px rgba(0, 0, 0, 0.8),
+      0 22px 44px -14px rgba(0, 0, 0, 0.6),
+      inset 0 0 0 1.5px rgba(255, 255, 255, 0.22);
+  }
+  .phone img { display: block; width: 100%; height: auto; border-radius: 33px; }
+</style>
+</head>
+<body>
+<script>
+  const q = new URLSearchParams(location.search);
+  const scene = q.get("scene") || "hero-light";
+  const raw = (q.get("raw") || ".").replace(/\/?$/, "/");
+  const src = (name) => raw + name;
+
+  // Each part: [kind, image, left, top, width, transform], back to front.
+  const SCENES = {
+    // Three screens: Connect behind, the checker in front, the phone closest.
+    "hero-light": {
+      body: "light",
+      parts: [
+        ["win", "connect-light.png", 60, 120, 900, "perspective(2600px) rotateY(24deg) rotateX(6deg) rotateZ(-1deg) scale(0.94)"],
+        ["win", "check-light.png", 450, 100, 1070, "perspective(2600px) rotateY(-17deg) rotateX(7deg) rotateZ(0.6deg)"],
+        ["phone", "phone-check.png", 1255, 430, 262, "perspective(1800px) rotateY(-16deg) rotateX(5deg) rotateZ(1deg)"],
+      ],
+    },
+    "hero-dark": {
+      body: "dark",
+      parts: [
+        ["win", "check-dark.png", 60, 120, 900, "perspective(2600px) rotateY(24deg) rotateX(6deg) rotateZ(-1deg) scale(0.94)"],
+        ["win", "connect-dark.png", 450, 100, 1070, "perspective(2600px) rotateY(-17deg) rotateX(7deg) rotateZ(0.6deg)"],
+        ["phone", "phone-connect-dark.png", 1255, 430, 262, "perspective(1800px) rotateY(-16deg) rotateX(5deg) rotateZ(1deg)"],
+      ],
+    },
+    // Three windows fanned open like cards: the two sides turned inwards, Connect straight in the middle.
+    "fan-dark": {
+      body: "dark",
+      parts: [
+        ["win", "ai-dark.png", 20, 200, 780, "perspective(2200px) rotateY(34deg) rotateX(4deg) scale(0.9)"],
+        ["win", "check-dark.png", 800, 200, 780, "perspective(2200px) rotateY(-34deg) rotateX(4deg) scale(0.9)"],
+        ["win", "connect-dark.png", 330, 150, 940, "perspective(2600px) rotateX(9deg)"],
+      ],
+    },
+    // One large window, turned the other way.
+    "window-dark": {
+      body: "dark",
+      parts: [
+        ["win", "check-dark.png", 250, 110, 1180, "perspective(2600px) rotateY(18deg) rotateX(8deg) rotateZ(-0.8deg)"],
+      ],
+    },
+    // Close to the Connect card: the window enlarged well past the frame, tipped back steeply.
+    "connect-closeup-dark": {
+      body: "dark",
+      parts: [
+        ["win", "connect-dark.png", 40, 30, 2300, "perspective(2000px) rotateX(20deg) rotateY(-14deg) rotateZ(-4deg)"],
+      ],
+    },
+    // One window alone, on transparency, for any background.
+    "window-angled": {
+      body: "transparent",
+      parts: [
+        ["win", "check-light.png", 130, 150, 1140, "perspective(2600px) rotateY(-18deg) rotateX(8deg) rotateZ(0.8deg)"],
+      ],
+    },
+    // Two phones leaning towards each other.
+    "phones": {
+      body: "light",
+      parts: [
+        ["phone", "phone-connect.png", 250, 250, 360, "perspective(1800px) rotateY(18deg) rotateX(6deg) rotateZ(-3deg)"],
+        ["phone", "phone-check.png", 600, 310, 360, "perspective(1800px) rotateY(-16deg) rotateX(6deg) rotateZ(3deg)"],
+      ],
+    },
+    "phones-dark": {
+      body: "dark",
+      parts: [
+        ["phone", "phone-connect-dark.png", 250, 250, 360, "perspective(1800px) rotateY(18deg) rotateX(6deg) rotateZ(-3deg)"],
+        ["phone", "phone-check-dark.png", 600, 310, 360, "perspective(1800px) rotateY(-16deg) rotateX(6deg) rotateZ(3deg)"],
+      ],
+    },
+  };
+
+  const sc = SCENES[scene];
+  document.body.className = sc.body;
+  for (const [kind, image, left, top, width, transform] of sc.parts) {
+    const el = document.createElement("div");
+    el.className = kind;
+    el.style.left = left + "px";
+    el.style.top = top + "px";
+    el.style.width = width + "px";
+    el.style.transform = transform;
+    const img = document.createElement("img");
+    img.src = src(image);
+    img.alt = "";
+    el.appendChild(img);
+    document.body.appendChild(el);
+  }
+</script>
+</body>
+</html>
