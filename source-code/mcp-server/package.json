@@ -1,0 +1,31 @@
+{
+  "name": "hproxy-mcp",
+  "version": "1.0.0",
+  "description": "HProxy's free proxy tools as an MCP server and a CLI: a live free proxy list, a real proxy checker and an IP lookup. No key, no account.",
+  "keywords": ["mcp", "model-context-protocol", "proxy", "proxy-list", "proxy-checker", "ip-lookup", "free-proxies", "hproxy"],
+  "homepage": "https://hproxy.com/tools/ai",
+  "bugs": {
+    "url": "https://hproxy.com/contact"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "hproxy": "index.mjs",
+    "hproxy-mcp": "index.mjs"
+  },
+  "main": "index.mjs",
+  "files": ["index.mjs", "README.md"],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "test": "node test.mjs",
+    "prepublishOnly": "node test.mjs",
+    "release:patch": "npm version patch && npm publish",
+    "release:minor": "npm version minor && npm publish"
+  }
+}
