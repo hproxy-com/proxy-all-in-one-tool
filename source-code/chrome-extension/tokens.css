@@ -1,0 +1,64 @@
+/* ============================================================
+   GENERATED FILE — DO NOT EDIT BY HAND.
+
+   Source:    hproxy-website/app/globals.css
+   Regenerate: node scripts/sync-tokens.mjs   (build.ps1 runs this)
+
+   Every colour the popup is allowed to use lives here, copied
+   from the website's :root at build time. Editing this file by
+   hand recreates exactly the drift it exists to prevent: the
+   next build silently overwrites you.
+
+   Need a new colour? Add it to the website's globals.css. That
+   is the only door, and it is deliberately the only door.
+   ============================================================ */
+:root {
+  /* The popup is light only and never follows the OS scheme. This lock
+     stops a dark-OS browser from dark-ifying inputs and scrollbars. */
+  color-scheme: light;
+
+  --surface: #ffffff;
+  --ink: #010101;
+  --ink-rgb: 1, 1, 1;
+  --ink-soft: #909090;
+  --ink-mute: #6d6d6d;
+  --canvas: #ffffff;
+  --hairline: #e7e7e4;
+  --bar: #d8d8d5;
+  --digi: #0158ff;
+  --digi-rgb: 1, 88, 255;
+  --digi-deep: #013599;
+  --digi-deep-rgb: 1, 53, 153;
+  --digi-night: #012368;
+  --digi-night-rgb: 1, 35, 104;
+  --digi-light: #3d7bff;
+  --digi-light-rgb: 61, 123, 255;
+  --ok: #00784b;
+  --ok-rgb: 0, 120, 75;
+  --warn: #8f5e00;
+  --warn-rgb: 143, 94, 0;
+  --danger: #c62828;
+  --danger-rgb: 198, 40, 40;
+  --chart-1: var(--digi);
+  --chart-2: var(--digi-light);
+  --chart-3: #7aa7ff;
+  --chart-4: var(--digi-night);
+  --chart-5: var(--digi-deep);
+  --chart-6: #9fbcff;
+  --chart-7: #5a8bff;
+  --chart-dim: #cbd6e6;
+  --wave-base: 126, 168, 255;
+  --wave-crest: 214, 228, 255;
+  --wave-glint: 64, 224, 208;
+
+  /* Extension-only shapes. Not colours, so they are not drift risks:
+     they map to the site's rounded-2xl / rounded-xl / rounded-lg. */
+  --radius: 16px;
+  --radius-sm: 12px;
+  --radius-xs: 8px;
+
+  /* The site's blue-tinted elevation. Shadows are never grey on this
+     brand, they are always tinted with digi-night. */
+  --shadow: 0 2px 4px rgba(var(--digi-night-rgb), 0.04),
+    0 22px 48px -28px rgba(var(--digi-night-rgb), 0.42);
+}
