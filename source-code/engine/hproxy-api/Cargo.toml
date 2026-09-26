@@ -1,0 +1,20 @@
+[package]
+name = "hproxy-api"
+description = "Client for hproxy.com's free public doors: IP locations, API-mode checking and the free proxy list. Shared by the desktop app and the CLI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+hproxy-probe = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+# rustls keeps every binary free of an OpenSSL system dependency; `stream` is
+# what lets a 100k-proxy API batch come back line by line.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# join_all fans out the batched location lookups; StreamExt reads the API stream.
+futures = "0.3"
