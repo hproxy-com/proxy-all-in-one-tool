@@ -1,17 +1,35 @@
-# HProxy: Proxy All-in-One Tool
+<p align="center">
+  <a href="https://hproxy.com"><img src="assets/banner.svg" alt="HProxy: Proxy Checker and Switcher" width="720"></a>
+</p>
 
-Check a proxy list, see where every proxy comes out and how anonymous it is, and connect your
-computer or phone through the one you pick. Free, open source, no account.
+<p align="center">
+  <a href="https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe"><img src="https://img.shields.io/badge/Download_for-Windows-0158FF?style=for-the-badge&logo=windows&logoColor=white&labelColor=0B1220" alt="Download for Windows"></a>
+  <a href="macOS/"><img src="https://img.shields.io/badge/Download_for-macOS-0158FF?style=for-the-badge&logo=apple&logoColor=white&labelColor=0B1220" alt="Download for macOS"></a>
+  <a href="Linux/"><img src="https://img.shields.io/badge/Download_for-Linux-0158FF?style=for-the-badge&logo=linux&logoColor=white&labelColor=0B1220" alt="Download for Linux"></a>
+  <a href="Android/"><img src="https://img.shields.io/badge/Download_for-Android-0158FF?style=for-the-badge&logo=android&logoColor=white&labelColor=0B1220" alt="Download for Android"></a>
+</p>
+
+<p align="center">
+  <a href="https://hproxy.com"><img src="https://img.shields.io/badge/Website-hproxy.com-0158FF?style=flat-square&labelColor=0B1220" alt="Website: hproxy.com"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-0158FF?style=flat-square&labelColor=0B1220" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/Price-free-0158FF?style=flat-square&labelColor=0B1220" alt="Price: free">
+  <img src="https://img.shields.io/badge/Account-none_needed-0158FF?style=flat-square&labelColor=0B1220" alt="No account needed">
+  <a href="source-code/README.md#for-ai-assistants-mcp"><img src="https://img.shields.io/badge/AI_assistants-MCP_server-0158FF?style=flat-square&labelColor=0B1220" alt="MCP server for AI assistants"></a>
+</p>
+
+<h3 align="center">The proxy all-in-one tool</h3>
+
+<p align="center"><b>Check</b> any proxy list, see where every proxy comes out and how anonymous it is,<br>then <b>switch</b> your computer, phone or browser to the one you pick.</p>
 
 ## Download
 
-| System | |
-| --- | --- |
-| **Windows** 10 and 11 | **[Download](https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe)** · [how to install](Windows/) |
-| **macOS** 12 and later | [macOS](macOS/) |
-| **Linux** | [Linux](Linux/) |
-| **Android** 7 and later | [Android](Android/) |
-| **The source code** | [source-code](source-code/) |
+| System | | |
+| --- | --- | --- |
+| **Windows** 10 and 11 | **[Download the installer](https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe)** | [how to install](Windows/) |
+| **macOS** 12 and later, Apple Silicon and Intel | with the next version | [macOS](macOS/) |
+| **Linux** x86_64: AppImage and .deb | with the next version | [Linux](Linux/) |
+| **Android** 7 and later | Google Play and the APK | [Android](Android/) |
+| **Command line and AI assistants** | `hproxy` and its MCP server | [source-code](source-code/README.md#command-line) |
 
 ## What it does
 
@@ -21,8 +39,8 @@ computer or phone through the one you pick. Free, open source, no account.
   is, how long each step takes, which headers it added, and whether it reads your HTTPS. Never
   log in through one that does.
 - **Fraud scores** for every working exit.
-- **Connects** your computer through the proxy you pick, a list that rotates, or a free exit in
-  the country you want, without typing a password anywhere.
+- **Switches** your computer to the proxy you pick, a list that rotates, or a free exit in the
+  country you want, without typing a password anywhere.
 - **Works from the command line and from AI assistants**: `hproxy check`, `hproxy connect`, and
   an MCP server with `proxy_list`, `proxy_check` and `ip_lookup`.
 - **A Chrome extension** that does the same inside the browser.
@@ -35,4 +53,4 @@ Everything HProxy is made of is in [source-code](source-code/): the app (Tauri: 
 the command-line tool, the engine and the Chrome extension.
 [source-code/README.md](source-code/README.md) says how to build and test each part.
 
-Built by [HProxy](https://hproxy.com) · [MIT license](LICENSE)
+<p align="center"><sub>Built by <a href="https://hproxy.com">HProxy</a> · <a href="LICENSE">MIT license</a></sub></p>
