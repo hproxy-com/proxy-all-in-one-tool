@@ -1,0 +1,18 @@
+[package]
+name = "hproxy-system"
+description = "Operating-system glue for the HProxy desktop app: the system proxy setting, read and set and restored exactly as found."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+# The Internet Settings key, and the WinINET call that tells running programs
+# the setting changed. Both crates are already in the tree through Tauri.
+winreg = "0.55"
+windows-sys = { version = "0.61", features = ["Win32_Networking_WinInet"] }
