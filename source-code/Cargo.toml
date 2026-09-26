@@ -1,0 +1,61 @@
+# One workspace, one lock file, one engine. The Rust half of
+# Hproxy-Software-Bundle-Core (the folder layout is in README.md).
+#
+#   engine/hproxy-probe   THE ENGINE. Parses a proxy line, dials it, climbs the
+#                         judge ladder on every transport, grades anonymity,
+#                         measures where the time went, names the exit. No
+#                         database, no web framework, no UI. Every door below
+#                         reads it, so every door gives the same verdict.
+#   engine/hproxy-relay   THE CONNECTOR. A local proxy with no password that
+#                         forwards to the real one with the password attached.
+#   engine/hproxy-api     The client for hproxy.com's free doors: IP locations,
+#                         API-mode checking, the free list.
+#   cli                   `hproxy`: check, connect, free, list, ip, and `mcp`
+#                         for AI assistants. Servers, scripts and agents.
+#   desktop-app/src-tauri The desktop app (Windows, macOS, Linux) and the phone
+#                         app (Android in src-tauri/gen/android): the engine and
+#                         the relay with a window.
+#
+# The release profile lives here because Cargo only honours [profile] at the
+# workspace root. `strip` and `lto` are what keep the installer a few MB.
+
+[workspace]
+resolver = "2"
+members = [
+    "engine/hproxy-probe",
+    "engine/hproxy-relay",
+    "engine/hproxy-system",
+    "engine/hproxy-api",
+    "cli",
+    "desktop-app/src-tauri",
+]
+
+[workspace.package]
+version = "0.2.3"
+edition = "2021"
+license = "MIT"
+authors = ["HProxy"]
+repository = "https://github.com/hproxy-com/proxy-all-in-one-tool"
+
+[workspace.dependencies]
+hproxy-cli = { path = "cli" }
+hproxy-probe = { path = "engine/hproxy-probe" }
+hproxy-relay = { path = "engine/hproxy-relay" }
+hproxy-system = { path = "engine/hproxy-system" }
+hproxy-api = { path = "engine/hproxy-api" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+
+# Built for size. Everything this workspace does waits on the network, not the
+# CPU, so the smallest code costs nothing a person can notice. Measured on
+# 2026-09-19 (Windows x64, the CLI): opt-level 3 with thin LTO 5.45 MB, "s"
+# with fat LTO 3.83 MB, "z" with fat LTO 3.51 MB; parsing and printing 200,000
+# lines took 1.9 s, 2.0 s and 2.1 s, while checking one proxy takes 0.1 to 16 s.
+# Panics still unwind: a worker that panics must end its task, not the program.
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
