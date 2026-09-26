@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe"><img src="https://img.shields.io/badge/Download_for-Windows-0158FF?style=for-the-badge&logo=windows&logoColor=white&labelColor=0B1220" alt="Download for Windows"></a>
+  <a href="https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe"><img src="https://img.shields.io/badge/Download_for-Windows-0158FF?style=for-the-badge&amp;labelColor=0B1220&amp;logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTAgMGgxMS4zdjExLjNIMHpNMTIuNyAwSDI0djExLjNIMTIuN3pNMCAxMi43aDExLjNWMjRIMHpNMTIuNyAxMi43SDI0VjI0SDEyLjd6Ii8%2BPC9zdmc%2B" alt="Download for Windows"></a>
   <a href="macOS/"><img src="https://img.shields.io/badge/Download_for-macOS-0158FF?style=for-the-badge&logo=apple&logoColor=white&labelColor=0B1220" alt="Download for macOS"></a>
   <a href="Linux/"><img src="https://img.shields.io/badge/Download_for-Linux-0158FF?style=for-the-badge&logo=linux&logoColor=white&labelColor=0B1220" alt="Download for Linux"></a>
   <a href="Android/"><img src="https://img.shields.io/badge/Download_for-Android-0158FF?style=for-the-badge&logo=android&logoColor=white&labelColor=0B1220" alt="Download for Android"></a>
