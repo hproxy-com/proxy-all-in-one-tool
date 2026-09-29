@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="260" viewBox="0 0 1000 260" role="img" aria-label="HProxy: Proxy Checker and Switcher">
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="260" viewBox="0 0 1000 260" role="img" aria-label="HProxy: Proxy Checker, Connector &amp; Switcher">
   <defs>
     <!-- The blue H, on a light ground: the brand rule (never a white H, never a blue ground). -->
     <linearGradient id="hp-h" x1="0" y1="0" x2="21.44" y2="26" gradientUnits="userSpaceOnUse">
@@ -14,6 +14,6 @@
     <path d="M7.2349 26H0V15.9714C0 12.4548 2.85076 9.60408 6.36735 9.60408H14.2204V0H21.4367V10.4531C21.4367 13.9696 18.586 16.8204 15.0694 16.8204H7.2349V26Z"/>
   </g>
   <text x="226" y="114" font-family="'Geist','Inter','Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="72" font-weight="700" letter-spacing="-2.3" fill="#0A1020">HProxy</text>
-  <text x="228" y="160" font-family="'Geist','Inter','Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="34" font-weight="500" letter-spacing="-0.5" fill="#48536D">Proxy Checker and Switcher</text>
+  <text x="228" y="160" font-family="'Geist','Inter','Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="34" font-weight="500" letter-spacing="-0.5" fill="#48536D">Proxy Checker, Connector &amp; Switcher</text>
   <text x="229" y="210" font-family="'Geist','Inter','Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="20" font-weight="600" fill="#0158FF">Windows · macOS · Linux · Android<tspan fill="#48536D" font-weight="400">   ·   free, open source, no account</tspan></text>
 </svg>
