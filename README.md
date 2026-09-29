@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://hproxy.com"><img src="assets/banner.svg" alt="HProxy: Proxy Checker and Switcher" width="720"></a>
+  <a href="https://hproxy.com"><img src="assets/banner.svg" alt="HProxy: Proxy Checker, Connector &amp; Switcher" width="720"></a>
 </p>
 
 <p align="center">
