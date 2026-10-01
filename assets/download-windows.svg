@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="236" height="60" viewBox="0 0 236 60" role="img" aria-label="Download HProxy for Windows">
+  <rect width="236" height="60" rx="30" fill="#0158FF"/>
+  <svg x="22" y="18" width="24" height="24" viewBox="0 0 128 128"><g fill="#FFFFFF"><path d="M67.328 67.331h60.669V128H67.328zm-67.325 0h60.669V128H.003zM67.328 0h60.669v60.669H67.328zM.003 0h60.669v60.669H.003z"/></g></svg>
+  <text x="58" y="26" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12" font-weight="500" fill="#DCE7FF">Download for</text>
+  <text x="58" y="45" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="19" font-weight="600" fill="#FFFFFF">Windows</text>
+  <path d="M206 19v15M200 28.5l6 6 6-6M198 38.5v2h16v-2" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
