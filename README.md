@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-  <a href="https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe"><img src="https://img.shields.io/badge/Download_for-Windows-0158FF?style=for-the-badge&amp;labelColor=0B1220&amp;logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTAgMGgxMS4zdjExLjNIMHpNMTIuNyAwSDI0djExLjNIMTIuN3pNMCAxMi43aDExLjNWMjRIMHpNMTIuNyAxMi43SDI0VjI0SDEyLjd6Ii8%2BPC9zdmc%2B" alt="Download for Windows"></a>
-  <a href="macOS/"><img src="https://img.shields.io/badge/Download_for-macOS-0158FF?style=for-the-badge&logo=apple&logoColor=white&labelColor=0B1220" alt="Download for macOS"></a>
-  <a href="Linux/"><img src="https://img.shields.io/badge/Download_for-Linux-0158FF?style=for-the-badge&logo=linux&logoColor=white&labelColor=0B1220" alt="Download for Linux"></a>
-  <a href="Android/"><img src="https://img.shields.io/badge/Download_for-Android-0158FF?style=for-the-badge&logo=android&logoColor=white&labelColor=0B1220" alt="Download for Android"></a>
+  <a href="https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe"><img src="assets/download-windows.svg" alt="Download HProxy for Windows" width="236" height="60"></a>
+  <a href="macOS/"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/coming-macos-dark.svg"><img src="assets/coming-macos.svg" alt="HProxy for macOS: coming soon" width="236" height="60"></picture></a><br>
+  <a href="Linux/"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/coming-linux-dark.svg"><img src="assets/coming-linux.svg" alt="HProxy for Linux: coming soon" width="236" height="60"></picture></a>
+  <a href="Android/"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/coming-android-dark.svg"><img src="assets/coming-android.svg" alt="HProxy for Android: coming soon" width="236" height="60"></picture></a>
 </p>
 
 <p align="center">
