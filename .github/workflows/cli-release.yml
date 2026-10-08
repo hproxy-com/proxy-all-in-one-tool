@@ -131,7 +131,11 @@ jobs:
           if tail -n +2 libs.txt | grep -Ev "^[[:space:]]+/(usr/lib|System/Library)/"; then
             echo "::error::a library outside the system"; exit 1
           fi
-          vtool -show-build "${{ matrix.file }}" | grep -E "minos|platform"
+          # A file for macOS 10.14 and later records its oldest macOS as LC_BUILD_VERSION "minos",
+          # an older one as LC_VERSION_MIN_MACOSX "version".
+          oldest=$(otool -l "${{ matrix.file }}" | awk '$1 == "minos" || ($1 == "version" && cmd == "LC_VERSION_MIN_MACOSX") { print $2; exit } $1 == "cmd" { cmd = $2 }')
+          echo "the oldest macOS it starts on: $oldest"
+          test "$oldest" = "$MACOSX_DEPLOYMENT_TARGET"
 
       - name: Nothing has to be installed beside it (Windows, no Visual C++ runtime)
         if: runner.os == 'Windows'
