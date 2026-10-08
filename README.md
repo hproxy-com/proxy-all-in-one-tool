@@ -4,9 +4,9 @@
 
 <p align="center">
   <a href="https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe"><img src="assets/download-windows.svg" alt="Download HProxy for Windows" width="236" height="60"></a>
-  <a href="macOS/"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/coming-macos-dark.svg"><img src="assets/coming-macos.svg" alt="HProxy for macOS: coming soon" width="236" height="60"></picture></a><br>
+  <a href="https://play.google.com/store/apps/details?id=com.hproxy.app"><img src="assets/download-android.svg" alt="HProxy for Android on Google Play" width="236" height="60"></a><br>
+  <a href="macOS/"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/coming-macos-dark.svg"><img src="assets/coming-macos.svg" alt="HProxy for macOS: coming soon" width="236" height="60"></picture></a>
   <a href="Linux/"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/coming-linux-dark.svg"><img src="assets/coming-linux.svg" alt="HProxy for Linux: coming soon" width="236" height="60"></picture></a>
-  <a href="Android/"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/coming-android-dark.svg"><img src="assets/coming-android.svg" alt="HProxy for Android: coming soon" width="236" height="60"></picture></a>
 </p>
 
 <p align="center">
@@ -25,10 +25,10 @@
 
 | System | | |
 | --- | --- | --- |
-| **Windows** 10 and 11 | **[Download the installer](https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe)** | [how to install](Windows/) |
+| **Windows** 10 and 11 | **[Download the installer](https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe)** or the **[Microsoft Store](https://apps.microsoft.com/detail/9NPDSV0K3J1X)** | [how to install](Windows/) |
 | **macOS** 12 and later, Apple Silicon and Intel | with the next version | [macOS](macOS/) |
 | **Linux** x86_64: AppImage and .deb | with the next version | [Linux](Linux/) |
-| **Android** 7 and later | Google Play and the APK | [Android](Android/) |
+| **Android** 7 and later | **[Get it on Google Play](https://play.google.com/store/apps/details?id=com.hproxy.app)** | [Android](Android/) |
 | **Command line and AI assistants** on macOS, Linux and Windows, x64 and ARM | **[Install in one line](#command-line)** | [all the commands](source-code/README.md#command-line) |
 
 ## Command line
