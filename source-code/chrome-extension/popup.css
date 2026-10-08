@@ -1212,6 +1212,20 @@ button {
   font-size: 12px;
 }
 
+/* A copy loaded by hand ("Load unpacked" from the source code) never updates: one line above
+   the footer says so and links the store's copy (popup.js, flagHandLoadedCopy). Words only. */
+.hand-loaded {
+  margin: 6px 0 0;
+  padding: 10px 14px 0;
+  border-top: 1px solid var(--hairline);
+  color: var(--ink-mute);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.hand-loaded[hidden] {
+  display: none;
+}
+
 .panel:not([hidden]) {
   animation: panel-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
