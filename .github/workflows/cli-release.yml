@@ -1,0 +1,120 @@
+name: Command-line tool
+
+# Builds the hproxy command-line tool from source-code/ for macOS (Apple Silicon and Intel),
+# Linux (x86_64, one static file) and Windows (x86_64), and attaches the files, their SHA-256
+# sums and a signed record of how each was built to a release named cli-v<version>.
+#
+# Started by hand (Actions, Command-line tool, Run workflow) or by pushing a tag cli-v<version>.
+# It uses no secret: only this repository's own token, and only GitHub's own actions.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["cli-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.file }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            file: hproxy-cli-macos-arm64
+            runs: true
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            file: hproxy-cli-macos-x86_64
+            runs: false
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            file: hproxy-cli-linux-x86_64
+            runs: true
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            file: hproxy-cli-windows-x86_64.exe
+            runs: true
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: source-code
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the musl tools (Linux, for one static file)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Add the target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked -p hproxy-cli --target ${{ matrix.target }}
+
+      - name: Name the file
+        run: |
+          src="target/${{ matrix.target }}/release/hproxy"
+          if [ "${{ runner.os }}" = "Windows" ]; then src="$src.exe"; fi
+          cp "$src" "../${{ matrix.file }}"
+
+      - name: It starts
+        if: matrix.runs
+        run: |
+          ../${{ matrix.file }} --version
+          ../${{ matrix.file }} --help > /dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.file }}
+          path: ${{ matrix.file }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: The sums
+        run: cd dist && sha256sum hproxy-cli-* > SHA256SUMS && cat SHA256SUMS
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/hproxy-cli-*
+
+      - name: The release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' source-code/Cargo.toml | head -1)
+          tag="cli-v${version}"
+          cat > notes.md <<EOF
+          The hproxy command-line tool ${version}: check proxies, list the free pool, look up an address, connect through a proxy, and give the same tools to an AI assistant with \`hproxy mcp\`.
+
+          Built by this repository's workflow from \`source-code/\` at this commit, with no secret involved. Check a file against \`SHA256SUMS\`, or its build record with \`gh attestation verify <file> --repo hproxy-com/proxy-all-in-one-tool\`.
+
+          | File | System |
+          | --- | --- |
+          | \`hproxy-cli-macos-arm64\` | macOS, Apple Silicon |
+          | \`hproxy-cli-macos-x86_64\` | macOS, Intel |
+          | \`hproxy-cli-linux-x86_64\` | Linux x86_64, one static file |
+          | \`hproxy-cli-windows-x86_64.exe\` | Windows x86_64 |
+          EOF
+          if ! gh release view "$tag" > /dev/null 2>&1; then
+            gh release create "$tag" --title "hproxy command-line tool ${version}" --notes-file notes.md --target "$GITHUB_SHA"
+          fi
+          gh release upload "$tag" dist/* --clobber
