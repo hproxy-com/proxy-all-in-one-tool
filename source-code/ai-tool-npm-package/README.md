@@ -1,6 +1,9 @@
 # hproxy-mcp
 
-HProxy's free proxy tools, as tools your AI assistant can call. Also a CLI.
+HProxy's free proxy tools, as tools your AI assistant can call, written in Node. Also a CLI.
+
+> **Not on npm.** This package has never been published. Run it from this folder, as shown below.
+> A package called `hproxy-mcp` on npm is not HProxy's: do not install it.
 
 Three endpoints, no key, no account:
 
@@ -10,39 +13,60 @@ Three endpoints, no key, no account:
 | `proxy_check` | A real live test on any proxy: alive, protocols, anonymity, latency, location. Up to 25 per call. |
 | `ip_lookup` | Any public IP: country, region, city, coordinates, timezone, ASN and the network behind it. |
 
-Node 18 or newer. No dependencies.
+## The easiest way: nothing to install
 
-## As an MCP server
+HProxy runs the same three tools as a hosted MCP server, `https://mcp.hproxy.com/mcp`
+(Streamable HTTP, no authentication). In Claude Code:
+
+```bash
+claude mcp add --transport http hproxy https://mcp.hproxy.com/mcp
+```
+
+The line for every other assistant is on <https://hproxy.com/tools/ai>.
+
+## On your own computer: the hproxy command
+
+The same tools as a local MCP server, in one file for macOS, Linux and Windows, on x64 and ARM:
+
+```bash
+curl -fsSL https://hproxy.com/install.sh | sh     # macOS and Linux
+irm https://hproxy.com/install.ps1 | iex          # Windows, in PowerShell
+claude mcp add hproxy -- hproxy mcp
+```
+
+## This folder: the Node version
+
+Node 18 or newer. No dependencies. From a copy of this folder:
 
 **Claude Code**
 
 ```bash
-claude mcp add hproxy -- npx -y hproxy-mcp
+claude mcp add hproxy -- node /path/to/ai-tool-npm-package/index.mjs
 ```
 
-**Claude Desktop** — `claude_desktop_config.json`:
+**Claude Desktop**, in `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "hproxy": {
-      "command": "npx",
-      "args": ["-y", "hproxy-mcp"]
+      "command": "node",
+      "args": ["/path/to/ai-tool-npm-package/index.mjs"]
     }
   }
 }
 ```
 
-**Cursor** — `.cursor/mcp.json`, same shape. So do Windsurf, Cline and anything else that speaks MCP over stdio.
+**Cursor**, in `.cursor/mcp.json`: the same shape. So do Windsurf, Cline and anything else that speaks MCP over stdio.
 
 Then just ask: *"give me 20 elite German socks5 proxies and check which are alive"*.
 
-## As a CLI
+### As a CLI
 
 ```bash
-npx hproxy-mcp list --country de --protocol socks5 --limit 20
-npx hproxy-mcp check 203.0.113.7:1080 198.51.100.3:8080
-npx hproxy-mcp ip 8.8.8.8
+node index.mjs list --country de --protocol socks5 --limit 20
+node index.mjs check 203.0.113.7:1080 198.51.100.3:8080
+node index.mjs ip 8.8.8.8
 ```
 
 Every command prints JSON, so it pipes into `jq` and into scripts.
@@ -81,9 +105,13 @@ node test.mjs     # speaks the protocol to the real server, calls every tool liv
 
 ## Releasing
 
-Updates are expected to be frequent, so the release is one command and the
-tests are not optional: `prepublishOnly` runs the live suite, so a broken
-build cannot reach npm.
+Not published yet, and the name `hproxy-mcp` is still free on npm. Claim it under
+HProxy's own npm account before any page or README prints an `npx` line again:
+whoever owns the name decides what that line runs on every machine that copies it.
+
+Once it is published, updates are expected to be frequent, so the release is one
+command and the tests are not optional: `prepublishOnly` runs the live suite, so a
+broken build cannot reach npm.
 
 ```bash
 npm run release:patch    # 1.0.0 -> 1.0.1, tests, then publish
@@ -103,10 +131,5 @@ Two things worth knowing before you ship:
 - `files` ships only `index.mjs` and this README. Check with `npm pack --dry-run`
   that nothing else crept in, because a tarball cannot be taken back: npm only
   allows unpublishing within 72 hours, and never if anything depends on it.
-
-The install line printed on the site (`npx -y hproxy-mcp`) and in the
-`AiToolBand` component assumes this exact package name, and that line now
-appears on roughly half a million pages. If the name ever changes, those change
-with it.
 
 MIT.
