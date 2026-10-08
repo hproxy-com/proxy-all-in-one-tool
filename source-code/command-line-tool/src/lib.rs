@@ -19,6 +19,7 @@ mod check;
 mod connect;
 mod hint;
 mod mcp;
+mod newer;
 mod probe;
 mod rows;
 mod web;
@@ -129,6 +130,12 @@ EXIT CODES
   0  found what was asked for (check: at least one proxy works)
   1  ran fine, nothing works
   2  could not run: bad usage, unreadable input, a service out of reach
+
+NEW VERSIONS
+  Once a day, after a command run at a terminal, hproxy asks hproxy.com
+  whether a newer version is out and says so in one line on stderr. Never
+  with --json or --fields, never for the MCP server, never in a pipe.
+  HPROXY_NO_UPDATE_CHECK=1 turns it off.
 ";
 
 fn usage() -> String {
@@ -244,6 +251,8 @@ pub fn run(args: Vec<String>) -> u8 {
             return 2;
         }
     };
+    // A newer `hproxy`, once a day, beside a command a person runs (newer.rs).
+    let look = newer::start(&rt, cmd, rest);
     let outcome = match cmd {
         "check" => rt.block_on(check::command(rest)),
         "list" => rt.block_on(web::list(rest)),
@@ -261,6 +270,9 @@ pub fn run(args: Vec<String>) -> u8 {
         }
         other => Outcome::Error(hint::unknown_command(other)),
     };
+    if let Some(look) = look {
+        newer::finish(&rt, look);
+    }
     // Leftover probes of a stopped run must not hold the process open.
     rt.shutdown_timeout(std::time::Duration::from_millis(200));
     match outcome {

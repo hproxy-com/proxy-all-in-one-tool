@@ -39,6 +39,11 @@ pub fn set_inside_app() {
     INSIDE_APP.store(true, Ordering::SeqCst);
 }
 
+/// Whether this program is the desktop app's own, running a command as the tool.
+pub(crate) fn inside_app() -> bool {
+    INSIDE_APP.load(Ordering::SeqCst)
+}
+
 /// The app's program as the note beside a tool copy names it, if it still exists.
 fn named_in(dir: &Path) -> Option<PathBuf> {
     let note = std::fs::read_to_string(dir.join(COPIED_FROM)).ok()?;
