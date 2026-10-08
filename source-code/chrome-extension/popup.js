@@ -1088,7 +1088,20 @@ on("byoInput", "keydown", (e) => {
 
 /* ── init ───────────────────────────────────────────────────────────── */
 
+/* A copy loaded by hand ("Load unpacked" from the source code) never updates,
+   and it has another ID than the Chrome Web Store's copy: say so, with the way
+   to the store's copy, which Chrome keeps up to date. */
+async function flagHandLoadedCopy() {
+  try {
+    const self = await chrome.management?.getSelf?.();
+    show("handLoaded", self?.installType === "development");
+  } catch {
+    /* a browser that does not say */
+  }
+}
+
 async function init() {
+  void flagHandLoadedCopy();
   await loadSettings();
   favCountries = await store.get("sync", "hproxy_fav_countries", []);
   lastTarget = await store.get("local", LAST_KEY, null);
