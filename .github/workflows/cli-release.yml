@@ -243,4 +243,8 @@ jobs:
             echo "::error::$tag is released already, and a release never changes. Raise the version in source-code/Cargo.toml to build a new one."
             exit 1
           fi
-          gh release create "$tag" dist/* --title "hproxy command-line tool ${version}" --notes-file notes.md --target "$GITHUB_SHA"
+          # A draft first, every file attached, then published: nobody ever sees a release without
+          # all its files, and the repository's immutable releases lock them once it is out.
+          gh release create "$tag" --draft --title "hproxy command-line tool ${version}" --notes-file notes.md --target "$GITHUB_SHA"
+          gh release upload "$tag" dist/*
+          gh release edit "$tag" --draft=false
