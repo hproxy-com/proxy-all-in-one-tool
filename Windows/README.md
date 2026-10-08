@@ -17,3 +17,18 @@ before it installs anything. While you use the app it waits for your click; whil
 it updates quietly.
 
 The Microsoft Store version is on its way; the Store will keep that one up to date.
+
+## Command line
+
+The command-line tool is out now, for Windows 10 and 11 on x64 and on ARM: `hproxy`, the same
+engine without a window, in one file. In PowerShell:
+
+```powershell
+irm https://hproxy.com/install.ps1 | iex
+```
+
+It picks the file for your processor, checks it against its SHA-256 and puts it in
+`%LOCALAPPDATA%\hproxy`, which it adds to your PATH, without administrator rights. Nothing has to be
+installed beside it: the file carries its own runtime. The files are on
+[the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.2.8). The
+commands are in [source-code/README.md](../source-code/README.md#command-line).
