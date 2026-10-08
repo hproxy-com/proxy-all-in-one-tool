@@ -27,7 +27,7 @@ dist-ssr
 /target/
 
 # Installers built on this machine, kept in one place to find them (never committed)
-/builds/
+/finished-installers/
 
 # The macOS 26 icon catalog, compiled from icons/macos/AppIcon.icon on the macOS runner
 desktop-app/src-tauri/icons/macos/build/
@@ -36,3 +36,6 @@ desktop-app/src-tauri/icons/macos/build/
 # desktop-app/scripts/marketing-shots.mjs; only the .webp for the web is kept
 desktop-app/store/marketing/raw/
 desktop-app/store/marketing/*.png
+# Google Play pictures: the raw app screens are drawn again by
+# desktop-app/scripts/store-play-images.mjs; only the finished pictures are kept
+desktop-app/store/google-play/listing/raw-*.png
