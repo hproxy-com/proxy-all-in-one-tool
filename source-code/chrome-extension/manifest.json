@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "HProxy: Proxy Connector and Checker",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minimum_chrome_version": "110",
   "description": "Connect Chrome through your own proxy in one click and see what it really does, or through a tested free proxy by country.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3VVpPJuxf1EuqukThJDDOHfYpi3Q7k08egZgDOFqA3SxacbTlW/uhS6o/e2lEjYl6NdXxpiTtywTfWu49VbFXVxHkdNyHJiQTohNyYoDvhZRs1l+UTQE/oD0WiF4aeKDDcqDqSG9kswWAyNv8+hncZOi9bG7aq3RU+ExaIpz2NJEJCmEMKxB4WChesxjfLejfTWuTFY50PcKv5YGR/CutX7UaGQApljkbaQF1LIfJwKXz8DBIcuR+M8B2c/63ZXydtrdPYBPmL8t35MdU/mk72LhxAxSXhYWi7WHc37kBPyxKe8C3p6yKfo8Fm5NeSwXD/hJ9AijNtujghclImAjAQIDAQAB",
