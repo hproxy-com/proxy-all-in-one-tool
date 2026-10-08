@@ -2,9 +2,9 @@
 
 For Android 7 and later.
 
-- **Google Play**: on its way.
-- **APK**: arrives on the **[Releases page](https://github.com/hproxy-com/proxy-all-in-one-tool/releases)**
-  with the next version. Open the file and allow installs from that source once.
+**[Get it on Google Play](https://play.google.com/store/apps/details?id=com.hproxy.app)**: "HProxy: Proxy
+Check & Connect". Google Play keeps it up to date. There is no APK to download: Google Play signs
+its copy itself, so a copy from anywhere else could never take its updates.
 
 ## Connect on a phone
 
