@@ -1,14 +1,26 @@
 name: Command-line tool
 
-# Builds the hproxy command-line tool from source-code/ for macOS (Apple Silicon and Intel),
-# Linux (x86_64, one static file) and Windows (x86_64), and attaches the files, their SHA-256
-# sums and a signed record of how each was built to a release named cli-v<version>.
+# Builds the hproxy command-line tool from source-code/ for every system and processor it runs on,
+# proves that each file starts and reaches hproxy.com on a machine of its kind, and attaches the
+# files, their SHA-256 sums and a signed record of how each was built to a release named
+# cli-v<version>.
 #
-# Started by hand (Actions, Command-line tool, Run workflow) or by pushing a tag cli-v<version>.
-# It uses no secret: only this repository's own token, and only GitHub's own actions.
+# Started by hand (Actions, Command-line tool, Run workflow): unticked, "publish" only builds and
+# proves every file; ticked, or on a pushed tag cli-v<version>, it also makes the release. A version
+# is built once: hproxy.com's installers check every file against the sum published here, so the
+# files of a release never change.
+#
+# Every file stands alone: a Linux file carries its own C library (musl), a Windows file its own C
+# runtime, so nothing has to be installed beside it. It uses no secret: only this repository's own
+# token, and only GitHub's own actions.
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Make the release (unticked: build and prove every file only)"
+        type: boolean
+        default: false
   push:
     tags: ["cli-v*"]
 
@@ -25,33 +37,75 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             file: hproxy-cli-macos-arm64
-            runs: true
+            run: native
           - os: macos-latest
             target: x86_64-apple-darwin
             file: hproxy-cli-macos-x86_64
-            runs: false
+            run: "no"
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-musl
             file: hproxy-cli-linux-x86_64
-            runs: true
+            run: native
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            file: hproxy-cli-linux-arm64
+            run: native
+          - os: ubuntu-22.04
+            target: arm-unknown-linux-musleabihf
+            file: hproxy-cli-linux-armv6
+            run: qemu
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             file: hproxy-cli-windows-x86_64.exe
-            runs: true
+            run: native
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            file: hproxy-cli-windows-arm64.exe
+            run: "no"
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
         working-directory: source-code
+    env:
+      # The oldest macOS each Mac file starts on: the first for Apple Silicon, High Sierra for Intel.
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target == 'x86_64-apple-darwin' && '10.13' || '11.0' }}
+      # Windows: the C runtime inside the program, so it starts on a Windows that has no Visual C++
+      # runtime installed.
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+      CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+      # 64-bit ARM Linux: Ubuntu's musl-gcc (the cc crate would look for aarch64-linux-musl-gcc).
+      CC_aarch64_unknown_linux_musl: musl-gcc
+      # 32-bit ARM Linux, ARMv6 and newer (every Raspberry Pi): Ubuntu's ARM compiler; the cc crate
+      # adds -march=armv6 -marm -mfpu=vfp for this target.
+      CC_arm_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
+      AR_arm_unknown_linux_musleabihf: arm-linux-gnueabihf-ar
+      CARGO_TARGET_ARM_UNKNOWN_LINUX_MUSLEABIHF_LINKER: arm-linux-gnueabihf-gcc
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install the musl tools (Linux, for one static file)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Rust (a machine without it gets it from rustup.rs)
+        run: |
+          if ! command -v cargo > /dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Linux tools (musl; for 32-bit ARM the ARM compiler and an ARMv6 machine to run on)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          if [ "${{ matrix.target }}" = arm-unknown-linux-musleabihf ]; then
+            sudo apt-get install -y gcc-arm-linux-gnueabihf qemu-user
+          fi
 
       - name: Add the target
         run: rustup target add ${{ matrix.target }}
+
+      - name: The C compiler for ARM Windows (ring compiles its C code with clang there)
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        run: clang --version
 
       - name: Build
         run: cargo build --release --locked -p hproxy-cli --target ${{ matrix.target }}
@@ -62,11 +116,45 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then src="$src.exe"; fi
           cp "$src" "../${{ matrix.file }}"
 
-      - name: It starts
-        if: matrix.runs
+      - name: Nothing has to be installed beside it (Linux)
+        if: runner.os == 'Linux'
+        working-directory: .
         run: |
-          ../${{ matrix.file }} --version
-          ../${{ matrix.file }} --help > /dev/null
+          file "${{ matrix.file }}" | tee kind.txt
+          grep -Eq "statically linked|static-pie linked" kind.txt
+
+      - name: Nothing has to be installed beside it (macOS), and the oldest macOS it starts on
+        if: runner.os == 'macOS'
+        working-directory: .
+        run: |
+          otool -L "${{ matrix.file }}" | tee libs.txt
+          if tail -n +2 libs.txt | grep -Ev "^[[:space:]]+/(usr/lib|System/Library)/"; then
+            echo "::error::a library outside the system"; exit 1
+          fi
+          vtool -show-build "${{ matrix.file }}" | grep -E "minos|platform"
+
+      - name: Nothing has to be installed beside it (Windows, no Visual C++ runtime)
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $dumpbin = & $vswhere -latest -products * -find 'VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          $needs = & $dumpbin /nologo /dependents "${{ matrix.file }}"
+          $needs
+          if ($needs -match 'VCRUNTIME|MSVCP|api-ms-win-crt') { throw 'the program still needs the Visual C++ runtime' }
+
+      - name: It starts and reaches hproxy.com
+        if: matrix.run != 'no'
+        working-directory: .
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' source-code/Cargo.toml | head -1)
+          run="./${{ matrix.file }}"
+          if [ "${{ matrix.run }}" = qemu ]; then run="qemu-arm -cpu arm1176 ./${{ matrix.file }}"; fi
+          $run --version | tee said.txt
+          grep -q "hproxy $version" said.txt
+          $run --help > /dev/null
+          $run list --limit 2
 
       - uses: actions/upload-artifact@v4
         with:
@@ -74,8 +162,31 @@ jobs:
           path: ${{ matrix.file }}
           if-no-files-found: error
 
-  release:
+  windows-arm:
+    name: hproxy-cli-windows-arm64.exe on Windows on ARM
     needs: build
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: hproxy-cli-windows-arm64.exe
+
+      - name: It starts and reaches hproxy.com
+        shell: powershell
+        run: |
+          $version = (Select-String -Path source-code\Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $said = .\hproxy-cli-windows-arm64.exe --version
+          $said
+          if ($said -notmatch [regex]::Escape("hproxy $version")) { throw "it says $said, not hproxy $version" }
+          .\hproxy-cli-windows-arm64.exe --help | Out-Null
+          .\hproxy-cli-windows-arm64.exe list --limit 2
+          if ($LASTEXITCODE -ne 0) { throw "list ended with $LASTEXITCODE" }
+
+  release:
+    needs: [build, windows-arm]
+    if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -105,16 +216,19 @@ jobs:
           cat > notes.md <<EOF
           The hproxy command-line tool ${version}: check proxies, list the free pool, look up an address, connect through a proxy, and give the same tools to an AI assistant with \`hproxy mcp\`.
 
-          Install it in one line: \`curl -fsSL https://hproxy.com/install.sh | sh\` on macOS and Linux, or \`irm https://hproxy.com/install.ps1 | iex\` in PowerShell on Windows. The installer checks the file against its SHA-256 before it puts it in place.
+          Install it in one line: \`curl -fsSL https://hproxy.com/install.sh | sh\` on macOS and Linux, or \`irm https://hproxy.com/install.ps1 | iex\` in PowerShell on Windows. The installer picks the file for your system and processor and checks it against its SHA-256 before it puts it in place.
 
-          Built by this repository's workflow from \`source-code/\` at this commit, with no secret involved. Check a file against \`SHA256SUMS\`, or its build record with \`gh attestation verify <file> --repo hproxy-com/proxy-all-in-one-tool\`.
+          Built by this repository's workflow from \`source-code/\` at this commit, with no secret involved. Each file stands alone: the Linux files carry their own C library, the Windows files their own C runtime. Check a file against \`SHA256SUMS\`, or its build record with \`gh attestation verify <file> --repo hproxy-com/proxy-all-in-one-tool\`.
 
           | File | System |
           | --- | --- |
-          | \`hproxy-cli-macos-arm64\` | macOS, Apple Silicon |
-          | \`hproxy-cli-macos-x86_64\` | macOS, Intel |
-          | \`hproxy-cli-linux-x86_64\` | Linux x86_64, one static file |
-          | \`hproxy-cli-windows-x86_64.exe\` | Windows x86_64 |
+          | \`hproxy-cli-macos-arm64\` | macOS 11 and later, Apple Silicon |
+          | \`hproxy-cli-macos-x86_64\` | macOS 10.13 and later, Intel |
+          | \`hproxy-cli-linux-x86_64\` | Linux on x86_64, any distribution |
+          | \`hproxy-cli-linux-arm64\` | Linux on 64-bit ARM: ARM servers, Raspberry Pi 3, 4 and 5 with a 64-bit system |
+          | \`hproxy-cli-linux-armv6\` | Linux on 32-bit ARM: every Raspberry Pi with a 32-bit system, Pi Zero and Pi 1 included |
+          | \`hproxy-cli-windows-x86_64.exe\` | Windows 10 and 11, x64 |
+          | \`hproxy-cli-windows-arm64.exe\` | Windows 11 on ARM |
           EOF
           # A version is built once. hproxy.com's installers check every file against the sum
           # published here, so the files of a release never change: to build again, raise the
