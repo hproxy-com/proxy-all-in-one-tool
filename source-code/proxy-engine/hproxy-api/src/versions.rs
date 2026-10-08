@@ -23,8 +23,9 @@ const MAX_NOTES: usize = 4000;
 pub struct Release {
     /// Three numbers, like `0.2.4`: the newest version shipped anywhere.
     pub version: String,
-    /// The version each channel has live, by channel name (`hproxy.com`, `microsoft-store`,
-    /// `google-play`, `apk`). A channel that is missing has nothing to offer yet.
+    /// The version each channel has live, by channel name: `windows`, `macos`, `linux-appimage`,
+    /// `linux-deb`, `linux-rpm`, `microsoft-store`, `google-play`, `apk` (the app names its own in
+    /// desktop-app/src-tauri/src/channel.rs). A channel that is missing has nothing to offer yet.
     #[serde(default)]
     pub channels: BTreeMap<String, String>,
     /// The oldest version that still works as it should. A copy below it is told to update and
@@ -82,7 +83,11 @@ pub fn verdict(current: &str, release: &Release, channel: &str) -> Option<Verdic
     let live = release.channels.get(channel).filter(|v| parse_version(v).is_some());
     let newer = live.filter(|v| parse_version(v).is_some_and(|v| v > running)).cloned();
     // An update can only be required when the channel has one to take.
-    let below_minimum = release.minimum.as_deref().and_then(parse_version).is_some_and(|m| running < m);
+    let below_minimum = release
+        .minimum
+        .as_deref()
+        .and_then(parse_version)
+        .is_some_and(|m| running < m);
     // The notes describe the newest version: they are shown only when that is what the channel has.
     let describes = newer.as_deref() == Some(release.version.as_str());
     Some(Verdict {
@@ -92,6 +97,26 @@ pub fn verdict(current: &str, release: &Release, channel: &str) -> Option<Verdic
         notes: release.notes.clone().filter(|_| describes),
         date: release.date.clone().filter(|_| describes),
     })
+}
+
+/// What a version check sends as its User-Agent: the program, its version and its channel, and
+/// nothing else (`hproxy-checker/0.2.4 (windows)`, `hproxy/0.2.4 (cli)`). It is how the site
+/// can count how many copies run each version, without any other request.
+pub fn user_agent(program: &str, version: &str, channel: &str) -> String {
+    format!("{program}/{version} ({channel})")
+}
+
+/// Ask the list what `channel` has for a copy of `program` running `version`: Ok(None) when the
+/// list says nothing for this copy (a development build, no app entry), Err when the list could
+/// not be read (offline, missing).
+pub async fn check(program: &str, version: &str, channel: &str) -> Result<Option<Verdict>, String> {
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent(user_agent(program, version, channel))
+        .build()
+        .map_err(|e| format!("could not set up the version check: {e}"))?;
+    let list = fetch(&http, DEFAULT_VERSIONS_URL).await?;
+    Ok(list.app.and_then(|app| verdict(version, &app, channel)))
 }
 
 /// Read the file. Each product whose entry does not read is left out rather than failing the
@@ -142,7 +167,7 @@ mod tests {
 
     /// A release whose every channel has `version`.
     fn release(version: &str, minimum: Option<&str>) -> Release {
-        let channels = ["hproxy.com", "microsoft-store", "google-play", "apk"]
+        let channels = ["windows", "microsoft-store", "google-play", "apk"]
             .into_iter()
             .map(|c| (c.to_string(), version.to_string()))
             .collect();
@@ -159,9 +184,28 @@ mod tests {
     fn a_version_is_three_numbers_and_nothing_else() {
         assert_eq!(parse_version("0.2.4"), Some((0, 2, 4)));
         assert_eq!(parse_version(" 10.0.12 "), Some((10, 0, 12)));
-        for not_a_version in ["", "dev", "0.2", "0.2.4.0", "0.2.x", "v0.2.4", "0.2.4-beta", "+1.2.3", "1..3"] {
+        for not_a_version in [
+            "",
+            "dev",
+            "0.2",
+            "0.2.4.0",
+            "0.2.x",
+            "v0.2.4",
+            "0.2.4-beta",
+            "+1.2.3",
+            "1..3",
+        ] {
             assert_eq!(parse_version(not_a_version), None, "{not_a_version}");
         }
+    }
+
+    #[test]
+    fn the_check_names_the_program_its_version_and_its_channel_and_nothing_else() {
+        assert_eq!(
+            user_agent("hproxy-checker", "0.2.4", "linux-deb"),
+            "hproxy-checker/0.2.4 (linux-deb)"
+        );
+        assert_eq!(user_agent("hproxy", "0.2.4", "cli"), "hproxy/0.2.4 (cli)");
     }
 
     #[test]
@@ -186,9 +230,13 @@ mod tests {
         let mut r = release("0.2.4", None);
         r.channels.insert("microsoft-store".into(), "0.2.3".into());
         r.channels.remove("google-play");
-        assert_eq!(verdict("0.2.3", &r, "hproxy.com").unwrap().newer.as_deref(), Some("0.2.4"));
+        assert_eq!(verdict("0.2.3", &r, "windows").unwrap().newer.as_deref(), Some("0.2.4"));
         assert_eq!(verdict("0.2.3", &r, "microsoft-store").unwrap().newer, None);
-        assert_eq!(verdict("0.2.3", &r, "google-play").unwrap().newer, None, "no entry: nothing to offer yet");
+        assert_eq!(
+            verdict("0.2.3", &r, "google-play").unwrap().newer,
+            None,
+            "no entry: nothing to offer yet"
+        );
         assert_eq!(verdict("0.2.3", &r, "a-channel-nobody-knows").unwrap().newer, None);
     }
 
@@ -199,7 +247,10 @@ mod tests {
         let store = verdict("0.2.3", &r, "microsoft-store").unwrap();
         assert_eq!(store.newer.as_deref(), Some("0.2.4"));
         assert_eq!(store.notes, None, "the notes are 0.2.5's, not 0.2.4's");
-        assert_eq!(verdict("0.2.3", &r, "apk").unwrap().notes.as_deref(), Some("What changed."));
+        assert_eq!(
+            verdict("0.2.3", &r, "apk").unwrap().notes.as_deref(),
+            Some("What changed.")
+        );
     }
 
     #[test]
@@ -207,7 +258,11 @@ mod tests {
         let v = verdict("0.1.9", &release("0.2.4", Some("0.2.0")), "google-play").unwrap();
         assert_eq!(v.newer.as_deref(), Some("0.2.4"));
         assert!(v.required);
-        assert!(!verdict("0.2.0", &release("0.2.4", Some("0.2.0")), "google-play").unwrap().required);
+        assert!(
+            !verdict("0.2.0", &release("0.2.4", Some("0.2.0")), "google-play")
+                .unwrap()
+                .required
+        );
     }
 
     #[test]
@@ -216,7 +271,10 @@ mod tests {
         assert!(!v.required);
         let mut r = release("0.2.4", Some("0.2.4"));
         r.channels.insert("microsoft-store".into(), "0.2.3".into());
-        assert!(!verdict("0.2.3", &r, "microsoft-store").unwrap().required, "the store does not have it yet");
+        assert!(
+            !verdict("0.2.3", &r, "microsoft-store").unwrap().required,
+            "the store does not have it yet"
+        );
     }
 
     #[test]
@@ -229,7 +287,7 @@ mod tests {
         let raw = json!({
             "app": {
                 "version": "0.2.4", "minimum": "zero", "date": "2026-09-30T10:00:00Z", "notes": "One box.",
-                "channels": { "hproxy.com": "0.2.4", "microsoft-store": "soon" }
+                "channels": { "windows": "0.2.4", "microsoft-store": "soon" }
             },
             "extension": { "version": "one" },
             "phone-app-of-the-future": { "version": "9.9.9" }
@@ -239,7 +297,11 @@ mod tests {
         assert_eq!(app.version, "0.2.4");
         assert_eq!(app.minimum, None, "a minimum that is not a version is ignored");
         assert_eq!(app.notes.as_deref(), Some("One box."));
-        assert_eq!(app.channels.len(), 1, "a channel whose version is not a version is left out");
+        assert_eq!(
+            app.channels.len(),
+            1,
+            "a channel whose version is not a version is left out"
+        );
         assert_eq!(v.extension, None, "a release without a real version is left out");
     }
 

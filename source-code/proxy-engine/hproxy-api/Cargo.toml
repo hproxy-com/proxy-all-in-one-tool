@@ -18,3 +18,5 @@ log = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 # join_all fans out the batched location lookups; StreamExt reads the API stream.
 futures = "0.3"
+# The made-up names of the DNS leak test (leak.rs) come from the system's randomness.
+getrandom = "0.2"

@@ -63,6 +63,10 @@ pub struct GeoData {
     pub asn_org: Option<String>,
     #[serde(default)]
     pub is_datacenter: Option<bool>,
+    /// The IANA zone of the place, e.g. "America/Chicago": what a computer
+    /// there would have its clock set to (the Connect panel's time zone check).
+    #[serde(default)]
+    pub timezone: Option<String>,
 }
 
 impl GeoData {
@@ -86,6 +90,7 @@ pub struct GeoLabel {
     pub asn: Option<i32>,
     pub asn_org: Option<String>,
     pub is_datacenter: Option<bool>,
+    pub timezone: Option<String>,
 }
 
 impl GeoLabel {
@@ -98,6 +103,7 @@ impl GeoLabel {
             asn: g.asn,
             asn_org: g.asn_org.clone(),
             is_datacenter: g.is_datacenter,
+            timezone: g.timezone.clone(),
         }
     }
 }
@@ -591,8 +597,10 @@ mod tests {
                 asn: Some(63949),
                 asn_org: Some("Akamai Technologies, Inc.".into()),
                 is_datacenter: Some(true),
+                timezone: Some("America/Chicago".into()),
             },
         );
+        assert_eq!(geo.label("198.51.100.44").and_then(|l| l.timezone).as_deref(), Some("America/Chicago"));
         let mut r = CheckResult::default();
         geo.enrich("198.51.100.44", &mut r);
         assert_eq!(r.country_code.as_deref(), Some("US"));
@@ -601,6 +609,18 @@ mod tests {
         assert_eq!(r.asn, Some(63949));
         assert_eq!(r.asn_org.as_deref(), Some("Akamai Technologies, Inc."));
         assert_eq!(r.is_datacenter, Some(true));
+    }
+
+    /// The API's own answer (hproxy.com/api/ip/8.8.8.8, 2026-09-28) reads with
+    /// its time zone, which the Connect panel compares with the computer's clock.
+    #[test]
+    fn the_api_answer_carries_the_time_zone() {
+        let g: GeoData = serde_json::from_str(
+            r#"{"asn":15169,"asn_org":"Google LLC","country":"US","country_name":"United States","ip":"8.8.8.8","is_datacenter":true,"isp":"Google LLC","latitude":37.751,"longitude":-97.822,"timezone":"America/Chicago"}"#,
+        )
+        .unwrap();
+        assert_eq!(g.timezone.as_deref(), Some("America/Chicago"));
+        assert_eq!(GeoLabel::new("8.8.8.8", &g).timezone.as_deref(), Some("America/Chicago"));
     }
 
     /// The engine's resolved address wins over the pasted host, so a proxy given

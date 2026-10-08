@@ -5,6 +5,8 @@
 //!   check_api  `https://hproxy.com/api/free-proxy/check`: checking on our
 //!              servers instead of the user's own line, streamed back as NDJSON.
 //!   free_list  `https://hproxy.com/api/proxy-list`: the live free proxy list.
+//!   leak       `https://hproxy.com/api/leak/<name>`: which resolver a proxy looks
+//!              names up with (the DNS row of the Connect panel's leak check).
 //!   fraud      the fraud score of an address: FFraud's free public lookup by
 //!              default, or the person's own key at another service.
 //!   versions   `https://hproxy.com/downloads/versions.json`: the newest version
@@ -19,6 +21,7 @@ pub mod check_api;
 pub mod fraud;
 pub mod free_list;
 pub mod geo;
+pub mod leak;
 pub mod versions;
 
 /// The HTTP client type the functions here take, so callers can hold one
