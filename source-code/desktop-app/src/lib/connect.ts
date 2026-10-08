@@ -167,10 +167,16 @@ export function ruleWords(rule: RotationRule, n?: number): string {
    the app opens ready to reconnect with one click.
    ============================================================ */
 
+/** A free place is a country of the pool ("" anywhere) and a protocol. With
+    `exit` it is one free proxy picked from the Free tab's list (host:port,
+    `exitCountry` its code for the flag); without, the relay picks the first
+    that passes its test. */
 export type Target =
   | { kind: "fixed"; line: string }
   | { kind: "list"; id: string }
-  | { kind: "free"; country: string; socks5: boolean };
+  | { kind: "free"; country: string; socks5: boolean; exit?: string; exitCountry?: string };
+
+export type FreeTarget = Extract<Target, { kind: "free" }>;
 
 const TARGET_KEY = "hproxy-checker-connect-target";
 
@@ -181,7 +187,14 @@ export function loadTarget(): Target | null {
     const t = JSON.parse(raw) as Target;
     if (t?.kind === "fixed" && typeof t.line === "string" && t.line.trim()) return { kind: "fixed", line: t.line };
     if (t?.kind === "list" && typeof t.id === "string") return { kind: "list", id: t.id };
-    if (t?.kind === "free" && typeof t.country === "string") return { kind: "free", country: t.country, socks5: !!t.socks5 };
+    if (t?.kind === "free" && typeof t.country === "string") {
+      const free: FreeTarget = { kind: "free", country: t.country, socks5: !!t.socks5 };
+      if (typeof t.exit === "string" && t.exit.trim()) {
+        free.exit = t.exit.trim();
+        if (typeof t.exitCountry === "string" && t.exitCountry) free.exitCountry = t.exitCountry;
+      }
+      return free;
+    }
     return null;
   } catch {
     return null;
@@ -201,8 +214,22 @@ export function sameTarget(a: Target | null, b: Target | null): boolean {
   if (!a || !b || a.kind !== b.kind) return false;
   if (a.kind === "fixed" && b.kind === "fixed") return a.line.trim() === b.line.trim();
   if (a.kind === "list" && b.kind === "list") return a.id === b.id;
-  if (a.kind === "free" && b.kind === "free") return a.country === b.country && a.socks5 === b.socks5;
+  if (a.kind === "free" && b.kind === "free") {
+    if (a.socks5 !== b.socks5 || (a.exit ?? "") !== (b.exit ?? "")) return false;
+    // A picked proxy is the same place under any country's list; the relay's
+    // own pick is a country.
+    return a.exit ? true : a.country === b.country;
+  }
   return false;
+}
+
+/** The host:port of the upstream the relay says is in use, as it prints one
+    (`http://203.0.113.5:8080 (no login)`, `socks5://user:********@[2001:db8::1]:1080`);
+    null while it says something else, such as that it is switching. */
+export function addressInUse(inUse: string): string | null {
+  const first = inUse.trim().replace(/^[a-z0-9]+:\/\//i, "").split(/\s/)[0];
+  const addr = first.slice(first.lastIndexOf("@") + 1);
+  return /^(\[[^\]\s]+\]|[^\s:@[\]]+):\d{1,5}$/.test(addr) ? addr : null;
 }
 
 /** The name of a free-pool country, or "Anywhere". */

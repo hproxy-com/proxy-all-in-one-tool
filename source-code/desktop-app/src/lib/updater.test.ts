@@ -6,17 +6,14 @@ import {
   nobodyUsing,
   pillLabel,
   reduce,
-  shouldOffer,
-  skipVersion,
-  skippedVersion,
   type UpdateInfo,
   type UpdateState,
 } from "./updater";
 
 /* The policy layer of the updater, without Tauri. What is tested here is what
    the person sees and when: the pill appears only once the bytes are on disk,
-   a failed background download stays silent, a failed install after a click
-   does not, and a skipped version stays skipped until they ask again. */
+   a failed background download stays silent, and a failed install after a
+   click does not. */
 
 const info: UpdateInfo = { version: "0.3.0", currentVersion: "0.2.0", notes: "Fixes the SOCKS4 grade." };
 
@@ -67,21 +64,6 @@ describe("reduce", () => {
   });
 });
 
-describe("shouldOffer", () => {
-  it("offers a version nobody skipped", () => {
-    expect(shouldOffer("0.3.0", null, false)).toBe(true);
-    expect(shouldOffer("0.3.0", "0.2.5", false)).toBe(true);
-  });
-
-  it("stays quiet about the exact version that was skipped", () => {
-    expect(shouldOffer("0.3.0", "0.3.0", false)).toBe(false);
-  });
-
-  it("a manual check takes even a skipped version", () => {
-    expect(shouldOffer("0.3.0", "0.3.0", true)).toBe(true);
-  });
-});
-
 describe("storage", () => {
   const store = new Map<string, string>();
   beforeEach(() => {
@@ -90,12 +72,6 @@ describe("storage", () => {
       getItem: (k: string) => store.get(k) ?? null,
       setItem: (k: string, v: string) => void store.set(k, v),
     });
-  });
-
-  it("remembers the skipped version", () => {
-    expect(skippedVersion()).toBeNull();
-    skipVersion("0.3.0");
-    expect(skippedVersion()).toBe("0.3.0");
   });
 
   it("reads the last check time as a number, or null", () => {
@@ -115,8 +91,7 @@ describe("storage", () => {
         throw new Error("blocked");
       },
     });
-    expect(skippedVersion()).toBeNull();
-    expect(() => skipVersion("0.3.0")).not.toThrow();
+    expect(lastCheckedAt()).toBeNull();
   });
 });
 

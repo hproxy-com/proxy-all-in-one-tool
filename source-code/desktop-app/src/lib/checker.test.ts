@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import corpus from "../../../engine/hproxy-probe/tests/fixtures/proxy-lines.json";
+import corpus from "../../../proxy-engine/hproxy-probe/tests/fixtures/proxy-lines.json";
 import { applyCheck, exitsElsewhere, listEntries, parseLines, readList, STATUS_RANK, withGeo, type CheckResult, type Row } from "./checker";
 
 /* The parsing and result-mapping layer, which is where a wrong answer would be

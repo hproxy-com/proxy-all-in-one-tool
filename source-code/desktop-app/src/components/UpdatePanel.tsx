@@ -3,7 +3,6 @@ import {
   CHECK_INTERVAL_MS,
   QUIET_INSTALL_EVERY_MS,
   checkForUpdate,
-  dismissUpdate,
   getUpdateState,
   installWhileNobodyUses,
   openManualDownload,
@@ -13,40 +12,49 @@ import {
   subscribeUpdateState,
 } from "../lib/updater";
 import { isCheckRunning, subscribeCheckRunning } from "../lib/runState";
-import { channelWay, checkVersions, getVersionNotice, skipNotice, subscribeVersionNotice, type Notice } from "../lib/versions";
+import { runStartGate } from "../lib/startGate";
+import { channelWay, checkVersions, getVersionNotice, subscribeVersionNotice, type Notice } from "../lib/versions";
 import { Button } from "./ui";
 
-/* The update surface.
+/* The update surface while the app runs. The start already took any newer version it found
+ * (components/StartGate.tsx); this is for the versions that come out while the app stays open.
  *
- * Nothing renders until a newer version is downloaded and ready. No modal on
- * launch, no toast, no "you're up to date" dialog, nothing during the download.
- * Interrupting someone to report an absence of news is how update prompts
- * become the thing people dismiss without reading, and then they dismiss the
- * one that mattered too.
+ * Nothing renders until a newer version is downloaded and ready. No toast, no "you're up to
+ * date" dialog, nothing during the download. Interrupting someone to report an absence of news
+ * is how update prompts become the thing people dismiss without reading, and then they dismiss
+ * the one that mattered too.
  *
- * When the bytes are ready: one pill in the title bar opens a sheet that says
- * what changed and offers one button, Restart to update. The restart is always
- * the person's click, and a running check is named before they take it. */
+ * When the bytes are ready: one pill in the title bar opens a sheet that says what changed and
+ * offers one button, Restart to update. The restart is the person's click (or the next start,
+ * or the quiet install while nobody uses the app), and a running check is named before they
+ * take it. */
 export default function UpdatePanel() {
   const state = useSyncExternalStore(subscribeUpdateState, getUpdateState, getUpdateState);
   const notice = useSyncExternalStore(subscribeVersionNotice, getVersionNotice, getVersionNotice);
   const running = useSyncExternalStore(subscribeCheckRunning, isCheckRunning, () => false);
   const [open, setOpen] = useState(false);
 
-  // The download from hproxy.com updates itself; every copy also reads the version list, which
-  // is how a store's copy learns of a new version and any copy learns it is below the minimum.
+  // A copy that updates itself looks for a version it can download; every copy also reads the
+  // version list, which is how a store's copy or a package learns of a new version.
   const look = useCallback(() => {
     void checkForUpdate();
     void checkVersions();
   }, []);
 
   useEffect(() => {
-    // Delayed so the check never competes with first paint, then repeated:
-    // this app stays open all day, and a launch-only check means a long session
-    // never learns a fix exists.
-    const first = window.setTimeout(look, 2500);
-    const repeat = window.setInterval(look, CHECK_INTERVAL_MS);
+    // After the start's own look, so the two never fetch the same version at once, then
+    // repeated: this app stays open all day, and a start-only check means a long session never
+    // learns a fix exists.
+    let first: number | undefined;
+    let repeat: number | undefined;
+    let gone = false;
+    void runStartGate().then(() => {
+      if (gone) return;
+      first = window.setTimeout(look, 2500);
+      repeat = window.setInterval(look, CHECK_INTERVAL_MS);
+    });
     return () => {
+      gone = true;
       clearTimeout(first);
       clearInterval(repeat);
     };
@@ -69,13 +77,11 @@ export default function UpdatePanel() {
 
   const label = pillLabel(state);
   const info = state.info;
-  if (!label || !info) return notice && notice.channel !== "hproxy.com" ? <ChannelNotice notice={notice} /> : null;
+  if (!label || !info) return notice ? <ChannelNotice notice={notice} /> : null;
 
   const ready = state.stage === "ready";
   const installing = state.stage === "installing";
   const failed = state.stage === "failed";
-  // Below the version list's minimum this update cannot be skipped.
-  const required = notice?.channel === "hproxy.com" && notice.verdict.required;
 
   return (
     <div className="relative">
@@ -85,7 +91,7 @@ export default function UpdatePanel() {
         onClick={() => setOpen((v) => !v)}
         title={`Version ${info.version} is ready to install`}
       >
-        {required && ready ? "Update required" : label}
+        {label}
       </Button>
 
       {open && (
@@ -119,31 +125,19 @@ export default function UpdatePanel() {
               <p className="mt-4 text-[14px] font-bold text-warn">A check is still running. Restarting now would discard its results.</p>
             )}
 
+            {ready && !running && (
+              <p className="mt-4 text-[14px] font-semibold text-ink-mute">
+                Otherwise it installs the next time HProxy starts.
+              </p>
+            )}
+
             <div className="mt-5 flex flex-wrap items-center gap-2">
               {(ready || installing) && (
                 <>
                   <Button variant={running ? "danger" : "solid"} disabled={installing} onClick={() => void restartToUpdate()}>
                     {installing ? "Restarting" : running ? "Restart anyway" : "Restart to update"}
                   </Button>
-                  {!installing && (
-                    <>
-                      <Button onClick={() => setOpen(false)}>Later</Button>
-                      {!required && (
-                        <span className="ml-auto">
-                          <Button
-                            variant="text"
-                            size="sm"
-                            onClick={() => {
-                              setOpen(false);
-                              void dismissUpdate();
-                            }}
-                          >
-                            Skip this version
-                          </Button>
-                        </span>
-                      )}
-                    </>
-                  )}
+                  {!installing && <Button onClick={() => setOpen(false)}>Later</Button>}
                 </>
               )}
 
@@ -153,20 +147,11 @@ export default function UpdatePanel() {
                     Try again
                   </Button>
                   <Button onClick={() => void openManualDownload()}>Download it manually</Button>
-                  {!required && (
-                    <span className="ml-auto">
-                      <Button
-                        variant="text"
-                        size="sm"
-                        onClick={() => {
-                          setOpen(false);
-                          void dismissUpdate();
-                        }}
-                      >
-                        Not now
-                      </Button>
-                    </span>
-                  )}
+                  <span className="ml-auto">
+                    <Button variant="text" size="sm" onClick={() => setOpen(false)}>
+                      Not now
+                    </Button>
+                  </span>
                 </>
               )}
             </div>
@@ -177,11 +162,11 @@ export default function UpdatePanel() {
   );
 }
 
-/* A newer version for a copy that its store or its owner updates (lib/versions.ts): the same
-   pill, and a sheet that says what changed and gives this channel's own way to get it. Below
-   the version list's minimum the update is required: the pill turns red, says so, and the
-   sheet has nothing to skip it with. On a phone the pill says just "Update" and the sheet
-   spans the screen. */
+/* A newer version for a copy that its store or its owner updates, or for a copy whose own update
+   is days late (lib/versions.ts): the same pill, and a sheet that says what changed and gives
+   this channel's own way to get it. Below the version list's minimum the update is required:
+   the pill turns red and says so. On a phone the pill says just "Update" and the sheet spans the
+   screen. */
 function ChannelNotice({ notice }: { notice: Notice }) {
   const [open, setOpen] = useState(false);
   const way = channelWay(notice.channel);
@@ -228,23 +213,7 @@ function ChannelNotice({ notice }: { notice: Notice }) {
               <Button variant="solid" onClick={() => void way.run()}>
                 {way.button}
               </Button>
-              {!verdict.required && (
-                <>
-                  <Button onClick={() => setOpen(false)}>Later</Button>
-                  <span className="ml-auto">
-                    <Button
-                      variant="text"
-                      size="sm"
-                      onClick={() => {
-                        setOpen(false);
-                        skipNotice();
-                      }}
-                    >
-                      Skip this version
-                    </Button>
-                  </span>
-                </>
-              )}
+              {!verdict.required && <Button onClick={() => setOpen(false)}>Later</Button>}
             </div>
           </div>
         </>

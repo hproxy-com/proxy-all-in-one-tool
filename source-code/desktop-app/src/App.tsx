@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
+import StartGate from "./components/StartGate";
 import TitleBar, { type View } from "./components/TitleBar";
 import CheckerConsole from "./components/checker/CheckerConsole";
 import ConnectPanel from "./components/connect/ConnectPanel";
@@ -10,7 +11,7 @@ import { loadSettings, saveSettings, type Settings as SettingsType } from "./lib
 import { freeListName, loadLists, makeList, saveLists, upsertList } from "./lib/saved";
 import { applyLook, loadPicture, previewConnectLook, previewHubStyle } from "./lib/look";
 import { connectRemembered } from "./lib/connectControl";
-import { isTauri, onTrayConnect, setKeepRunning } from "./lib/tauri";
+import { isTauri, onTrayConnect, setKeepRunning, zoneSetMatching } from "./lib/tauri";
 
 /** Connect is the main page. The browser preview's `?demo` opens Check and
     runs the sample; `?demo=connect` opens Connect, connected. */
@@ -67,6 +68,12 @@ export default function App() {
     void setKeepRunning(settings.keepRunning).catch(() => {});
   }, [settings.keepRunning]);
 
+  // The time zone match (Settings): the Rust side matches after each probe,
+  // with Connect open or not, and needs to know whether it is on.
+  useEffect(() => {
+    void zoneSetMatching(settings.matchTimeZone).catch(() => {});
+  }, [settings.matchTimeZone]);
+
   // The tray icon's "Connect": the place picked last, even with the window hidden.
   const probeUrl = settings.connectProbeUrl;
   useEffect(() => {
@@ -98,6 +105,9 @@ export default function App() {
           Each view scrolls itself, because the checker's list virtualises
           against its own scroll container. */}
       <div className="min-h-0 flex-1">
+        {/* A newer version first, then the screens (lib/startGate.ts). Outside
+            the ErrorBoundary's views, so a crash in a view never hides it. */}
+        <StartGate>
         <ErrorBoundary>
           {/* The checker stays alive behind the other tabs: a run keeps going
               and its results are still there when you come back from Connect
@@ -119,12 +129,14 @@ export default function App() {
               onListConsumed={() => setConnectListId(undefined)}
               onCheckLines={checkLines}
               settings={connectSettings}
+              onSettings={(patch) => setSettings((s) => ({ ...s, ...patch }))}
             />
           )}
           {view === "history" && <History />}
           {view === "ai" && <UseWithAi />}
           {view === "settings" && <Settings settings={settings} setSettings={setSettings} />}
         </ErrorBoundary>
+        </StartGate>
       </div>
     </div>
   );

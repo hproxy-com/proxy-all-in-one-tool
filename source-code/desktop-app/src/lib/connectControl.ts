@@ -16,7 +16,11 @@ export function sourceOfTarget(t: Target, lists: SavedList[]): ConnectSourceArg 
     if (!l.lines.length) return "That list is empty. Edit it and add some proxies.";
     return { kind: "list", lines: l.lines, rotation: { rule: l.rule, n: l.rule === "every_n" ? l.n : undefined } };
   }
-  return { kind: "free", country: t.country || null, socks5: t.socks5 };
+  // A proxy picked from the Free tab's list starts the relay on it; the relay
+  // tests it first and searches the pool when it stopped working since.
+  return t.exit
+    ? { kind: "free", country: t.country || null, socks5: t.socks5, exit: t.exit }
+    : { kind: "free", country: t.country || null, socks5: t.socks5 };
 }
 
 /** Connect to the place picked last, with the system proxy set, as the

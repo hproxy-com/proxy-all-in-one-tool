@@ -18,7 +18,7 @@ import { DEFAULT_SETTINGS, loadSettings } from "./settings";
    person's own key at another service. What is tested here is what the app is
    asked to send, that no address is asked twice in a session, and that a
    missing key is said before anything is sent. The services' own answers are
-   tested in engine/hproxy-api/src/fraud.rs. */
+   tested in proxy-engine/hproxy-api/src/fraud.rs. */
 
 const score = (ip: string, n: number): FraudRow => ({
   ip,

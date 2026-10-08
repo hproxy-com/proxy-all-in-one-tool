@@ -3,7 +3,7 @@
    they can switch at any time.
 
    The lookups run in the app (src-tauri/src/fraud.rs over
-   engine/hproxy-api/src/fraud.rs), from this computer straight to the service
+   proxy-engine/hproxy-api/src/fraud.rs), from this computer straight to the service
    picked in Settings, with the person's own key; nothing goes through HProxy.
    This file says which service and with what, keeps what came back for the
    session so no address is asked twice, and gives each score its colour. */

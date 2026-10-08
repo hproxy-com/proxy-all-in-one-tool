@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  addressInUse,
   formatAgo,
   formatBytes,
   formatDuration,
@@ -138,6 +139,13 @@ describe("where to", () => {
     expect(loadTarget()).toBeNull();
   });
 
+  it("remembers a free proxy picked from the list, and drops a blank one", () => {
+    saveTarget({ kind: "free", country: "", socks5: false, exit: "203.0.113.9:3128", exitCountry: "NL" });
+    expect(loadTarget()).toStrictEqual({ kind: "free", country: "", socks5: false, exit: "203.0.113.9:3128", exitCountry: "NL" });
+    store.set("hproxy-checker-connect-target", JSON.stringify({ kind: "free", country: "DE", socks5: true, exit: "  ", exitCountry: "DE" }));
+    expect(loadTarget()).toStrictEqual({ kind: "free", country: "DE", socks5: true });
+  });
+
   it("reads junk as no choice", () => {
     store.set("hproxy-checker-connect-target", "{oops");
     expect(loadTarget()).toBeNull();
@@ -150,8 +158,23 @@ describe("where to", () => {
   it("compares choices by what they connect to", () => {
     expect(sameTarget({ kind: "fixed", line: " a:1 " }, { kind: "fixed", line: "a:1" })).toBe(true);
     expect(sameTarget({ kind: "free", country: "", socks5: false }, { kind: "free", country: "", socks5: true })).toBe(false);
+    // A picked free proxy is its own place: not the country, not another proxy.
+    const picked = { kind: "free", country: "DE", socks5: false, exit: "203.0.113.9:3128" } as const;
+    expect(sameTarget(picked, { ...picked, exitCountry: "DE" })).toBe(true);
+    expect(sameTarget(picked, { kind: "free", country: "DE", socks5: false })).toBe(false);
+    expect(sameTarget(picked, { ...picked, exit: "203.0.113.10:3128" })).toBe(false);
+    expect(sameTarget(picked, { ...picked, country: "" })).toBe(true);
+    expect(sameTarget(picked, { ...picked, socks5: true })).toBe(false);
+    expect(sameTarget({ kind: "free", country: "DE", socks5: false }, { kind: "free", country: "FR", socks5: false })).toBe(false);
     expect(sameTarget({ kind: "list", id: "x" }, { kind: "fixed", line: "x" })).toBe(false);
     expect(sameTarget(null, { kind: "list", id: "x" })).toBe(false);
+  });
+
+  it("reads the address out of the upstream the relay reports", () => {
+    expect(addressInUse("http://203.0.113.5:8080 (no login)")).toBe("203.0.113.5:8080");
+    expect(addressInUse("socks5://user:********@[2001:db8::1]:1080")).toBe("[2001:db8::1]:1080");
+    expect(addressInUse("switching to a fresh exit")).toBeNull();
+    expect(addressInUse("")).toBeNull();
   });
 
   it("says a list's rule and a free country in words", () => {

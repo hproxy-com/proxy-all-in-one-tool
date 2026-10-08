@@ -1,8 +1,34 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
-import { FREE_COUNTRIES, ROTATION_HINT, ROTATION_RULES, formatAgo, lineParts, listLines, ruleWords, sameTarget, type RotationRule, type Target, type Verdict } from "../../lib/connect";
+import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import {
+  FREE_COUNTRIES,
+  ROTATION_HINT,
+  ROTATION_RULES,
+  formatAgo,
+  freeCountryName,
+  lineParts,
+  listLines,
+  ruleWords,
+  sameTarget,
+  type RotationRule,
+  type Target,
+  type Verdict,
+} from "../../lib/connect";
+import {
+  capitalized,
+  ensureFreeRun,
+  failedRows,
+  freeRun,
+  onFreeRuns,
+  rowPlace,
+  runWords,
+  testsLeft,
+  workingRows,
+  type FreeRow,
+  type FreeRun,
+} from "../../lib/freeList";
 import { freeListName, makeList, MAX_LIST_LINES, MAX_SAVED, type SavedList, type SavedProxy } from "../../lib/saved";
-import { importProxyFile, isMobile, parseLine, thisDevice, type ParsedLine } from "../../lib/tauri";
-import { BlockTitle, Button, ButtonGroup, Flag, Icon, Input, Status, Tag, TextArea, cx } from "../ui";
+import { freeList, freeTest, importProxyFile, isMobile, openExternal, parseLine, thisDevice, type ParsedLine } from "../../lib/tauri";
+import { BlockTitle, Button, ButtonGroup, Chip, Flag, Icon, Input, Status, Tag, TextArea, cx } from "../ui";
 
 /* WHERE TO: the right half of Connect, read like a VPN's location list
    (lists of your own can be saved).
@@ -12,7 +38,9 @@ import { BlockTitle, Button, ButtonGroup, Flag, Icon, Input, Status, Tag, TextAr
                  it is read and checked the moment it is complete.
      My lists    named lists the relay rotates through by a rule you pick:
                  connecting to a list is one click, like a VPN's custom list.
-     Free        the free pool by country, like a VPN's countries.
+     Free        an extra: public proxies by country, each tested from here
+                 before it is listed with its own Connect button, or one
+                 picked for you.
 
    A row picks the place (the switch on the left connects to it); its
    Connect button connects at once, and while connected it moves you there.
@@ -63,6 +91,10 @@ export type DestinationsProps = {
   onForgetList: (l: SavedList) => void;
   onCheckList: (l: SavedList) => void;
 
+  /** The Free tab's country ("" anywhere) and protocol: what its list shows.
+      Choosing them picks nothing; a row does. */
+  freeCountry: string;
+  setFreeCountry: (code: string) => void;
   freeSocks5: boolean;
   setFreeSocks5: (v: boolean) => void;
   /** Text pasted or dropped anywhere on Connect: one proxy fills the field,
@@ -584,14 +616,46 @@ function ListEditor({
 
 /* ── Free ───────────────────────────────────────────────────────────────── */
 
+/** What the Free list asks the app for; lib/freeList.ts runs the tests. */
+const FREE_DEPS = { list: freeList, test: freeTest };
+
+/** The tested list of a country and protocol: started the first time it is
+    shown, kept for a few minutes, redrawn as each test answers. */
+function useFreeRun(country: string, socks5: boolean): FreeRun | undefined {
+  const run = useSyncExternalStore(onFreeRuns, () => freeRun(country, socks5));
+  useEffect(() => {
+    ensureFreeRun(country, socks5, FREE_DEPS);
+  }, [country, socks5]);
+  return run;
+}
+
+/* The free proxies of a country, as a list: every one tested from here first,
+   and only the ones that pass get a row and a Connect button, in the order
+   they passed. Above them one row lets the relay pick for you, and the ones
+   that failed wait behind a link with the reason each failed. Free proxies
+   are the extra; your own proxies are what this screen is for. */
 function FreePane(p: DestinationsProps) {
+  const country = p.freeCountry;
+  const socks5 = p.freeSocks5;
+  const proto = socks5 ? "SOCKS5" : "HTTP";
+  const where = country ? `in ${freeCountryName(country)}` : "in any country";
+  const run = useFreeRun(country, socks5);
+  const [showFailed, setShowFailed] = useState(false);
+  const rows = run?.rows ?? [];
+  const working = workingRows(rows);
+  const failed = failedRows(rows);
+  const testing = !run || run.loading || testsLeft(rows) > 0;
+  const again = () => {
+    setShowFailed(false);
+    ensureFreeRun(country, socks5, FREE_DEPS, true);
+  };
+  const ownProxy = () => p.setTab("proxies");
+  const auto: Target = { kind: "free", country, socks5 };
+
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-[52ch] text-[13.5px] font-medium leading-relaxed text-ink-mute">
-          Public proxies run by strangers, each proven to relay before you get it and swapped when it dies. Fine for seeing a site from another country; never
-          for anything with a login.
-        </p>
+      <FreeWarning />
+      <div className="flex flex-wrap items-center gap-3">
         <ButtonGroup
           size="sm"
           options={
@@ -600,31 +664,173 @@ function FreePane(p: DestinationsProps) {
               ["socks5", "SOCKS5"],
             ] as const
           }
-          value={p.freeSocks5 ? "socks5" : "http"}
+          value={socks5 ? "socks5" : "http"}
           onChange={(v) => p.setFreeSocks5(v === "socks5")}
         />
+        <span className="text-[13px] font-medium text-ink-mute">Each one is tested from {thisDevice()} before it is listed.</span>
       </div>
+
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Country of the free proxies">
+        {FREE_COUNTRIES.map(([code, name]) => (
+          <Chip key={code || "any"} on={country === code} onClick={() => p.setFreeCountry(code)} title={name}>
+            {code ? <span className={`fi fi-${code.toLowerCase()}`} /> : <Icon.globe className="h-3.5 w-3.5" />}
+            {code || "Anywhere"}
+          </Chip>
+        ))}
+      </div>
+
       <div className="ux-dests">
-        {FREE_COUNTRIES.map(([code, name]) => {
-          const t: Target = { kind: "free", country: code, socks5: p.freeSocks5 };
-          const on = sameTarget(t, p.target);
-          return (
-            <div key={code || "any"} className={cx("ux-dest", on && "is-on")}>
-              <button type="button" className="pick" onClick={() => p.onPick(t)} onDoubleClick={() => p.onConnect(t)}>
-                <span className={cx("lead", code && "is-flag")}>{code ? <Flag cc={code} /> : <Icon.globe />}</span>
-                <span className="text">
-                  <span className="name">{code ? name : "Fastest, anywhere"}</span>
-                  <span className="sub">{code ? `A free ${p.freeSocks5 ? "SOCKS5" : "HTTP"} exit in ${name}` : "The quickest free exit in any country"}</span>
-                </span>
-              </button>
-              <span className="acts">
-                <RowAction t={t} p={p} />
+        <div className={cx("ux-dest", sameTarget(auto, p.target) && "is-on")}>
+          <button type="button" className="pick" onClick={() => p.onPick(auto)} onDoubleClick={() => p.onConnect(auto)}>
+            <span className={cx("lead", country && "is-flag")}>{country ? <Flag cc={country} /> : <Icon.globe />}</span>
+            <span className="text">
+              <span className="name">Pick one for me</span>
+              <span className="sub" title={`The first free ${proto} proxy ${where} to pass the test. When it stops working, another one takes over.`}>
+                First to pass the test {where}; swapped when it stops
               </span>
-            </div>
-          );
-        })}
+            </span>
+          </button>
+          <span className="acts">
+            <RowAction t={auto} p={p} />
+          </span>
+        </div>
       </div>
+
+      <div className="flex min-h-[32px] flex-wrap items-center justify-between gap-2 px-1">
+        <span role="status" className="text-[13px] font-semibold text-ink-mute">
+          {runWords(run, country, socks5)}
+        </span>
+        {!testing && working.length > 0 && (
+          <Button variant="text" size="sm" onClick={again} title="Ask the pool for a new batch and test it from here">
+            <Icon.refresh className="h-4 w-4" />
+            Test a fresh batch
+          </Button>
+        )}
+      </div>
+
+      {run?.error ? (
+        <FreeTrouble words={capitalized(run.error)} again="Try again" onAgain={again} onOwn={ownProxy} />
+      ) : working.length > 0 ? (
+        <div className="ux-dests">
+          {working.map((r) => (
+            <FreeProxyRow key={r.addr} r={r} p={p} />
+          ))}
+        </div>
+      ) : testing ? null : rows.length === 0 ? (
+        <FreeTrouble
+          words={`Free proxies come and go by the minute. Try again in a moment, another country or ${socks5 ? "HTTP" : "SOCKS5"}, or connect a proxy of your own.`}
+          again="Try again"
+          onAgain={again}
+          onOwn={ownProxy}
+        />
+      ) : (
+        <FreeTrouble
+          words={`That happens: free proxies are public and come and go by the minute. Test a fresh batch, try another country or ${socks5 ? "HTTP" : "SOCKS5"}, or connect a proxy of your own.`}
+          again="Test a fresh batch"
+          onAgain={again}
+          onOwn={ownProxy}
+        />
+      )}
+
+      {failed.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <button type="button" className="ux-link self-start px-1" aria-expanded={showFailed} onClick={() => setShowFailed((v) => !v)}>
+            {showFailed ? "Hide" : "Show"} the {failed.length} that did not work, and why
+          </button>
+          {showFailed && (
+            <div className="ux-dests">
+              {failed.map((r) => {
+                const place = rowPlace(r);
+                return (
+                  <div key={r.addr} className="ux-dest !min-h-[44px]">
+                    <span className="pick !cursor-default">
+                      <span className="lead is-bad">
+                        <Icon.cross />
+                      </span>
+                      <span className="text">
+                        <span className="name num">{r.addr}</span>
+                        <span className="sub">
+                          <span className="bad">{capitalized(r.why ?? "did not work")}</span>
+                          {place && ` · ${place}`}
+                        </span>
+                      </span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </>
+  );
+}
+
+/** Where the Free tab's proxies come from on the website: the same list. */
+const FREE_LIST_PAGE = "https://hproxy.com/free-proxy-list";
+
+/* What free proxies are, before anything else on the Free tab (his words,
+   2026-09-28: "a warning that those are free proxies scraped via this api so
+   they are not fully reliable"). It names no source: those stay private
+   (only "from across the internet"). A solid well with a hairline, the mark
+   in the warn colour: nothing see-through. */
+function FreeWarning() {
+  return (
+    <div role="note" className="flex items-start gap-3 rounded-[14px] border border-hairline bg-[var(--well)] p-4">
+      <Icon.warning className="mt-px h-5 w-5 flex-none text-warn" />
+      <div className="flex min-w-0 flex-col items-start gap-1.5">
+        <p className="text-[14px] font-bold text-ink">Free proxies are not fully reliable</p>
+        <p className="max-w-[62ch] text-[13.5px] font-medium leading-relaxed text-ink-mute">
+          These are public proxies scraped from across the internet by HProxy&rsquo;s free proxy list, run by strangers, not by us. Many stop working
+          within minutes, and some can read what you send. Use them to see a site from another country, never to log in or pay. For anything that
+          matters, connect a proxy of your own.
+        </p>
+        <button type="button" className="ux-link" onClick={() => void openExternal(FREE_LIST_PAGE)}>
+          The whole list on hproxy.com <Icon.arrowRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** One free proxy that passed the test from here. */
+function FreeProxyRow({ r, p }: { r: FreeRow; p: DestinationsProps }) {
+  const t: Target = { kind: "free", country: p.freeCountry, socks5: p.freeSocks5, exit: r.addr, exitCountry: r.exit.country || undefined };
+  const place = rowPlace(r);
+  return (
+    <div className={cx("ux-dest", sameTarget(t, p.target) && "is-on")}>
+      <button type="button" className="pick" onClick={() => p.onPick(t)} onDoubleClick={() => p.onConnect(t)}>
+        <span className={cx("lead", r.exit.country && "is-flag")}>{r.exit.country ? <Flag cc={r.exit.country} /> : <Icon.globe />}</span>
+        <span className="text">
+          <span className="name num">{r.addr}</span>
+          <span className="sub">
+            <span className="ok">{r.ms != null ? `Working · ${r.ms} ms` : "Working"}</span>
+            {place && ` · ${place}`}
+          </span>
+        </span>
+      </button>
+      <span className="acts">
+        <RowAction t={t} p={p} />
+      </span>
+    </div>
+  );
+}
+
+/** When the Free list has nothing to connect to: why, and the two ways on. */
+function FreeTrouble({ words, again, onAgain, onOwn }: { words: string; again: string; onAgain: () => void; onOwn: () => void }) {
+  return (
+    <div className="flex flex-col items-start gap-3 rounded-[14px] bg-[var(--well)] p-5">
+      <p className="max-w-[60ch] text-[13.5px] font-medium leading-relaxed text-ink-mute">{words}</p>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="solid" onClick={onAgain}>
+          <Icon.refresh className="h-4 w-4" />
+          {again}
+        </Button>
+        <button type="button" className="ux-link" onClick={onOwn}>
+          Connect a proxy of your own <Icon.arrowRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
   );
 }
 

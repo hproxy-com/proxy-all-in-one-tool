@@ -183,7 +183,7 @@ export function listEntries(text: string): string[] {
 
 /** What a pasted list holds, read by the same parser as the engine
     (chrome-extension/line.js, held to the engine's own list of shapes in
-    engine/hproxy-probe/tests/fixtures/proxy-lines.json): the proxies to
+    proxy-engine/hproxy-probe/tests/fixtures/proxy-lines.json): the proxies to
     check, the lines that are not proxies with the reason, the comments, and
     how many proxies were pasted more than once. Duplicates stay rows: the
     engine checks each proxy once, and a pasted line that silently vanished

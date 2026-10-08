@@ -15,6 +15,13 @@ describe("what the relay is asked for", () => {
     expect(sourceOfTarget({ kind: "free", country: "", socks5: true }, [])).toEqual({ kind: "free", country: null, socks5: true });
   });
 
+  it("starts a free place on the proxy picked from the list", () => {
+    const picked = sourceOfTarget({ kind: "free", country: "DE", socks5: false, exit: "203.0.113.9:3128", exitCountry: "DE" }, []);
+    expect(picked).toStrictEqual({ kind: "free", country: "DE", socks5: false, exit: "203.0.113.9:3128" });
+    // Without a pick the relay chooses, and the source carries no exit at all.
+    expect(sourceOfTarget({ kind: "free", country: "DE", socks5: false }, [])).toStrictEqual({ kind: "free", country: "DE", socks5: false });
+  });
+
   it("says why when a list is gone or empty", () => {
     expect(sourceOfTarget({ kind: "list", id: "gone" }, [list])).toMatch(/not on this computer/);
     const empty = { ...list, lines: [] };

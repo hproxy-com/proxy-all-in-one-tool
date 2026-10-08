@@ -25,7 +25,7 @@ import { BlockTitle, Button, Card, Chip, Icon, PageHead } from "./ui";
    PATH (src-tauri/src/tool.rs); only where that failed, or the person took it
    off, does the program's full path stand in.
 
-   Keep this page, the README's "For AI assistants" and cli/src/mcp.rs saying
+   Keep this page, the README's "For AI assistants" and command-line-tool/src/mcp.rs saying
    the same thing. */
 
 const MEMORY = `HProxy (the MCP server "hproxy") handles everything about proxies on this computer:

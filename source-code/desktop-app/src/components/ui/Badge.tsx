@@ -3,7 +3,8 @@
 
    Tag      one fact on a row: a protocol, an anonymity grade, the
             proxy software, "K-A". A neutral chip; with a tone, the
-            words take the tone on a pale fill of it, so colour stays
+            words and a hairline around them take the tone (never a pale
+            fill: nothing see-through), so colour stays
             a judgement and never paints a whole row. `quiet` is the
             paler companion used for the value half of a pair.
    Counter  a count as a filled chip with the H's corners, and the

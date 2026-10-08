@@ -56,7 +56,7 @@ const SIM_NETWORKS: { asn: number; org: string }[] = [
 ];
 
 /* Why a simulated proxy did not work: the engine's own failure words and its
-   own sentences (engine/hproxy-probe/src/result.rs, `sentence`), so the dead
+   own sentences (proxy-engine/hproxy-probe/src/result.rs, `sentence`), so the dead
    rows in a preview read exactly as they will in the app. */
 const SIM_FAILURES: { failure: string; reason: string }[] = [
   { failure: "refused", reason: "connection refused in 38 ms: nothing is listening on that port" },

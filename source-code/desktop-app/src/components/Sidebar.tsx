@@ -75,7 +75,7 @@ export default function Sidebar({ view, setView }: { view: View; setView: (v: Vi
                 className={`flex items-center gap-3 rounded-[10px] px-3.5 py-2.5 text-[17px] font-medium transition-colors ${
                   active
                     ? "bg-[#161616] text-white shadow-[0_10px_22px_-12px_rgba(0,0,0,0.55)]"
-                    : "text-ink/70 hover:bg-black/[0.045] hover:text-ink"
+                    : "text-ink/70 hover:text-ink"
                 }`}
               >
                 {it.icon}

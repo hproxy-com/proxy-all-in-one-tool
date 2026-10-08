@@ -14,10 +14,11 @@ import {
   type ParsedLine,
   type RelayHealth,
 } from "../../lib/tauri";
-import type { CheckResult } from "../../lib/checker";
+import { countryName, type CheckResult } from "../../lib/checker";
 import { cachedScore, fraudScores, type FraudRow } from "../../lib/fraud";
 import type { Settings } from "../../lib/settings";
 import {
+  addressInUse,
   freeCountryName,
   lineParts,
   loadTarget,
@@ -47,7 +48,18 @@ import {
   type SavedProxy,
   type SavedVerdict,
 } from "../../lib/saved";
-import { isTauri } from "../../lib/tauri";
+import { isMobile, isTauri, leakDns, openExternal, zoneMatchAgain, zoneStatus, type DnsLeak, type ZoneStatus } from "../../lib/tauri";
+import {
+  DATE_TIME_SETTINGS,
+  dnsRow,
+  EXTENSION_PAGE,
+  languageRow,
+  localTimeZone,
+  timezoneRow,
+  webrtcRow,
+  type LeakAction,
+  type LeakRow,
+} from "../../lib/leaks";
 import { sourceOfTarget } from "../../lib/connectControl";
 import ConnectionCard, { type Phase, type TargetView } from "./ConnectionCard";
 import { Icon } from "../ui";
@@ -113,6 +125,7 @@ export default function ConnectPanel({
   onListConsumed,
   onCheckLines,
   settings,
+  onSettings,
 }: {
   /** A proxy handed over from the checker ("Connect through this"). */
   initialLine?: string;
@@ -123,15 +136,26 @@ export default function ConnectPanel({
   /** Hand lines to the Check tab and check them there. */
   onCheckLines?: (lines: string[]) => void;
   settings: Settings;
+  /** Change a setting from here (the leak check's "Match it while connected"). */
+  onSettings: (patch: Partial<Settings>) => void;
 }) {
   const [saved, setSaved] = useState<SavedProxy[]>(() => loadSaved());
   const [lists, setLists] = useState<SavedList[]>(() => loadLists());
   const [listsSaveFailed, setListsSaveFailed] = useState(false);
   const [target, setTarget] = useState<Target | null>(() => loadTarget());
-  const [tab, setTab] = useState<DestTab>(() => tabOf(loadTarget()));
+  /* The list opens on My proxies, whatever was picked last: the app is for
+     people connecting proxies of their own (his call, 2026-09-28), and free
+     proxies are the extra. The place picked last stays remembered for the
+     switch, and "Change" on the card opens its tab. */
+  const [tab, setTab] = useState<DestTab>("proxies");
+  // The Free tab opens on the country and protocol of a free place picked last.
   const [freeSocks5, setFreeSocks5] = useState(() => {
     const t = loadTarget();
     return t?.kind === "free" ? t.socks5 : false;
+  });
+  const [freeCountry, setFreeCountry] = useState(() => {
+    const t = loadTarget();
+    return t?.kind === "free" ? t.country : "";
   });
 
   const [line, setLine] = useState("");
@@ -215,6 +239,14 @@ export default function ConnectPanel({
 
   const running = status?.running ?? false;
 
+  // The time zone match (src-tauri/src/timezone.rs does it; the leak check
+  // shows it): read once here, on every connect and disconnect, and with the
+  // card while connected.
+  const [zone, setZone] = useState<ZoneStatus | null>(null);
+  useEffect(() => {
+    void zoneStatus().then(setZone).catch(() => {});
+  }, [running]);
+
   // While connected, the card is live: the counters, the uptime and the
   // latest probe, once a second. Cheap: the status is in memory on the Rust side.
   useEffect(() => {
@@ -222,6 +254,7 @@ export default function ConnectPanel({
     const h = setInterval(() => {
       setNow(Date.now());
       void connectStatus().then(setStatus).catch(() => {});
+      void zoneStatus().then(setZone).catch(() => {});
     }, POLL_MS);
     return () => clearInterval(h);
   }, [running]);
@@ -382,6 +415,7 @@ export default function ConnectPanel({
     setError(null);
     try {
       setStatus(await connectProbe());
+      setLeakRun((n) => n + 1);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -510,11 +544,27 @@ export default function ConnectPanel({
       if (l) return { kind: "list", name: l.name, sub: `${l.lines.length} ${l.lines.length === 1 ? "proxy" : "proxies"}, ${ruleWords(l.rule, l.n)}` };
     }
     if (t?.kind === "free") {
+      const proto = t.socks5 ? "SOCKS5" : "HTTP";
+      if (t.exit) {
+        // The relay swaps a free proxy that dies, and "new IP" swaps it too:
+        // while connected, the card says when the one in use is another.
+        const inUse = running && status?.source?.kind === "pool" ? addressInUse(status.source.in_use) : null;
+        const where = countryName(t.exitCountry);
+        return {
+          kind: "free",
+          name: `Free · ${t.exit}`,
+          cc: t.exitCountry?.toLowerCase(),
+          sub:
+            inUse && inUse !== t.exit
+              ? `Now through ${inUse}, swapped in for the one you picked`
+              : `A public ${proto} proxy${where ? ` in ${where}` : ""}, swapped if it stops`,
+        };
+      }
       return {
         kind: "free",
         name: t.country ? `Free · ${freeCountryName(t.country)}` : "Free · fastest anywhere",
         cc: t.country ? t.country.toLowerCase() : undefined,
-        sub: `A public ${t.socks5 ? "SOCKS5" : "HTTP"} exit, swapped for a fresh one when it dies`,
+        sub: `A public ${proto} exit, swapped for a fresh one when it dies`,
       };
     }
     if (running && status?.source) {
@@ -556,6 +606,47 @@ export default function ConnectPanel({
     };
   }, [exitIp, fraudOnConnect, fraudService, fraudKeys]);
 
+  // The DNS leak test: once per exit (a new address is a new test) and again
+  // after "Test now". Which resolver the proxy looks names up with, and where.
+  const [dnsLeak, setDnsLeak] = useState<DnsLeak | null>(null);
+  const [leakRun, setLeakRun] = useState(0);
+  useEffect(() => {
+    setDnsLeak(null);
+    if (!exitIp) return;
+    let live = true;
+    void leakDns()
+      .then((found) => live && setDnsLeak(found))
+      .catch((e: unknown) => live && setDnsLeak({ state: "unavailable", why: String(e) }));
+    return () => {
+      live = false;
+    };
+  }, [exitIp, leakRun]);
+
+  // The leak check's lines, while connected and the last check answered. The
+  // clock is read on every render (once a second while connected), so the
+  // line follows the zone as the browsers see it.
+  const health = status?.health;
+  const leaks: LeakRow[] | null =
+    phase === "on" && health?.ok
+      ? [
+          dnsRow(dnsLeak, health.country_code),
+          webrtcRow(isMobile()),
+          timezoneRow(zone?.preview_clock ?? localTimeZone(), health.timezone, new Date(now), zone),
+          languageRow(navigator.languages?.length ? navigator.languages : [navigator.language], health.country_code),
+        ]
+      : null;
+
+  const onLeakAction = (a: LeakAction) => {
+    if (a === "extension") return void openExternal(EXTENSION_PAGE);
+    if (a === "date_time_settings") return void openExternal(DATE_TIME_SETTINGS);
+    // The setting, as in Settings: App.tsx hands it to the Rust side, which
+    // matches at once.
+    if (a === "match_zone") return onSettings({ matchTimeZone: true });
+    void zoneMatchAgain()
+      .then(setZone)
+      .catch((e: unknown) => setError(String(e)));
+  };
+
   return (
     // overflow-x-hidden: nothing on this page may make it scroll sideways (the
     // connected looks' art is wider than the card, clipped to it).
@@ -584,6 +675,8 @@ export default function ConnectPanel({
             look={settings.connectLook}
             hub={settings.hubStyle}
             fraud={exitFraud}
+            leaks={leaks}
+            onLeakAction={onLeakAction}
             failing={failing}
             status={status}
             view={view}
@@ -641,11 +734,10 @@ export default function ConnectPanel({
             onForgetList={forgetAList}
             onCheckList={(l) => onCheckLines?.(l.lines)}
             incoming={incoming}
+            freeCountry={freeCountry}
+            setFreeCountry={setFreeCountry}
             freeSocks5={freeSocks5}
-            setFreeSocks5={(v) => {
-              setFreeSocks5(v);
-              if (target?.kind === "free") pick({ ...target, socks5: v });
-            }}
+            setFreeSocks5={setFreeSocks5}
           />
         </div>
       </div>

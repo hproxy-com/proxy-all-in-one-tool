@@ -87,6 +87,10 @@ export type Settings = {
   fraudKeys: FraudKeys;
   /** Look up the address you appear as while connected (Connect's card). */
   fraudOnConnect: boolean;
+  /** Set the computer's time zone to the exit's while connected, and put it
+      back after (Windows; src-tauri/src/timezone.rs). Off until asked for: it
+      changes a setting of the whole computer, which every program sees. */
+  matchTimeZone: boolean;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -110,6 +114,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fraudService: DEFAULT_FRAUD_SERVICE,
   fraudKeys: {},
   fraudOnConnect: true,
+  matchTimeZone: false,
 };
 
 /** Where the Connect screen's probe goes while connected. Our judge by default,
@@ -172,6 +177,7 @@ export function loadSettings(): Settings {
         fraudService: isFraudService(parsed.fraudService) ? parsed.fraudService : DEFAULT_SETTINGS.fraudService,
         fraudKeys: keysOf(parsed.fraudKeys),
         fraudOnConnect: typeof parsed.fraudOnConnect === "boolean" ? parsed.fraudOnConnect : DEFAULT_SETTINGS.fraudOnConnect,
+        matchTimeZone: typeof parsed.matchTimeZone === "boolean" ? parsed.matchTimeZone : DEFAULT_SETTINGS.matchTimeZone,
         protocols: { ...DEFAULT_SETTINGS.protocols, ...(parsed.protocols ?? {}) },
       };
     }

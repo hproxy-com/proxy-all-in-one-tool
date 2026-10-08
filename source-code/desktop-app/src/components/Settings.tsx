@@ -8,17 +8,29 @@ import {
 } from "../lib/settings";
 import { FRAUD_SERVICES, fraudService, testFraudService, type FraudKeys } from "../lib/fraud";
 import { CONNECT_LOOKS, HUB_STYLES } from "../lib/look";
-import { isMobile, isStoreInstall, setStartsWithComputer, startsWithComputer, thisDevice } from "../lib/tauri";
+import {
+  installChannel,
+  isMobile,
+  isStoreInstall,
+  openExternal,
+  setStartsWithComputer,
+  startsWithComputer,
+  thisDevice,
+  zoneStatus,
+  type Channel,
+  type ZoneStatus,
+} from "../lib/tauri";
+import { DATE_TIME_SETTINGS } from "../lib/leaks";
 import {
   checkForUpdate,
   currentVersion,
-  GOOGLE_PLAY_BUILD,
   GOOGLE_PLAY_URL,
   lastCheckedAt,
   MICROSOFT_STORE_URL,
   openManualDownload,
   openStorePage,
 } from "../lib/updater";
+import { updatesItself } from "../lib/versions";
 import BackgroundPicker from "./BackgroundPicker";
 import { Block, Button, ButtonGroup, Card, Check, Input, PageHead, Range } from "./ui";
 
@@ -26,6 +38,11 @@ import { Block, Button, ButtonGroup, Card, Check, Input, PageHead, Range } from 
    in our blue, sliders with their reading on the right, our tick boxes, cut
    choice tracks, a divider under each block. Its own tab at the top;
    "Use with AI" moved out to a tab of its own. */
+
+/* The privacy policy, reachable from inside the app: Google Play asks for it here as well as on
+   the store page (2026-09-28). hproxy.com/privacy has the section "The HProxy app and browser
+   extension", which says what PRIVACY.md at the root of this repository says. */
+const PRIVACY_POLICY_URL = "https://hproxy.com/privacy";
 
 const PROTOCOL_LABEL: Record<keyof Protocols, string> = {
   http: "HTTP",
@@ -44,11 +61,21 @@ function useStoreInstall(): boolean {
   return store;
 }
 
-/* Version + a manual update check. Two things every desktop app owes its users:
-   knowing which build you are running, and being able to ask for an update
-   yourself rather than waiting to be told. */
+/* Where this copy came from (lib/tauri installChannel), which is where its updates come from.
+   Null until known, and in a plain browser. */
+function useChannel(): Channel | null {
+  const [channel, setChannel] = useState<Channel | null>(null);
+  useEffect(() => {
+    void installChannel().then(setChannel);
+  }, []);
+  return channel;
+}
+
+/* Version + a manual update check. Two things every app owes its users: knowing which build
+   you are running, and being able to ask for an update yourself rather than waiting to be told.
+   Each kind of copy says who keeps it current, and that a new version comes first at start. */
 function AboutBlock() {
-  const store = useStoreInstall();
+  const channel = useChannel();
   const [version, setVersion] = useState("…");
   const [state, setState] = useState<"idle" | "checking" | "current" | "found">("idle");
   const [found, setFound] = useState<string | null>(null);
@@ -60,10 +87,9 @@ function AboutBlock() {
 
   const check = () => {
     setState("checking");
-    // manual = true: an explicit ask takes even a previously skipped version.
-    // A version found here starts downloading at once; the title bar offers
-    // the restart when the bytes are ready.
-    void checkForUpdate(true).then((info) => {
+    // A version found here starts downloading at once; the title bar offers the restart when
+    // the bytes are ready, and the next start installs it anyway.
+    void checkForUpdate().then((info) => {
       setCheckedAt(lastCheckedAt());
       setFound(info?.version ?? null);
       setState(info ? "found" : "current");
@@ -89,9 +115,14 @@ function AboutBlock() {
             ? `Last checked ${ago(checkedAt)}.`
             : "Updates are checked automatically.";
 
-  if (isMobile() && GOOGLE_PLAY_BUILD) {
+  if (channel === "google-play") {
     return (
-      <Block name="Version" value={`HProxy ${version}`} divider={false} hint="Installed from Google Play, which keeps HProxy up to date.">
+      <Block
+        name="Version"
+        value={`HProxy ${version}`}
+        divider={false}
+        hint="Installed from Google Play, which keeps HProxy up to date. When a new version is out, Google Play installs it before HProxy opens."
+      >
         <Button variant="text" onClick={() => void openStorePage(GOOGLE_PLAY_URL)}>
           Google Play
         </Button>
@@ -99,27 +130,40 @@ function AboutBlock() {
     );
   }
 
-  if (isMobile()) {
+  if (channel === "microsoft-store") {
     return (
       <Block
         name="Version"
         value={`HProxy ${version}`}
         divider={false}
-        hint="On a phone, updates come with the app package: the store, or a newer APK from the releases page."
+        hint="Installed from the Microsoft Store, which keeps HProxy up to date. When a new version is out, HProxy asks the Store for it before it opens."
       >
-        <Button variant="text" onClick={() => void openManualDownload()}>
-          Releases
+        <Button variant="text" onClick={() => void openStorePage(MICROSOFT_STORE_URL)}>
+          Microsoft Store
         </Button>
       </Block>
     );
   }
 
-  if (store) {
+  if (channel === "apk" || channel === "linux-deb" || channel === "linux-rpm") {
     return (
-      <Block name="Version" value={`HProxy ${version}`} divider={false} hint="Installed from the Microsoft Store, which keeps HProxy up to date.">
-        <Button variant="text" onClick={() => void openStorePage(MICROSOFT_STORE_URL)}>
-          Microsoft Store
+      <Block
+        name="Version"
+        value={`HProxy ${version}`}
+        divider={false}
+        hint={`Installed from a downloaded ${channel === "apk" ? "file" : "package"}. When a new version is out, HProxy says so when it opens, with the download: it installs over this one and keeps your saved proxies.`}
+      >
+        <Button variant="text" onClick={() => void openManualDownload()}>
+          Download
         </Button>
+      </Block>
+    );
+  }
+
+  if (channel && !updatesItself(channel)) {
+    return (
+      <Block name="Version" value={`HProxy ${version}`} divider={false} hint="Installed from the App Store, which keeps HProxy up to date.">
+        {null}
       </Block>
     );
   }
@@ -129,7 +173,7 @@ function AboutBlock() {
       name="Updates"
       value={`HProxy ${version}`}
       divider={false}
-      hint={`${line} Updates come from hproxy.com, and the app installs one only when it carries HProxy's signature and is newer than yours. While you use the app it waits for your click; while nobody does (the window in the tray, nothing connected, no check running), it installs by itself and the app comes back in the tray. An AI agent using HProxy keeps working through it.`}
+      hint={`${line} Updates come from hproxy.com, and the app installs one only when it carries HProxy's signature and is newer than yours. When HProxy starts, it takes a new version first. While you use it, it waits for your click; while nobody does (the window in the tray, nothing connected, no check running), it installs by itself and the app comes back in the tray. An AI agent using HProxy keeps working through it.`}
     >
       <div className="flex flex-wrap items-center gap-2">
         <Button disabled={state === "checking"} onClick={check}>
@@ -195,6 +239,39 @@ function FraudBlock({ settings, update }: { settings: SettingsType; update: (pat
         />
       </div>
     </Block>
+  );
+}
+
+/* The computer's time zone matched to the exit while connected
+   (src-tauri/src/timezone.rs). Windows only: elsewhere there is no block, and
+   the leak check on Connect advises instead. */
+function TimeZoneBlock({ on, setOn }: { on: boolean; setOn: (v: boolean) => void }) {
+  const [zone, setZone] = useState<ZoneStatus | null>(null);
+  useEffect(() => {
+    void zoneStatus()
+      .then(setZone)
+      .catch(() => {});
+  }, []);
+  if (!zone?.supported) return null;
+  const automatic = zone.automatic
+    ? ' "Set time zone automatically" is on in Windows, and it may put its own time zone back while you are connected: turn it off for the match to hold.'
+    : "";
+  return (
+    <div className="md:col-span-2">
+      <Block
+        name="Time zone"
+        hint={`Sites read your computer's time zone and compare it with the address you appear as. With this on, Windows' time zone is set to the exit's while you are connected, and yours comes back when you disconnect or quit, or at the next start if HProxy was closed some other way. Every program on this computer sees the change, not only browsers.${automatic}`}
+      >
+        <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+          <Check on={on} onChange={setOn} label="Match my time zone to the exit while connected" />
+          {zone.automatic && (
+            <Button variant="text" onClick={() => void openExternal(DATE_TIME_SETTINGS)}>
+              Date and time settings
+            </Button>
+          )}
+        </div>
+      </Block>
+    </div>
   );
 }
 
@@ -383,6 +460,8 @@ export default function Settings({
               </Block>
             </div>
 
+            <TimeZoneBlock on={settings.matchTimeZone} setOn={(matchTimeZone) => update({ matchTimeZone })} />
+
             <div className="md:col-span-2">
               <FraudBlock settings={settings} update={update} />
             </div>
@@ -439,6 +518,17 @@ export default function Settings({
                 <BackgroundBlock keepRunning={settings.keepRunning} setKeepRunning={(keepRunning) => update({ keepRunning })} />
               </div>
             )}
+
+            <div className="md:col-span-2">
+              <Block
+                name="Privacy"
+                hint="Every server HProxy talks to, what each one receives, what our servers keep and for how long, and how to have it deleted."
+              >
+                <Button variant="text" onClick={() => void openExternal(PRIVACY_POLICY_URL)}>
+                  Privacy policy
+                </Button>
+              </Block>
+            </div>
 
             <div className="md:col-span-2">
               <AboutBlock />

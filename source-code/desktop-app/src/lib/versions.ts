@@ -1,32 +1,27 @@
 /* A new version, for every copy, whatever installed it.
  *
- * The download from hproxy.com updates itself (lib/updater.ts). A copy from the Microsoft Store
- * or Google Play is updated by its store, and an APK installed by hand by its owner, so nothing
- * used to tell those copies that a fix was out. Now every copy reads hproxy.com's version list
- * on the updater's timer (src-tauri/src/versions.rs), naming the channel it updates from, and
- * once that channel has a newer version the title bar shows the updater's pill with this copy's
- * own way to get it. A store publishes after its review, so a store's copy hears about a version
- * only when the store has it, never while it is still being reviewed.
+ * Every copy reads hproxy.com's version list on the updater's timer (src-tauri/src/versions.rs),
+ * naming the channel it updates from (src-tauri/src/channel.rs), and once that channel has a
+ * newer version the title bar shows a pill with this copy's own way to get it. A store publishes
+ * after its review, so a store's copy hears about a version only when the store has it, never
+ * while it is still being reviewed.
+ *
+ * A copy that installs its own updates (the downloads for Windows, macOS and the AppImage) hears
+ * from the list only when its own update is days late: its updater is blocked (an antivirus
+ * holding the installer, a firewall) or cannot trust the files any more. The list needs no key,
+ * so it still reaches that copy, with a download button.
  *
  * The list also carries a minimum: the oldest version that still works as it should. Below it
- * the update is required, the pill says so and the sheet has no "skip". The list never says
- * where to download from: every channel's way is fixed here, so a changed file on the server
- * can at most show a wrong notice.
+ * the update is required: the pill turns red and says so. The list never says where to download
+ * from: every channel's way is fixed here, so a changed file on the server can at most show a
+ * wrong notice.
  */
 
-import { isMobile, isStoreInstall, isTauri } from "./tauri";
-import {
-  GOOGLE_PLAY_BUILD,
-  GOOGLE_PLAY_URL,
-  MICROSOFT_STORE_URL,
-  openManualDownload,
-  openStorePage,
-  skippedVersion,
-  skipVersion,
-} from "./updater";
+import type { Channel } from "./tauri";
+import { installChannel } from "./tauri";
+import { GOOGLE_PLAY_URL, MICROSOFT_STORE_URL, openManualDownload, openStorePage } from "./updater";
 
-/** Where this copy came from, which is where its updates come from. */
-export type Channel = "hproxy.com" | "microsoft-store" | "google-play" | "apk";
+export type { Channel };
 
 /** What the version list says about this copy (src-tauri/src/versions.rs, hproxy_api::versions). */
 export type Verdict = {
@@ -39,22 +34,27 @@ export type Verdict = {
 
 export type Notice = { channel: Channel; verdict: Verdict };
 
-export async function installedFrom(): Promise<Channel | null> {
-  if (!isTauri()) return null;
-  if (isMobile()) return GOOGLE_PLAY_BUILD ? "google-play" : "apk";
-  return (await isStoreInstall()) ? "microsoft-store" : "hproxy.com";
+/** The copies that install their own updates from hproxy.com (src-tauri/src/channel.rs). */
+export function updatesItself(channel: Channel): boolean {
+  return channel === "windows" || channel === "macos" || channel === "linux-appimage";
 }
 
-/** Whether a verdict becomes a notice. A version the person skipped stays quiet on the timer's
- *  checks, like the updater's; a required one never does, and neither does a manual check. */
-export function noticeFor(channel: Channel, verdict: Verdict | null, skipped: string | null, manual: boolean): Notice | null {
+/** How late a self-installed update may be before the list speaks up: three days. */
+export const OVERDUE_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** Whether a verdict becomes a notice for a copy from `channel`, at the time `now`. */
+export function noticeFor(channel: Channel, verdict: Verdict | null, now: number): Notice | null {
   if (!verdict?.newer) return null;
-  if (!verdict.required && !manual && skipped === verdict.newer) return null;
+  if (updatesItself(channel)) {
+    // A date that cannot be read says nothing about lateness: the updater keeps the word.
+    const released = verdict.date ? Date.parse(verdict.date) : Number.NaN;
+    if (!(now - released > OVERDUE_MS)) return null;
+  }
   return { channel, verdict };
 }
 
-/** How this channel gets the new version: the words on the sheet's button and on the line
- *  above it. The download from hproxy.com has its own sheet (the updater's). */
+/** How this channel gets the new version: the words on the button and on the line above it.
+ *  Null where no way exists yet (an iPhone copy: no iPhone app is published). */
 export function channelWay(channel: Channel): { button: string; line: string; run: () => Promise<void> } | null {
   switch (channel) {
     case "microsoft-store":
@@ -72,10 +72,25 @@ export function channelWay(channel: Channel): { button: string; line: string; ru
     case "apk":
       return {
         button: "Download",
-        line: "Download the new APK and open it: it installs over this one and keeps your saved proxies.",
+        line: "Download the new version and open it: it installs over this one and keeps your saved proxies.",
         run: () => openManualDownload(),
       };
-    case "hproxy.com":
+    case "linux-deb":
+    case "linux-rpm":
+      return {
+        button: "Download",
+        line: "Download the new package and install it over this one: your saved proxies stay.",
+        run: () => openManualDownload(),
+      };
+    case "windows":
+    case "macos":
+    case "linux-appimage":
+      return {
+        button: "Download",
+        line: "This copy could not update itself. Download the new version and install it over this one: your saved proxies stay.",
+        run: () => openManualDownload(),
+      };
+    case "app-store":
       return null;
   }
 }
@@ -100,27 +115,24 @@ export function subscribeVersionNotice(fn: () => void): () => void {
   return () => listeners.delete(fn);
 }
 
-/** Ask the version list. Never throws; offline or an unreadable list keeps the notice as it was. */
-export async function checkVersions(manual = false): Promise<Notice | null> {
-  const channel = await installedFrom();
-  if (!channel) return null;
-  let verdict: Verdict | null;
+/** Ask the version list. Null when nothing is known (offline, the list missing, a development
+ *  build). Never throws. */
+export async function versionVerdict(): Promise<Verdict | null> {
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    verdict = await invoke<Verdict | null>("versions_check", { channel });
+    return await invoke<Verdict | null>("versions_check");
   } catch {
-    return notice;
+    return null;
   }
-  // Null means nothing is known (offline, the list missing, a development build): keep what is
-  // shown. An answer that this copy is current clears it.
-  if (verdict === null) return notice;
-  set(noticeFor(channel, verdict, skippedVersion(), manual));
-  return notice;
 }
 
-/** "Skip this version" on a store's notice. A required version cannot be skipped. */
-export function skipNotice(): void {
-  if (!notice || notice.verdict.required || !notice.verdict.newer) return;
-  skipVersion(notice.verdict.newer);
-  set(null);
+/** Ask the version list and update the notice. Offline or an unreadable list keeps the notice as
+ *  it was; an answer that this copy is current clears it. */
+export async function checkVersions(): Promise<Notice | null> {
+  const channel = await installChannel();
+  if (!channel) return null;
+  const verdict = await versionVerdict();
+  if (verdict === null) return notice;
+  set(noticeFor(channel, verdict, Date.now()));
+  return notice;
 }

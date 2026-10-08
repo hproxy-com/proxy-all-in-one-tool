@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { formatAgo, formatBytes, formatDuration, placeOf } from "../../lib/connect";
 import type { FraudRow } from "../../lib/fraud";
+import type { LeakAction, LeakRow } from "../../lib/leaks";
 import type { ConnectLook, HubStyle } from "../../lib/look";
 import { isMobile, thisDevice, type ConnectStatus } from "../../lib/tauri";
 import { FraudChip } from "../FraudScore";
@@ -41,6 +42,10 @@ export type ConnectionCardProps = {
   hub: HubStyle;
   /** The fraud score of the address you appear as, when looked up. */
   fraud?: FraudRow | null;
+  /** The leak check's lines while connected (lib/leaks.ts). */
+  leaks?: LeakRow[] | null;
+  /** A button on a leak check line was pressed. */
+  onLeakAction: (a: LeakAction) => void;
   failing: boolean;
   status: ConnectStatus | null;
   view: TargetView | null;
@@ -175,7 +180,9 @@ export default function ConnectionCard(p: ConnectionCardProps) {
   const lit = phase !== "off" && phase !== "leaving";
 
   return (
-    <div className="flex flex-col gap-3">
+    // One piece: the status on top and its rows under it, split by hairlines,
+    // never a stack of separate boxes (they read as a generated page).
+    <div className="ux-connpanel">
       <section className="ux-conn" data-phase={phase} data-look={p.look} data-hub={p.hub} data-failing={failing || undefined}>
         <div ref={statusRef} className="ux-status">
           <div className="top">
@@ -283,7 +290,7 @@ export default function ConnectionCard(p: ConnectionCardProps) {
 
       {(on || phase === "rotating") && status && (
         <>
-          <div className="ux-tiles">
+          <div className="ux-connrow ux-tiles">
             <Tile
               label="Round trip"
               value={health ? (health.ok ? `${health.latency_ms ?? "?"} ms` : "No answer") : "…"}
@@ -305,7 +312,8 @@ export default function ConnectionCard(p: ConnectionCardProps) {
               sub={`${formatBytes(stats?.bytes_up ?? 0)} up · ${stats?.connections ?? 0} connections${stats?.rotations ? ` · ${stats.rotations} switches` : ""}`}
             />
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          {on && p.leaks && <LeakCheck rows={p.leaks} onAction={p.onLeakAction} />}
+          <div className="ux-connrow flex flex-wrap items-center gap-2">
             {source?.can_rotate && (
               <Button disabled={p.busy} onClick={p.onRotate} title="Move to the next proxy in the list, or a fresh free exit">
                 <Icon.refresh className="h-4 w-4" />
@@ -324,24 +332,31 @@ export default function ConnectionCard(p: ConnectionCardProps) {
         </>
       )}
 
-      {p.error && <p className="px-1 text-[13.5px] font-semibold text-danger">{p.error}</p>}
-      {status?.notice && <p className="px-1 text-[13.5px] font-medium text-ink-mute">{status.notice}</p>}
+      {p.error && <p className="ux-connrow text-[13.5px] font-semibold text-danger">{p.error}</p>}
+      {status?.notice && <p className="ux-connrow text-[13.5px] font-medium text-ink-mute">{status.notice}</p>}
 
       {/* A program with its own proxy settings needs the address typed in; on
           a phone, the Wi-Fi settings do. */}
       {on && status && !status.system_proxy && <ProgramSettings listen={status.listen ?? ""} phone={phone} steps={p.manualSteps} />}
 
-      <div className="ux-panel flex flex-col gap-3 p-4">
-        {/* A phone has no system proxy an app may switch, so the box could
-            never be ticked there. */}
-        {!phone && (
-          <Check
-            on={p.canAutomate ? p.useSystem : false}
-            onChange={(v) => p.canAutomate && p.setUseSystem(v)}
-            label="Set it as the system proxy"
-            disabled={!p.canAutomate || on}
-          />
-        )}
+      <div className="ux-connrow flex flex-col gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          {/* A phone has no system proxy an app may switch, so the box could
+              never be ticked there. */}
+          {!phone && (
+            <Check
+              on={p.canAutomate ? p.useSystem : false}
+              onChange={(v) => p.canAutomate && p.setUseSystem(v)}
+              label="Set it as the system proxy"
+              disabled={!p.canAutomate || on}
+            />
+          )}
+          {!p.advanced && (
+            <button type="button" className="ux-link" onClick={() => p.setAdvanced(true)} title="Pick the port the relay listens on">
+              Choose the port <Icon.arrowRight className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
         <p className="text-[13px] font-medium leading-relaxed text-ink-mute">
           {phone
             ? "A phone does not let an app switch its proxy. Once connected, the address goes into the Wi-Fi settings, and apps that follow them go through HProxy while it is open."
@@ -351,20 +366,48 @@ export default function ConnectionCard(p: ConnectionCardProps) {
                 ? "Changes the next time you connect. Put back exactly as found when you disconnect."
                 : "Browsers and most programs follow the system proxy. It is put back exactly as found when you disconnect."}
         </p>
-        <div className="flex flex-wrap items-center gap-3">
-          {p.advanced ? (
-            <>
-              <span className="text-[13px] font-semibold text-ink-mute">Listen on</span>
-              <Input value={p.listen} onChange={p.setListen} placeholder="127.0.0.1:8080" width="short" mono label="Listen address" />
-              <span className="text-[12.5px] font-medium text-ink-mute">Empty is 127.0.0.1:8080, or the next free port.</span>
-            </>
-          ) : (
-            <button type="button" className="ux-link" onClick={() => p.setAdvanced(true)} title="Pick the port the relay listens on">
-              Choose the port <Icon.arrowRight className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
+        {p.advanced && (
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-[13px] font-semibold text-ink-mute">Listen on</span>
+            <Input value={p.listen} onChange={p.setListen} placeholder="127.0.0.1:8080" width="short" mono label="Listen address" />
+            <span className="text-[12.5px] font-medium text-ink-mute">Empty is 127.0.0.1:8080, or the next free port.</span>
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+/* The leak check: one line for each way a site could still learn about you
+   through the proxy (lib/leaks.ts), the mark coloured by the verdict, never a
+   filled pill. A line that passes stays one line; a warning says what it
+   means, with the fix where there is one: the extension for WebRTC, the time
+   zone matched to the exit. */
+function LeakCheck({ rows, onAction }: { rows: LeakRow[]; onAction: (a: LeakAction) => void }) {
+  return (
+    <div className="ux-connrow">
+      <div className="ux-leaks-title">Leak check</div>
+      <ul className="ux-leaks">
+        {rows.map((r) => (
+          <li key={r.id} data-tone={r.tone} title={r.tone === "warn" ? undefined : r.detail}>
+            {r.tone === "ok" ? <Icon.check /> : r.tone === "warn" ? <Icon.warning /> : <Icon.clock />}
+            <span className="label">{r.label}</span>
+            <span className="what">
+              <span className="headline">{r.headline}</span>
+              {r.tone === "warn" && r.detail && <span className="detail">{r.detail}</span>}
+              {r.actions && (
+                <span className="actions">
+                  {r.actions.map((a) => (
+                    <button key={a.id} type="button" className="ux-link" onClick={() => onAction(a.id)}>
+                      {a.label} <Icon.arrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  ))}
+                </span>
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -420,7 +463,7 @@ function splitAddr(addr: string): [string, string] {
 function ProgramSettings({ listen, phone, steps }: { listen: string; phone: boolean; steps?: string }) {
   const [host, port] = splitAddr(listen);
   return (
-    <div className="ux-panel p-4">
+    <div className="ux-connrow">
       <p className="text-[12.5px] font-bold text-accent-ink">
         {phone ? "In the Wi-Fi settings, under Proxy" : "In your program's proxy settings"}
       </p>

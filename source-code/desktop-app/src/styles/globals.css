@@ -229,8 +229,7 @@ body {
   box-shadow: var(--shadow);
 }
 .ux-float {
-  background: color-mix(in srgb, var(--canvas) 90%, transparent);
-  backdrop-filter: blur(10px);
+  background: var(--canvas);
   border-radius: 16px 6px 16px 6px;
   box-shadow: var(--shadow);
 }
@@ -268,8 +267,10 @@ body {
     filter 160ms ease,
     transform 140ms ease;
 }
-.ux-btn:hover:not(:disabled) {
-  background-color: color-mix(in srgb, var(--raised), var(--lift) 7%);
+/* Hover shows a hairline, never a wash (nothing see-through). The blue button
+   brightens instead, a text button changes the colour of its words. */
+.ux-btn:not(.ux-btn--solid, .ux-btn--text, .ux-btn--danger, .is-selected):hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--bar);
 }
 .ux-btn:active:not(:disabled) {
   transform: translateY(1px);
@@ -317,7 +318,7 @@ body {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(105deg, transparent 32%, rgba(255, 255, 255, 0.34) 50%, transparent 68%);
+  background: linear-gradient(105deg, transparent 32%, rgba(255, 255, 255, 0.34) 50%, transparent 68%); /* see-through: allowed, a sheen crossing a solid fill once, not a fill */
   transform: translateX(-130%);
 }
 .ux-btn--solid:hover:not(:disabled) {
@@ -335,15 +336,17 @@ body {
   color: var(--ink-mute);
 }
 .ux-btn--text:hover:not(:disabled) {
-  background-color: color-mix(in srgb, var(--raised) 70%, transparent);
   color: var(--ink);
 }
+/* Danger: red words in a red hairline; pointed at, it turns solid red. */
 .ux-btn--danger {
   color: var(--danger-ink);
-  background-color: color-mix(in srgb, var(--danger) 15%, transparent);
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--danger);
 }
 .ux-btn--danger:hover:not(:disabled) {
-  background-color: color-mix(in srgb, var(--danger) 24%, transparent);
+  color: var(--canvas);
+  background-color: var(--danger);
 }
 /* A choice that is on, outside a segmented track. */
 .ux-btn.is-selected {
@@ -711,7 +714,8 @@ body {
   cursor: default;
   user-select: none;
   color: var(--tone);
-  background: color-mix(in srgb, var(--tone) 13%, transparent);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--tone);
 }
 
 /* A count: a filled chip, never a coloured pill. */
@@ -732,7 +736,8 @@ body {
 }
 
 /* Tags: small filled chips. Neutral unless a tone is given; a tone colours
-   the words on a pale fill of itself, so colour stays a judgement. */
+   the words and a hairline around them (never a pale fill: nothing
+   see-through), so colour stays a judgement. */
 .ux-tag {
   display: inline-flex;
   align-items: center;
@@ -749,7 +754,8 @@ body {
 }
 .ux-tag[class*="tone-"] {
   color: var(--tone);
-  background: color-mix(in srgb, var(--tone) 12%, transparent);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--tone);
 }
 .ux-tag--quiet {
   background: var(--field);
@@ -820,6 +826,31 @@ body {
   }
   .ux-tiles > :nth-child(3) {
     grid-column: 1 / -1;
+  }
+}
+/* Inside the connection's panel the numbers are one row of columns split by
+   hairlines, not three more boxes. */
+.ux-connpanel .ux-tiles {
+  gap: 0;
+}
+.ux-connpanel .ux-tile {
+  padding: 0 16px;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+.ux-connpanel .ux-tile:first-child {
+  padding-left: 0;
+}
+.ux-connpanel .ux-tile + .ux-tile {
+  border-left: 1px solid var(--hairline);
+}
+@media (max-width: 480px) {
+  .ux-connpanel .ux-tiles > :nth-child(3) {
+    margin-top: 12px;
+    padding: 12px 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--hairline);
   }
 }
 
@@ -1164,7 +1195,7 @@ body {
   transition: background-color 160ms ease;
 }
 .ux-row:hover {
-  background: color-mix(in srgb, var(--raised) 55%, transparent);
+  box-shadow: inset 0 0 0 1px var(--bar);
 }
 .ux-row.is-selected {
   background: var(--raised);
@@ -1232,7 +1263,8 @@ body {
   background: var(--tone, var(--raised));
 }
 /* The timing under the latency, in one line: connecting, the handshakes,
-   waiting for the answer. */
+   waiting for the answer. Solid colours only: the waiting part was a pale
+   blue until 2026-09-28, which reads as see-through. */
 .ux-wf {
   display: flex;
   justify-content: flex-end;
@@ -1247,10 +1279,10 @@ body {
   background: var(--digi);
 }
 .ux-wf .shake {
-  background: #6d9bff;
+  background: var(--digi-deep);
 }
 .ux-wf .wait {
-  background: #a9c3ff;
+  background: var(--ink-soft);
 }
 /* The table's last line: where the other rows went. */
 .ux-end {
@@ -1391,7 +1423,7 @@ body {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.35) 50%, transparent 70%);
+  background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.35) 50%, transparent 70%); /* see-through: allowed, a sheen running along a solid bar, not a fill */
   background-size: 50% 100%;
   background-repeat: no-repeat;
   animation: ux-scan 1.6s linear infinite;
@@ -1473,7 +1505,6 @@ body {
     background-color 160ms ease;
 }
 .ux-winbtn:hover {
-  background: color-mix(in srgb, var(--lift) 8%, transparent);
   color: var(--ink);
 }
 .ux-winbtn--close:hover {
@@ -1738,7 +1769,8 @@ body {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--ink-mute);
-  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--bar);
   animation: ux-fade-up 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .ux-fraud > i {
@@ -1922,7 +1954,7 @@ body {
 /* While connecting or moving, dashes flow toward the exit. */
 .ux-conn[data-phase="connecting"] .ux-wire > i,
 .ux-conn[data-phase="rotating"] .ux-wire.right > i {
-  background: repeating-linear-gradient(90deg, var(--digi) 0 7px, color-mix(in srgb, var(--digi) 25%, transparent) 7px 12px);
+  background: repeating-linear-gradient(90deg, var(--digi) 0 7px, color-mix(in srgb, var(--digi) 25%, transparent) 7px 12px); /* see-through: allowed, the route is a 3px line, not a fill */
   animation: ux-flow 480ms linear infinite;
 }
 .ux-conn[data-phase="connecting"] .ux-wire > i,
@@ -2189,7 +2221,13 @@ html[data-theme="midnight"] .ux-conn[data-look="card"] .ux-status::before {
   --raised: rgba(255, 255, 255, 0.3);
   --divider: rgba(255, 255, 255, 0.22);
   --route-dot: #ffffff;
-  box-shadow: 0 16px 36px -22px rgba(1, 60, 200, 0.75);
+}
+/* The glow goes under the whole panel the status sits in, not under the
+   status alone, so the connection stays one piece. */
+.ux-connpanel:has(> .ux-conn[data-look="card"][data-phase="on"]:not([data-failing])) {
+  box-shadow:
+    var(--card-edge),
+    0 16px 36px -22px rgba(1, 60, 200, 0.75);
 }
 .ux-conn[data-look="card"][data-phase="on"]:not([data-failing]) .ux-status::before {
   clip-path: circle(150% at var(--hub-x, 50%) var(--hub-y, 62%));
@@ -2202,7 +2240,10 @@ html[data-theme="midnight"] .ux-conn[data-look="card"] .ux-status::before {
   transition-timing-function: cubic-bezier(0.55, 0, 0.45, 1);
 }
 .ux-conn[data-look="card"][data-phase="on"]:not([data-failing]) .ux-wire > i {
-  background: rgba(255, 255, 255, 0.92);
+  background: #ffffff;
+}
+.ux-conn[data-look="card"][data-phase="on"]:not([data-failing]) .ux-fraud {
+  box-shadow: inset 0 0 0 1px var(--divider);
 }
 .ux-conn[data-look="card"][data-phase="on"]:not([data-failing]) .ux-wire > b {
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
@@ -2212,9 +2253,9 @@ html[data-theme="midnight"] .ux-conn[data-look="card"] .ux-status::before {
   background: #ffffff;
 }
 .ux-conn[data-look="card"][data-phase="on"]:not([data-failing]) .ux-switch.is-on {
-  background-color: rgba(255, 255, 255, 0.24);
+  background-color: transparent;
   background-image: none;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+  box-shadow: inset 0 0 0 1.5px #ffffff;
 }
 .ux-conn[data-look="card"][data-phase="on"]:not([data-failing]) .ux-switch.is-on .knob {
   color: #0158ff;
@@ -2279,7 +2320,7 @@ html[data-theme="midnight"] .ux-conn[data-look="card"] .ux-status::before {
   height: 3px;
   border-radius: 2px;
 }
-.ux-conn[data-look="line"][data-phase="on"]:not([data-failing]) .ux-status {
+.ux-connpanel:has(> .ux-conn[data-look="line"][data-phase="on"]:not([data-failing])) {
   box-shadow: 0 0 0 1.5px var(--digi);
 }
 .ux-conn[data-look="line"][data-phase="on"]:not([data-failing]) .ux-hub {
@@ -2607,22 +2648,22 @@ html[data-theme="midnight"] .ux-conn[data-look="card"] .ux-status::before {
   height: 0;
 }
 .ux-conn[data-look="card"][data-phase="on"]:not([data-failing]) .ux-hswitch .rail > .lit {
-  background-color: rgba(255, 255, 255, 0.92);
+  background-color: #ffffff;
 }
 .ux-conn[data-look="card"][data-phase="on"]:not([data-failing]) .ux-hswitch .lit > b {
   background: #0158ff;
 }
 
-/* Button and switch: connected, the card takes the H's corners (round where
+/* Button and switch: connected, the panel takes the H's corners (round where
    the crossbar is round, square where it meets the stems) with a small
-   thump, as if pressed. */
-.ux-conn:is([data-hub="button"], [data-hub="switch"]) .ux-status {
+   thump, as if pressed. The whole panel, so the status and its rows move as
+   one piece. */
+.ux-connpanel:has(> .ux-conn:is([data-hub="button"], [data-hub="switch"])) {
   transition:
-    background-color 600ms ease,
     box-shadow 600ms ease,
     border-radius 700ms cubic-bezier(0.34, 1.4, 0.64, 1);
 }
-.ux-conn:is([data-hub="button"], [data-hub="switch"])[data-phase="on"]:not([data-failing]) .ux-status {
+.ux-connpanel:has(> .ux-conn:is([data-hub="button"], [data-hub="switch"])[data-phase="on"]:not([data-failing])) {
   border-radius: 30px 10px 30px 10px;
   animation: ux-card-thump 620ms cubic-bezier(0.34, 1.56, 0.64, 1) 60ms both;
 }
@@ -2638,16 +2679,95 @@ html[data-theme="midnight"] .ux-conn[data-look="card"] .ux-status::before {
   }
 }
 
-/* Where the switch goes: one filled line under the card, the thing it
-   connects to on the left and "Change" on the right. */
+/* The connection as one piece: the status on top, then its rows (where it
+   goes, the live numbers, the buttons, the system proxy), split by hairlines
+   inside one rounded surface. Separate floating boxes read as a generated
+   page. The status keeps its own fill, so it lights up blue alone. */
+.ux-connpanel {
+  overflow: clip;
+  border-radius: 20px;
+  background: var(--card);
+  box-shadow: var(--card-edge);
+}
+.ux-connpanel .ux-status {
+  border-radius: 0;
+  box-shadow: none;
+}
+.ux-connrow {
+  padding: 14px 20px;
+  border-top: 1px solid var(--hairline);
+}
+
+/* The leak check (ConnectionCard, lib/leaks.ts): one line for each way a site
+   could still learn about you. The verdict colours the mark and nothing else:
+   no filled pill, nothing see-through. */
+.ux-leaks-title {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-ink);
+}
+.ux-leaks {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ux-leaks li {
+  display: grid;
+  grid-template-columns: 16px 76px minmax(0, 1fr);
+  align-items: start;
+  gap: 2px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.ux-leaks li > svg {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--ink-soft);
+}
+.ux-leaks li[data-tone="ok"] > svg {
+  color: var(--ok);
+}
+.ux-leaks li[data-tone="warn"] > svg {
+  color: var(--warn);
+}
+.ux-leaks .label {
+  font-weight: 700;
+  color: var(--ink);
+}
+.ux-leaks .what {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.ux-leaks .headline {
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.ux-leaks .detail {
+  font-weight: 500;
+  color: var(--ink-mute);
+}
+.ux-leaks .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+}
+
+/* Where the switch goes: the row under the status, the thing it connects to
+   on the left and "Change" on the right. */
 .ux-target {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  background: var(--card);
-  box-shadow: var(--card-edge);
+  padding: 12px 20px 12px 14px;
+  border-top: 1px solid var(--hairline);
 }
 .ux-target .icon {
   width: 36px;
@@ -2711,7 +2831,7 @@ html[data-theme="midnight"] .ux-conn[data-look="card"] .ux-status::before {
   transition: background-color 160ms ease;
 }
 .ux-dest:hover {
-  background: color-mix(in srgb, var(--raised) 60%, transparent);
+  box-shadow: inset 0 0 0 1px var(--bar);
 }
 .ux-dest.is-on,
 .ux-dest.is-on:hover {
@@ -2808,6 +2928,15 @@ html[data-theme="midnight"] .ux-conn[data-look="card"] .ux-status::before {
 .ux-dest .acts > .ux-btn,
 .ux-dest .acts > .ux-state {
   min-width: 126px;
+}
+/* On a phone the address is what a row is about: the column is as wide as
+   "Switch here", so Connect and Switch here still line up and an address like
+   198.51.100.156:8888 fits; only "Connected" is a little wider. */
+@media (max-width: 639px) {
+  .ux-dest .acts > .ux-btn,
+  .ux-dest .acts > .ux-state {
+    min-width: 104px;
+  }
 }
 /* The quiet actions wait for the pointer, so a long list reads calm. */
 .ux-dest .acts .quiet {
@@ -3111,13 +3240,14 @@ html[data-surface] .ux-sheet {
   background: var(--card-solid);
 }
 
-/* Aura: the page carries a light and a fading dot grid; cards are frosted. */
+/* Aura: the page carries a light and a fading dot grid; the cards on it are
+   solid (nothing see-through: they were frosted glass until 2026-09-28). */
 html[data-surface="aura"] {
-  --card: color-mix(in srgb, #ffffff 80%, transparent);
+  --card: #ffffff;
   --card-solid: #ffffff;
 }
 html[data-surface="aura"][data-theme="midnight"] {
-  --card: color-mix(in srgb, #16161a 78%, transparent);
+  --card: #16161a;
   --card-solid: #16161a;
 }
 /* The page: the lights, then the dot grid fading down, then the paper. One
@@ -3140,14 +3270,6 @@ html[data-surface="aura"] body {
 /* The app's own page colour steps aside, so the light shows. */
 html[data-surface="aura"] .bg-canvas {
   background: transparent;
-}
-html[data-surface="aura"] .ux-panel,
-html[data-surface="aura"] .ux-filters,
-html[data-surface="aura"] .ux-table,
-html[data-surface="aura"] .ux-tile,
-html[data-surface="aura"] .ux-target {
-  -webkit-backdrop-filter: blur(14px) saturate(1.2);
-  backdrop-filter: blur(14px) saturate(1.2);
 }
 html[data-surface="aura"] .ux-stick {
   background: var(--aura-bg);
@@ -3329,13 +3451,13 @@ html[data-surface="aura"][data-bg="picture"],
 .bg-preview i {
   position: absolute;
   border-radius: 22px;
-  background: rgba(255, 255, 255, 0.82);
+  background: #ffffff;
   box-shadow:
     0 0 0 2px rgba(28, 25, 23, 0.05),
     0 20px 50px -24px rgba(28, 25, 23, 0.3);
 }
 [data-theme="midnight"] .bg-preview i {
-  background: rgba(22, 22, 26, 0.8);
+  background: #16161a;
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.07);
 }
 .bg-preview i:nth-child(1) {
@@ -3476,6 +3598,26 @@ html[data-surface="aura"][data-bg="picture"],
   animation: rise-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* The start screen's bar while the size is unknown (components/StartGate.tsx): a solid blue
+   segment runs along the solid track. With reduced motion it stands still in the middle. */
+.gate-sweep {
+  animation: gate-sweep 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@keyframes gate-sweep {
+  from {
+    left: -34%;
+  }
+  to {
+    left: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gate-sweep {
+    animation: none;
+    left: 33%;
+  }
+}
+
 .stagger > * {
   animation: rise-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
@@ -3560,12 +3702,12 @@ html[data-surface="aura"][data-bg="picture"],
   height: 12px;
 }
 *::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--ink-soft) 40%, transparent);
+  background: var(--bar);
   border-radius: 8px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--ink-soft) 70%, transparent);
+  background: var(--ink-soft);
   background-clip: content-box;
 }

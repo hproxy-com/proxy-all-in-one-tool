@@ -191,11 +191,31 @@ export type SystemProxySupport =
   | { kind: "automatic"; how: string }
   | { kind: "manual"; why: string; steps: string };
 
-/** What to connect through. Mirrors `ConnectSource` on the Rust side. */
+/** What to connect through. Mirrors `ConnectSource` on the Rust side. A free
+    source with `exit` (host:port, picked from the Free tab's list) starts on
+    that proxy; without it the relay tests the pool and takes the first that
+    works. Either way another free proxy takes over when the one in use dies. */
 export type ConnectSourceArg =
   | { kind: "fixed"; line: string }
   | { kind: "list"; lines: string[]; rotation: { rule: RotationRule; n?: number } }
-  | { kind: "free"; country?: string | null; socks5: boolean };
+  | { kind: "free"; country?: string | null; socks5: boolean; exit?: string };
+
+/** One free proxy from the pool, not tested yet. Mirrors `FreeExit` in
+    src-tauri/src/connect.rs. */
+export type FreeExit = {
+  host: string;
+  port: number;
+  /** Two-letter country code; empty when the pool does not know it. */
+  country: string;
+  city: string;
+  /** The network it belongs to, as the pool names it. */
+  network: string;
+  /** The pool's own last measurement, from its server, not from here. */
+  latency_ms?: number | null;
+};
+
+/** One free proxy tested from this computer. Mirrors `FreeTest`. */
+export type FreeTest = { ok: boolean; ms?: number | null; why?: string | null };
 
 export type RotationRule = "every_connection" | "every_n" | "random" | "on_failure";
 
@@ -219,6 +239,8 @@ export type RelayHealth = {
   country?: string | null;
   city?: string | null;
   asn_org?: string | null;
+  /** The exit's IANA time zone, e.g. "Europe/Berlin", when known. */
+  timezone?: string | null;
   error?: string | null;
   checked_at_ms: number;
   failures_in_a_row: number;
@@ -317,6 +339,91 @@ export async function connectStatus(): Promise<ConnectStatus> {
   return invoke<ConnectStatus>("connect_status");
 }
 
+/** The free proxies of a country (empty or null: anywhere), best first, not
+    tested yet. Rejects with the pool's reason, such as a used-up quota. */
+export async function freeList(country: string | null, socks5: boolean): Promise<FreeExit[]> {
+  if (!isTauri()) return (await import("./previewConnect")).demoFreeList(country, socks5);
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<FreeExit[]>("free_list", { country: country || null, socks5 });
+}
+
+/** Test one free proxy the way Connect uses it: HProxy's own HTTPS page
+    through it, certificates checked, 10 seconds at most. A proxy that fails
+    resolves with `ok: false` and the reason in words; it never rejects. */
+export async function freeTest(host: string, port: number, socks5: boolean): Promise<FreeTest> {
+  if (!isTauri()) return (await import("./previewConnect")).demoFreeTest(host, port);
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<FreeTest>("free_test", { host, port, socks5 });
+}
+
+/** One resolver the DNS leak test saw. Mirrors `LeakResolver` in src-tauri/src/connect.rs. */
+export type LeakResolver = {
+  ip: string;
+  country_code?: string | null;
+  country?: string | null;
+  city?: string | null;
+  asn_org?: string | null;
+  client_subnet?: string | null;
+};
+
+/** What the DNS leak test found through the relay. Mirrors `DnsLeakView`. */
+export type DnsLeak =
+  | { state: "seen"; resolvers: LeakResolver[] }
+  | { state: "not_seen" }
+  | { state: "unavailable"; why: string };
+
+/** The DNS leak test through the running relay: which resolver the proxy
+    looks names up with. Takes a few seconds; rejects only when not connected. */
+export async function leakDns(): Promise<DnsLeak> {
+  if (!isTauri()) return (await import("./previewConnect")).demoLeakDns();
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<DnsLeak>("leak_dns");
+}
+
+/* The computer's time zone, matched to the exit while connected (Settings,
+   "Match my time zone to the exit"). src-tauri/src/timezone.rs does all of
+   it, after each probe through the relay, so it works with this screen
+   closed; the window only says whether the setting is on. */
+
+/** Mirrors `ZoneStatus` in src-tauri/src/timezone.rs. */
+export type ZoneStatus = {
+  /** This computer can match its zone from here (Windows). */
+  supported: boolean;
+  /** The setting is on. */
+  matching: boolean;
+  /** The Windows zone we set, while matched ("Central Standard Time"). */
+  matched?: string | null;
+  /** When it was set (Unix ms): browsers take a moment to notice. */
+  matched_at_ms?: number | null;
+  /** "Set time zone automatically" is on: Windows may put its own zone back. */
+  automatic: boolean;
+  /** Why the last match did not happen, in words. */
+  problem?: string | null;
+  note?: string | null;
+  /** The browser preview only: the zone its pretend clock shows. */
+  preview_clock?: string | null;
+};
+
+/** The setting on or off. On: matched at once while connected; off: put back at once. */
+export async function zoneSetMatching(on: boolean): Promise<ZoneStatus> {
+  if (!isTauri()) return (await import("./previewConnect")).demoZoneSetMatching(on);
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<ZoneStatus>("timezone_set_matching", { on });
+}
+
+/** "Match again": after Windows or the person set another zone while connected. */
+export async function zoneMatchAgain(): Promise<ZoneStatus> {
+  if (!isTauri()) return (await import("./previewConnect")).demoZoneMatchAgain();
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<ZoneStatus>("timezone_match_again");
+}
+
+export async function zoneStatus(): Promise<ZoneStatus> {
+  if (!isTauri()) return (await import("./previewConnect")).demoZoneStatus();
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<ZoneStatus>("timezone_status");
+}
+
 /** Switch to a different upstream: the next in the list, or a fresh free exit. */
 export async function connectRotate(): Promise<ConnectStatus> {
   if (!isTauri()) return (await import("./previewConnect")).demoConnectRotate();
@@ -392,7 +499,110 @@ export async function fraudLookup(
   return invoke("fraud_lookup", { ips, service });
 }
 
-/* ── Updates while nobody is using the app (src-tauri/src/update.rs) ────── */
+/* ── Updates (src-tauri/src/update.rs, channel.rs, store.rs) ───────────── */
+
+/** Where this copy came from, which is where its updates come from, as the
+    system says it (src-tauri/src/channel.rs). The same names are in the version
+    list on hproxy.com. */
+export type Channel =
+  | "windows"
+  | "macos"
+  | "linux-appimage"
+  | "linux-deb"
+  | "linux-rpm"
+  | "microsoft-store"
+  | "google-play"
+  | "apk"
+  | "app-store";
+
+let channel: Promise<Channel | null> | null = null;
+/** This copy's channel, asked once. Null in a plain browser. */
+export function installChannel(): Promise<Channel | null> {
+  if (!isTauri()) return Promise.resolve(null);
+  channel ??= import("@tauri-apps/api/core")
+    .then(({ invoke }) => invoke<Channel>("install_channel"))
+    .catch(() => null);
+  return channel;
+}
+
+/** A newer version, as the start screen and the title bar show it. */
+export type UpdateInfo = {
+  version: string;
+  currentVersion: string;
+  notes?: string | null;
+  date?: string | null;
+};
+
+/** How far a download is. `total` is null when the server did not say. */
+export type UpdateProgress = { downloaded: number; total: number | null };
+
+/** What the start check did (src-tauri/src/update.rs, `AtStart`). Every
+    outcome opens the app; an install ends it, and the new version opens. */
+export type AtStart =
+  | { outcome: "not-here" | "current" | "no-answer" }
+  | { outcome: "waits" | "failed" | "tried-recently"; version: string };
+
+/** The Microsoft Store copy's start check (src-tauri/src/store.rs). */
+export type StoreAtStart = { outcome: "not-here" | "current" | "no-answer" | "not-installed" };
+
+async function call<T>(command: string): Promise<T> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(command);
+}
+
+export async function updateAtStart(): Promise<AtStart> {
+  if (!isTauri() || isMobile()) return { outcome: "not-here" };
+  return call<AtStart>("update_at_start");
+}
+
+export async function storeUpdateAtStart(): Promise<StoreAtStart> {
+  if (!isTauri() || isMobile()) return { outcome: "not-here" };
+  return call<StoreAtStart>("store_update_at_start");
+}
+
+/** Look for a newer version now. Null when there is none, or when this copy
+    does not update itself (a store's copy, a package). */
+export async function updateCheck(): Promise<UpdateInfo | null> {
+  if (!isTauri() || isMobile()) return null;
+  return call<UpdateInfo | null>("update_check");
+}
+
+/** Download the version the last look found, verified before it is kept. */
+export async function updateDownload(): Promise<void> {
+  return call<void>("update_download");
+}
+
+/** Install the downloaded version. On Windows this never returns. */
+export async function updateInstall(): Promise<void> {
+  return call<void>("update_install");
+}
+
+/** Forget the found version, so the next look fetches it afresh. */
+export async function updateForget(): Promise<void> {
+  if (!isTauri() || isMobile()) return;
+  return call<void>("update_forget");
+}
+
+/** The start check's progress, as the Rust side reports it. */
+export type UpdateEvents = {
+  found?: (info: UpdateInfo) => void;
+  progress?: (progress: UpdateProgress) => void;
+  installing?: (version: string) => void;
+  /** The Microsoft Store's own update window is open. */
+  store?: () => void;
+};
+
+export async function onUpdateEvents(handlers: UpdateEvents): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  const offs = await Promise.all([
+    listen<UpdateInfo>("update:found", (e) => handlers.found?.(e.payload)),
+    listen<UpdateProgress>("update:progress", (e) => handlers.progress?.(e.payload)),
+    listen<string>("update:installing", (e) => handlers.installing?.(e.payload)),
+    listen<null>("update:store", () => handlers.store?.()),
+  ]);
+  return () => offs.forEach((off) => off());
+}
 
 /** What the app knows about whether anybody is using it. `other_copies` is
     null when the running copies could not be counted (that counts as someone). */

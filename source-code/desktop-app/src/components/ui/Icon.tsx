@@ -92,6 +92,13 @@ export const Icon = {
       <path d="M12 16.5V21" />
     </svg>
   ),
+  /** A triangle with a mark: something to know before using what follows. */
+  warning: ({ className }: IconProps) => (
+    <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
+      <path d="M12 4 21 19.5H3Z" />
+      <path d="M12 10v4.5M12 17v.5" />
+    </svg>
+  ),
   clock: ({ className }: IconProps) => (
     <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
       <circle cx="12" cy="12" r="8.5" />
