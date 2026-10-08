@@ -16,7 +16,8 @@ HProxy updates itself from hproxy.com. Every update is signed, and the app check
 before it installs anything. While you use the app it waits for your click; while nobody uses it,
 it updates quietly.
 
-The Microsoft Store version is on its way; the Store will keep that one up to date.
+HProxy is also on the **[Microsoft Store](https://apps.microsoft.com/detail/9NPDSV0K3J1X)**. The Store
+keeps that copy up to date, and a new version reaches it after the Store's own review.
 
 ## Command line
 
