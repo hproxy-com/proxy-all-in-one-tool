@@ -1,0 +1,60 @@
+name: Command-line tool, install check
+
+# Runs the one-line installers from hproxy.com the way a person would, on clean machines of every
+# kind: macOS on Apple Silicon and on Intel, Linux, and Windows in PowerShell 7 and in Windows
+# PowerShell 5.1. Each one installs the released file, starts it, and asks it for two free proxies.
+#
+# Started by hand (Actions, "Command-line tool, install check", Run workflow), after a release.
+# It uses no secret and changes nothing in this repository.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS, Apple Silicon
+            os: macos-latest
+          - name: macOS, Intel
+            os: macos-15-intel
+          - name: Linux
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Install, as the README says
+        run: curl -fsSL https://hproxy.com/install.sh | sh
+
+      - name: It starts and answers
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uname -sm
+          hproxy --version
+          hproxy list --limit 2
+
+  windows:
+    name: Windows, PowerShell ${{ matrix.shell == 'pwsh' && '7' || '5.1' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [pwsh, powershell]
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - name: Install, as the README says
+        run: irm https://hproxy.com/install.ps1 | iex
+
+      - name: It starts and answers, from the PATH a new terminal reads
+        run: |
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          (Get-Command hproxy).Source
+          hproxy --version
+          hproxy list --limit 2
