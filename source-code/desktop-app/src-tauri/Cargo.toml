@@ -56,7 +56,7 @@ futures = "0.3"
 #
 # Signed in-app updates: a security-adjacent tool that cannot ship a fix to the
 # people already running it is a liability. Updates are minisign-verified; see
-# the updater block in tauri.conf.json. `process` is the relaunch after one.
+# the updater block in tauri.conf.json, and the rules in src/update.rs.
 #
 # One copy of the app at a time. A second one would start a second relay and
 # take a second snapshot of the system proxy, and the two would fight over a
@@ -69,7 +69,6 @@ tauri-plugin-updater = "~2.10"
 base64 = "0.22"
 minisign-verify = "0.2"
 semver = "1"
-tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2"
 # Start with the computer, when the person asks for it in Settings.
 tauri-plugin-autostart = "2"
@@ -78,9 +77,18 @@ tauri-plugin-autostart = "2"
 # an AI assistant starts is this same program, and the Windows installer ends
 # every copy, so a quiet update waits until none runs. WindowsAndMessaging and
 # winreg: the AI tool's folder goes on the user's PATH (src/tool.rs), and every
-# program is told the environment changed.
+# program is told the environment changed. Appx and Recovery: the Microsoft
+# Store copy knows its package, and asks Windows to start it again after the
+# Store installed its update (src/store.rs).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_Packaging_Appx", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_Packaging_Appx", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Recovery", "Win32_UI_WindowsAndMessaging"] }
+# The Microsoft Store copy updates at start through the Store (src/store.rs): Windows.Services.Store
+# finds a newer package and the Store installs it in its own window. The same windows crate Tauri
+# itself builds with, so this adds only the Store bindings.
+windows = { version = "0.61", features = ["Foundation", "Foundation_Collections", "Services_Store", "Win32_Foundation", "Win32_UI_Shell"] }
+# The list the Store's answer comes in: the windows crate builds with this crate but does not
+# re-export it.
+windows-collections = "0.2"
 winreg = "0.55"
 
 # NOTE: there is deliberately no bundled geo database. A city+ASN .mmdb is

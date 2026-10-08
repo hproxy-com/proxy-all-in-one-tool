@@ -1,45 +1,71 @@
-//! Updates while nobody is using the app: tell whether it is in use, and
-//! download the new version quietly in the background without disturbing anyone.
+//! Updates: which version to take, where to look for it, and when to install it.
 //!
-//! The window owns the policy (`src/lib/updater.ts`): look for a new version at
-//! start and every six hours, download it in the background, and offer
-//! "Restart to update". Since the app lives in the tray, someone can keep it
-//! hidden for weeks and never see that offer, so a fix would never reach them.
-//! This module is the other half: when nobody is using the app, it installs the
-//! update itself, silently, and the new version comes back to the tray.
+//! Three moments, the same rules:
+//!   - At start (`update_at_start`): a copy that updates itself (src/channel.rs) looks for a
+//!     newer version before its screens open, and when there is one it downloads and installs
+//!     that first, then the new version opens: what an app from Google Play does. The window
+//!     shows the progress (src/components/StartGate.tsx). It never locks anyone out: no answer
+//!     within a few seconds, no internet, a download that stalls or fails, and the app simply
+//!     opens and tries again at the next start. It never loops either: when a version did not
+//!     arrive after its install, the next start does not try it again at once (`ATTEMPT_NOTE`).
+//!     Only a released build does this (it carries HPROXY_RELEASED_AT): a developer's build is
+//!     never replaced by the published one.
+//!   - While it runs (src/lib/updater.ts): a look every six hours, the download in the
+//!     background, "Restart to update" in the title bar (`update_check`, `update_download`,
+//!     `update_install`).
+//!   - While nobody uses it (`update_install_quietly`): the app lives in the tray, so someone can
+//!     keep it hidden for weeks and never see that offer. The downloaded version installs itself
+//!     silently, and the new version comes back to the tray.
 //!
-//! Nobody is using it when all of these hold, checked here right before the
-//! install and again after the download:
+//! Nobody is using it when all of these hold, checked right before the install and again after
+//! the download:
 //!   - the window is hidden (in the tray),
 //!   - no connection is running (an install ends the relay),
-//!   - no other copy of this program runs under its own name: the Windows
-//!     installer ends every one before replacing the file, mid-task or not.
-//!     The tool Use with AI hands an assistant is a copy under another name
-//!     (`src/tool.rs`), so it does not count here and an update never ends it;
-//!     an assistant pointed at this program itself (`HProxy.exe mcp`) does.
+//!   - no other copy of this program runs under its own name: the Windows installer ends every
+//!     one before replacing the file, mid-task or not. The tool Use with AI hands an assistant
+//!     is a copy under another name (`src/tool.rs`), so it does not count here and an update
+//!     never ends it; an assistant pointed at this program itself (`HProxy.exe mcp`) does.
 //!
-//! The window adds a fourth: no check is running (it knows, `src/lib/runState.ts`).
+//! The window adds a fourth: no check is running (it knows, `src/lib/runState.ts`). At start the
+//! window just opened and nothing runs yet, so only the other copies and a connection can hold an
+//! install back; then the version waits for the title bar's offer.
 //!
-//! How it installs: `/S` makes the installer silent (no window at all), and the
-//! system proxy is put back in the plugin's before-exit hook, because on
-//! Windows the plugin ends this process with `std::process::exit`, which skips
-//! the app's own exit path. The installer starts the new version with the same
-//! arguments, so a note in the app's data folder tells it to start in the tray:
-//! nobody asked for a window.
+//! How it installs: while the window is on screen the installer shows its own small progress
+//! window (`installMode: passive` in tauri.conf.json); in the tray `/S` makes it silent, and a
+//! note in the app's data folder tells the new version to start in the tray: nobody asked for a
+//! window. The system proxy is put back in the plugin's before-exit hook, because on Windows the
+//! plugin ends this process with `std::process::exit`, which skips the app's own exit path.
 //!
-//! Which version it takes at all is decided here too, for both paths: newer
-//! than this one, and signed after this build was released
-//! (`newer_and_signed_after_release`).
+//! Which version it takes is decided here, for every path: newer than this one, and signed after
+//! this build was released (`newer_and_signed_after_release`). Where it looks: hproxy.com's
+//! update list, or, on the maintainers' own computer, the test ring's list, which gets every
+//! release before everyone else (`in_test_ring`).
 
 #[cfg(desktop)]
 use std::path::PathBuf;
 #[cfg(desktop)]
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(desktop)]
+use std::sync::{Arc, Mutex};
+#[cfg(desktop)]
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 
 use crate::connect;
+
+/// The update list every copy reads (tauri.conf.json names it too; a test keeps the two equal).
+#[cfg(desktop)]
+pub const STABLE_LIST: &str = "https://hproxy.com/downloads/desktop/latest.json";
+/// The test ring's list. The release tool puts each release here first, and on the stable list
+/// once the maintainer said it works (`release.mjs ship app`, then `--promote`).
+#[cfg(desktop)]
+pub const TEST_LIST: &str = "https://hproxy.com/downloads/desktop/latest-test.json";
+/// The file that puts a copy in the test ring: in its app data folder, the one word "test".
+/// The release tool writes it on the maintainers' computer (`release.mjs ring join`).
+#[cfg(desktop)]
+const RING_NOTE: &str = "update-ring";
 
 /// The note that makes the next start wait in the tray. The quiet install and
 /// its note are desktop only: phones update through their store.
@@ -48,6 +74,20 @@ const HIDDEN_NOTE: &str = "start-hidden-after-update";
 /// A note older than this is left over from an install that never happened.
 #[cfg(desktop)]
 const NOTE_FRESH: Duration = Duration::from_secs(10 * 60);
+/// The version installed last and when: a start that finds this version still missing within
+/// `NOTE_FRESH` opens without trying again, so a failing installer can never loop.
+#[cfg(desktop)]
+const ATTEMPT_NOTE: &str = "update-attempt";
+
+/// How long the start waits for the update list before it opens without it.
+#[cfg(desktop)]
+const START_CHECK: Duration = Duration::from_secs(4);
+/// Any later look: long enough for a slow line, short enough never to hang.
+#[cfg(desktop)]
+const CHECK: Duration = Duration::from_secs(30);
+/// A download that receives nothing for this long is given up (tried again later).
+#[cfg(desktop)]
+const STALL: Duration = Duration::from_secs(20);
 
 /// What the app knows about whether anybody is using it.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -66,13 +106,15 @@ impl Idle {
     }
 }
 
-fn idle_now(app: &AppHandle) -> Idle {
-    let window_visible = app
-        .get_webview_window("main")
+fn window_visible(app: &AppHandle) -> bool {
+    app.get_webview_window("main")
         .map(|w| w.is_visible().unwrap_or(true))
-        .unwrap_or(false);
+        .unwrap_or(false)
+}
+
+fn idle_now(app: &AppHandle) -> Idle {
     Idle {
-        window_visible,
+        window_visible: window_visible(app),
         connected: connect::is_running(app),
         other_copies: other_copies(),
     }
@@ -84,61 +126,382 @@ pub fn update_idle(app: AppHandle) -> Idle {
     idle_now(&app)
 }
 
+/// A version the window may offer: what the start screen and the title bar's sheet show.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInfo {
+    pub version: String,
+    pub current_version: String,
+    pub notes: Option<String>,
+    pub date: Option<String>,
+}
+
+#[cfg(desktop)]
+impl UpdateInfo {
+    fn of(update: &tauri_plugin_updater::Update) -> Self {
+        UpdateInfo {
+            version: update.version.clone(),
+            current_version: update.current_version.clone(),
+            notes: update
+                .body
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from),
+            date: update
+                .raw_json
+                .get("pub_date")
+                .and_then(|d| d.as_str())
+                .map(String::from),
+        }
+    }
+}
+
+/// The version the last look found, and its bytes once they are downloaded and verified.
+#[derive(Default)]
+pub struct Pending {
+    #[cfg(desktop)]
+    found: Mutex<Option<Found>>,
+}
+
+#[cfg(desktop)]
+struct Found {
+    update: tauri_plugin_updater::Update,
+    bytes: Option<Vec<u8>>,
+}
+
+#[cfg(desktop)]
+impl Pending {
+    fn keep(&self, update: tauri_plugin_updater::Update, bytes: Option<Vec<u8>>) {
+        if let Ok(mut found) = self.found.lock() {
+            *found = Some(Found { update, bytes });
+        }
+    }
+
+    /// The found version and, once downloaded, its bytes.
+    fn get(&self) -> Option<(tauri_plugin_updater::Update, Option<Vec<u8>>)> {
+        let found = self.found.lock().ok()?;
+        found.as_ref().map(|f| (f.update.clone(), f.bytes.clone()))
+    }
+
+    /// The downloaded bytes of `version`, if those are what is kept.
+    fn bytes_of(&self, version: &str) -> Option<Vec<u8>> {
+        let found = self.found.lock().ok()?;
+        found
+            .as_ref()
+            .filter(|f| f.update.version == version)
+            .and_then(|f| f.bytes.clone())
+    }
+}
+
+/// How far a download is, for the start screen's bar.
+#[cfg(desktop)]
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Progress {
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+/// What the start check did, for the window (src/components/StartGate.tsx). Every outcome opens
+/// the app; an install instead ends this program, and the new version opens. Phones build only
+/// `NotHere`: their store updates them.
+#[cfg_attr(not(desktop), allow(dead_code))]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "kebab-case")]
+pub enum AtStart {
+    /// This copy does not update itself (a store, a package), or it is not a released build.
+    NotHere,
+    /// Nothing newer.
+    Current,
+    /// No answer from the update list in time: the app opens and looks again later.
+    NoAnswer,
+    /// A newer version, but another copy of the program runs or a connection is up (an install
+    /// would end them): the title bar offers it.
+    Waits { version: String },
+    /// Found, but the download or the install failed: the title bar offers it again later.
+    Failed { version: String },
+    /// This version was installed a moment ago and did not arrive: not again at once.
+    TriedRecently { version: String },
+}
+
+/// At start, before the window opens its screens: take a newer version first (see the top of
+/// this file). On Windows a successful install never returns: the installer takes over and
+/// starts the new version. Elsewhere the files are swapped and the app restarts.
+#[tauri::command]
+pub async fn update_at_start(app: AppHandle, pending: State<'_, Pending>) -> Result<AtStart, String> {
+    #[cfg(desktop)]
+    return Ok(at_start(&app, &pending).await);
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, pending);
+        Ok(AtStart::NotHere)
+    }
+}
+
+#[cfg(desktop)]
+async fn at_start(app: &AppHandle, pending: &Pending) -> AtStart {
+    use tauri::Emitter;
+
+    // Once per run of the program: a window that reloads does not install twice.
+    static LOOKED: AtomicBool = AtomicBool::new(false);
+    if LOOKED.swap(true, Ordering::SeqCst) {
+        return AtStart::Current;
+    }
+    if released_at().is_none() || !crate::channel::current(app).updates_itself() {
+        return AtStart::NotHere;
+    }
+    let current = app.package_info().version.clone();
+    if let Some(version) = tried_recently(app, &current) {
+        log::warn!("{version} was installed a moment ago and this is still {current}: opening without it");
+        return AtStart::TriedRecently { version };
+    }
+    let hidden = !window_visible(app);
+    let update = match updater(app, START_CHECK, hidden) {
+        Ok(updater) => match updater.check().await {
+            Ok(Some(update)) => update,
+            Ok(None) => return AtStart::Current,
+            Err(e) => {
+                log::info!("no answer from the update list at start ({e}); looking again later");
+                return AtStart::NoAnswer;
+            }
+        },
+        Err(e) => {
+            log::warn!("the updater could not be set up: {e}");
+            return AtStart::NoAnswer;
+        }
+    };
+    let version = update.version.clone();
+    if other_copies() != Some(0) || connect::is_running(app) {
+        pending.keep(update, None);
+        return AtStart::Waits { version };
+    }
+
+    let _ = app.emit("update:found", UpdateInfo::of(&update));
+    let bytes = match download_watched(app, &update).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            log::warn!("{version} could not be downloaded at start: {e}");
+            pending.keep(update, None);
+            return AtStart::Failed { version };
+        }
+    };
+    pending.keep(update.clone(), Some(bytes.clone()));
+    write_attempt_note(app, &version);
+    if hidden {
+        write_hidden_note(app);
+    }
+    log::info!("installing {version} at start, before anything else runs");
+    let _ = app.emit("update:installing", &version);
+    if let Err(e) = update.install(bytes) {
+        clear_attempt_note(app);
+        clear_hidden_note(app);
+        log::warn!("{version} could not be installed at start: {e}");
+        return AtStart::Failed { version };
+    }
+    // Windows never gets here. macOS and Linux swapped the files in place.
+    connect::restore_on_exit(app);
+    app.restart()
+}
+
+/// Look for a newer version now (the title bar's timer, or "Check for updates"). Only a copy
+/// that updates itself looks here; the others read the version list (src/versions.rs).
+#[tauri::command]
+pub async fn update_check(app: AppHandle, pending: State<'_, Pending>) -> Result<Option<UpdateInfo>, String> {
+    #[cfg(desktop)]
+    {
+        if !crate::channel::current(&app).updates_itself() {
+            return Ok(None);
+        }
+        let updater = updater(&app, CHECK, false)?;
+        let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+            return Ok(None);
+        };
+        let info = UpdateInfo::of(&update);
+        // The same version, already downloaded, keeps its bytes.
+        if pending.bytes_of(&update.version).is_none() {
+            pending.keep(update, None);
+        }
+        Ok(Some(info))
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, pending);
+        Ok(None)
+    }
+}
+
+/// Download the version the last look found. The plugin verifies it against the public key in
+/// this build before it hands the bytes over (its `download`).
+#[tauri::command]
+pub async fn update_download(app: AppHandle, pending: State<'_, Pending>) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        let Some((update, bytes)) = pending.get() else {
+            return Err("there is no version to download".into());
+        };
+        if bytes.is_some() {
+            return Ok(());
+        }
+        let bytes = download_watched(&app, &update).await?;
+        pending.keep(update, Some(bytes));
+        Ok(())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, pending);
+        Err("phones update through their store".into())
+    }
+}
+
+/// "Restart to update": install the downloaded version. The window stopped Connect first. On
+/// Windows this never returns: the installer shows its progress and starts the new version.
+#[tauri::command]
+pub async fn update_install(app: AppHandle, pending: State<'_, Pending>) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        let Some((update, Some(bytes))) = pending.get() else {
+            return Err("the new version is not downloaded yet".into());
+        };
+        write_attempt_note(&app, &update.version);
+        if let Err(e) = update.install(bytes) {
+            clear_attempt_note(&app);
+            return Err(e.to_string());
+        }
+        connect::restore_on_exit(&app);
+        app.restart()
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, pending);
+        Err("phones update through their store".into())
+    }
+}
+
+/// Forget the version the last look found, so the next look fetches it afresh (after a failed
+/// install, "Try again").
+#[tauri::command]
+pub fn update_forget(pending: State<'_, Pending>) {
+    #[cfg(desktop)]
+    if let Ok(mut found) = pending.found.lock() {
+        *found = None;
+    }
+    #[cfg(not(desktop))]
+    let _ = pending;
+}
+
 /// Install the newest version now, silently, if nobody is using the app.
 /// False when there was nothing to do (someone is using it, or no update).
 /// On Windows a successful install never returns: the installer takes over.
 /// Phones update through their store, so there it never has anything to do.
 #[tauri::command]
-pub async fn update_install_quietly(app: AppHandle) -> Result<bool, String> {
+pub async fn update_install_quietly(app: AppHandle, pending: State<'_, Pending>) -> Result<bool, String> {
     #[cfg(desktop)]
-    return install_quietly(app).await;
+    return install_quietly(app, &pending).await;
     #[cfg(not(desktop))]
     {
-        let _ = app;
+        let _ = (app, pending);
         Ok(false)
     }
 }
 
 #[cfg(desktop)]
-async fn install_quietly(app: AppHandle) -> Result<bool, String> {
-    use tauri_plugin_updater::UpdaterExt;
-
-    if !idle_now(&app).nobody_using() {
+async fn install_quietly(app: AppHandle, pending: &Pending) -> Result<bool, String> {
+    if !idle_now(&app).nobody_using() || !crate::channel::current(&app).updates_itself() {
         return Ok(false);
     }
-    let restore = app.clone();
-    let updater = app
-        .updater_builder()
-        .installer_arg("/S")
-        .on_before_exit(move || {
-            connect::restore_on_exit(&restore);
-            restore.cleanup_before_exit();
-        })
-        .build()
-        .map_err(|e| e.to_string())?;
+    let updater = updater(&app, CHECK, true)?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
         return Ok(false);
     };
-    // Verified against the public key compiled into this build before it
-    // returns (the plugin's `download`).
-    let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    // The bytes the title bar's download already verified, when they are this version's.
+    let bytes = match pending.bytes_of(&update.version) {
+        Some(bytes) => bytes,
+        None => download_watched(&app, &update).await?,
+    };
     // The download takes a while: look again, someone may have come back.
     if !idle_now(&app).nobody_using() {
         return Ok(false);
     }
     write_hidden_note(&app);
+    write_attempt_note(&app, &update.version);
     log::info!(
         "installing {} quietly: the window is hidden, nothing is connected, no other copy runs",
         update.version
     );
     if let Err(e) = update.install(bytes) {
         clear_hidden_note(&app);
+        clear_attempt_note(&app);
         return Err(e.to_string());
     }
     // Windows never gets here. macOS and Linux swapped the files in place:
     // start the new version, which finds the note and waits in the tray.
     connect::restore_on_exit(&app);
     app.restart()
+}
+
+/// The updater for one look: the stable list or the test ring's, how long the look may take,
+/// and a silent installer for a copy nobody is watching.
+#[cfg(desktop)]
+fn updater(app: &AppHandle, timeout: Duration, silent: bool) -> Result<tauri_plugin_updater::Updater, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let restore = app.clone();
+    let list = if in_test_ring(app) { TEST_LIST } else { STABLE_LIST };
+    let list: tauri::Url = list.parse().map_err(|e| format!("{list}: {e}"))?;
+    let mut builder = app
+        .updater_builder()
+        .endpoints(vec![list])
+        .map_err(|e| e.to_string())?
+        .timeout(timeout)
+        .on_before_exit(move || {
+            connect::restore_on_exit(&restore);
+            restore.cleanup_before_exit();
+        });
+    if silent {
+        builder = builder.installer_arg("/S");
+    }
+    builder.build().map_err(|e| e.to_string())
+}
+
+/// Download a version with its progress for the start screen, and give up when nothing arrives
+/// for `STALL`: a line that stopped moving must not hold the app closed.
+#[cfg(desktop)]
+async fn download_watched(app: &AppHandle, update: &tauri_plugin_updater::Update) -> Result<Vec<u8>, String> {
+    use tauri::Emitter;
+
+    let started = Instant::now();
+    // Milliseconds after `started` when the last bytes arrived.
+    let last = Arc::new(AtomicU64::new(0));
+    let arrived = last.clone();
+    let events = app.clone();
+    let mut downloaded = 0u64;
+    let mut shown = 0u64;
+    let download = update.download(
+        move |chunk, total| {
+            downloaded += chunk as u64;
+            arrived.store(started.elapsed().as_millis() as u64, Ordering::Relaxed);
+            // One event per 64 KB is plenty for a bar; the last one always goes.
+            if downloaded - shown >= 64 * 1024 || Some(downloaded) == total {
+                shown = downloaded;
+                let _ = events.emit("update:progress", Progress { downloaded, total });
+            }
+        },
+        || {},
+    );
+    tokio::pin!(download);
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        tokio::select! {
+            result = &mut download => return result.map_err(|e| e.to_string()),
+            _ = tick.tick() => {
+                let quiet = (started.elapsed().as_millis() as u64).saturating_sub(last.load(Ordering::Relaxed));
+                if quiet > STALL.as_millis() as u64 {
+                    return Err(format!("nothing arrived for {} seconds", STALL.as_secs()));
+                }
+            }
+        }
+    }
 }
 
 /// When this build was released, in seconds since 1970. The maintainers'
@@ -241,7 +604,7 @@ fn fresh(written_ms: u64, now_ms: u64) -> bool {
 
 #[cfg(desktop)]
 fn note_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_local_data_dir().ok().map(|d| d.join(HIDDEN_NOTE))
+    data_file(app, HIDDEN_NOTE)
 }
 
 #[cfg(desktop)]
@@ -259,6 +622,68 @@ fn clear_hidden_note(app: &AppHandle) {
     if let Some(path) = note_path(app) {
         let _ = std::fs::remove_file(path);
     }
+}
+
+/// A file in the app's data folder, by name.
+#[cfg(desktop)]
+fn data_file(app: &AppHandle, name: &str) -> Option<PathBuf> {
+    app.path().app_local_data_dir().ok().map(|d| d.join(name))
+}
+
+/// Whether this copy is in the test ring: the maintainers' own computer, which takes every
+/// release before everyone else.
+#[cfg(desktop)]
+fn in_test_ring(app: &AppHandle) -> bool {
+    data_file(app, RING_NOTE)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .is_some_and(|text| says_test_ring(&text))
+}
+
+#[cfg(desktop)]
+fn says_test_ring(text: &str) -> bool {
+    text.trim().eq_ignore_ascii_case("test")
+}
+
+/// Before an install: which version, and when. The next start reads it (`tried_recently`).
+#[cfg(desktop)]
+fn write_attempt_note(app: &AppHandle, version: &str) {
+    if let Some(path) = data_file(app, ATTEMPT_NOTE) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, format!("{version}\n{}", now_ms()));
+    }
+}
+
+#[cfg(desktop)]
+fn clear_attempt_note(app: &AppHandle) {
+    if let Some(path) = data_file(app, ATTEMPT_NOTE) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// The version an install brought a moment ago that is still not the one running: the start
+/// check leaves it alone this time. A note that is old, or whose version arrived, is removed.
+#[cfg(desktop)]
+fn tried_recently(app: &AppHandle, running: &semver::Version) -> Option<String> {
+    let path = data_file(app, ATTEMPT_NOTE)?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    let still_missing = missing_after_install(&text, running, now_ms());
+    if still_missing.is_none() {
+        let _ = std::fs::remove_file(&path);
+    }
+    still_missing
+}
+
+/// The note's version, when it is newer than the running one and was written within
+/// `NOTE_FRESH`; None for anything else, a note that cannot be read included.
+#[cfg(desktop)]
+fn missing_after_install(note: &str, running: &semver::Version, now_ms: u64) -> Option<String> {
+    let mut lines = note.lines();
+    let version = lines.next()?.trim();
+    let written_ms: u64 = lines.next()?.trim().parse().ok()?;
+    let newer = semver::Version::parse(version).ok()? > *running;
+    (newer && fresh(written_ms, now_ms)).then(|| version.to_string())
 }
 
 #[cfg(desktop)]
@@ -352,6 +777,53 @@ mod tests {
         assert!(fresh(now, now));
         assert!(!fresh(now - 11 * 60 * 1000, now));
         assert!(!fresh(0, now), "an unreadable note");
+    }
+
+    /// The release tool publishes to the list tauri.conf.json names; the code reads the same
+    /// one, and the test ring's list sits beside it.
+    #[cfg(desktop)]
+    #[test]
+    fn the_lists_are_the_ones_the_release_tool_writes() {
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let endpoints = conf["plugins"]["updater"]["endpoints"].as_array().unwrap();
+        assert_eq!(endpoints.len(), 1);
+        assert_eq!(endpoints[0].as_str(), Some(STABLE_LIST));
+        assert_eq!(TEST_LIST, STABLE_LIST.replace("/latest.json", "/latest-test.json"));
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn only_the_word_test_puts_a_copy_in_the_test_ring() {
+        assert!(says_test_ring("test"));
+        assert!(says_test_ring(" TEST\r\n"));
+        assert!(!says_test_ring(""));
+        assert!(!says_test_ring("stable"));
+        assert!(!says_test_ring("testing"));
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn a_version_that_did_not_arrive_is_left_alone_for_ten_minutes() {
+        let now = 1_790_000_000_000;
+        let running = v("0.2.4");
+        let note = |version: &str, at: u64| format!("{version}\n{at}");
+        // Installed a minute ago, still 0.2.4 running: do not try 0.2.5 again yet.
+        assert_eq!(
+            missing_after_install(&note("0.2.5", now - 60_000), &running, now).as_deref(),
+            Some("0.2.5")
+        );
+        // Eleven minutes ago: try again.
+        assert_eq!(
+            missing_after_install(&note("0.2.5", now - 11 * 60_000), &running, now),
+            None
+        );
+        // The version arrived (or an older note): nothing is missing.
+        assert_eq!(missing_after_install(&note("0.2.4", now - 1_000), &running, now), None);
+        assert_eq!(missing_after_install(&note("0.2.3", now - 1_000), &running, now), None);
+        // Unreadable notes hold nothing back.
+        assert_eq!(missing_after_install("", &running, now), None);
+        assert_eq!(missing_after_install("0.2.5", &running, now), None);
+        assert_eq!(missing_after_install("zero\n123", &running, now), None);
     }
 
     #[cfg(windows)]

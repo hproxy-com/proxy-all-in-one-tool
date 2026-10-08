@@ -31,7 +31,7 @@
 use crate::check::AppState;
 use hproxy_api::geo::Geo;
 use hproxy_relay::pool::Pool;
-use hproxy_relay::upstream::{self, Scheme};
+use hproxy_relay::upstream::{self, Scheme, Upstream};
 use hproxy_relay::{List, Rotation, Source, SourceKind, Stats, StatsSnapshot};
 use hproxy_system::{ProxySetting, RestoreOutcome, Snapshot, Support};
 use serde::{Deserialize, Serialize};
@@ -143,6 +143,9 @@ pub struct Health {
     pub country: Option<String>,
     pub city: Option<String>,
     pub asn_org: Option<String>,
+    /// The exit's IANA time zone, e.g. "Europe/Berlin": the leak check compares
+    /// it with the computer's clock.
+    pub timezone: Option<String>,
     /// Why the probe failed, as a sentence.
     pub error: Option<String>,
     pub checked_at_ms: u64,
@@ -205,7 +208,41 @@ pub enum ConnectSource {
         country: Option<String>,
         #[serde(default)]
         socks5: bool,
+        /// A free exit the person picked from the Free tab's list, `host:port`.
+        /// Absent: the pool's search picks the first exit that works.
+        #[serde(default)]
+        exit: Option<String>,
     },
+}
+
+fn scheme_of(socks5: bool) -> Scheme {
+    if socks5 {
+        Scheme::Socks5
+    } else {
+        Scheme::Http
+    }
+}
+
+/// A free exit's `host:port` as the relay's upstream. Pool exits are open
+/// proxies, so there is never a login.
+fn free_upstream(addr: &str, scheme: Scheme) -> Result<Upstream, String> {
+    let (host, port) = addr
+        .trim()
+        .rsplit_once(':')
+        .ok_or_else(|| format!("`{addr}` is not a host:port"))?;
+    let port: u16 = port.parse().map_err(|_| format!("`{addr}` has no usable port"))?;
+    // An IPv6 address comes in brackets, `[2001:db8::1]:8080`, the way
+    // `Upstream::addr` prints it; the host is the address inside them.
+    let host = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    if host.is_empty() {
+        return Err(format!("`{addr}` has no host"));
+    }
+    Ok(Upstream {
+        scheme,
+        host: host.to_string(),
+        port,
+        auth: None,
+    })
 }
 
 #[derive(Deserialize)]
@@ -263,10 +300,13 @@ async fn build_source(src: ConnectSource) -> Result<(Source, Option<String>, Opt
             });
             Ok((Source::List(list), None, notice))
         }
-        ConnectSource::Free { country, socks5 } => {
-            let scheme = if socks5 { Scheme::Socks5 } else { Scheme::Http };
+        ConnectSource::Free { country, socks5, exit } => {
+            let scheme = scheme_of(socks5);
             let pool = Pool::new(country, scheme)?;
-            let (src, label) = Source::from_pool(pool).await?;
+            let (src, label) = match exit.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
+                Some(addr) => Source::from_pool_starting_at(pool, free_upstream(addr, scheme)?).await?,
+                None => Source::from_pool(pool).await?,
+            };
             Ok((src, Some(label), None))
         }
     }
@@ -336,6 +376,39 @@ pub fn is_running(app: &AppHandle) -> bool {
         .unwrap_or(true)
 }
 
+/// The running relay's start (Unix ms), which names its session: the time
+/// zone match takes a probe's zone only from the relay that is up now.
+pub fn session(app: &AppHandle) -> Option<u64> {
+    app.state::<RelayState>()
+        .inner
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|r| r.started_at_ms))
+}
+
+/// The exit's time zone from the last probe that answered, with the session,
+/// while connected (timezone.rs: the setting switched on, "Match again").
+pub fn exit_zone(app: &AppHandle) -> Option<(u64, String)> {
+    let state = app.state::<RelayState>();
+    let guard = state.inner.lock().ok()?;
+    let r = guard.as_ref()?;
+    let health = r.health.lock().ok()?;
+    let zone = health.last.as_ref().filter(|h| h.ok)?.timezone.clone()?;
+    Some((r.started_at_ms, zone))
+}
+
+/// A probe's answer: kept for the card, and the exit's zone handed to the
+/// time zone match (timezone.rs) while it is on, off the async threads
+/// because Windows' `tzutil` blocks.
+async fn took_probe(app: &AppHandle, session: u64, health: &Arc<Mutex<HealthState>>, h: Health) {
+    let zone = if h.ok { h.timezone.clone() } else { None };
+    record_health(health, h);
+    if let Some(zone) = zone.filter(|_| crate::timezone::is_matching(app)) {
+        let app = app.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || crate::timezone::follow_exit(&app, session, &zone)).await;
+    }
+}
+
 /// On exit (the last window closed, or the process is ending): if Connect is
 /// still on, put the system proxy back and tell the relay to stop.
 /// Synchronous on purpose, because the event loop is ending and nothing
@@ -347,6 +420,13 @@ pub fn is_running(app: &AppHandle) -> bool {
 pub fn restore_on_exit(app: &AppHandle) {
     let state = app.state::<RelayState>();
     let running = state.inner.lock().ok().and_then(|mut g| g.take());
+    // The time zone, even when no relay runs any more, and only once the relay
+    // is out of the state, so a probe still finishing cannot match it again.
+    match crate::timezone::restore(app) {
+        Ok(Some(words)) => log::info!("{words}"),
+        Ok(None) => {}
+        Err(e) => log::error!("could not put the time zone back on exit: {e}"),
+    }
     let Some(mut r) = running else { return };
     if let Some(snap) = r.system.take() {
         match hproxy_system::restore(&snap) {
@@ -463,6 +543,7 @@ async fn probe_once(listen: SocketAddr, geo: &Geo, url: &str) -> Health {
                 country: label.as_ref().and_then(|l| l.country.clone()),
                 city: label.as_ref().and_then(|l| l.city.clone()),
                 asn_org: label.as_ref().and_then(|l| l.asn_org.clone()),
+                timezone: label.as_ref().and_then(|l| l.timezone.clone()),
                 error: None,
                 checked_at_ms,
                 failures_in_a_row: 0,
@@ -478,6 +559,7 @@ async fn probe_once(listen: SocketAddr, geo: &Geo, url: &str) -> Health {
             country: None,
             city: None,
             asn_org: None,
+            timezone: None,
             error: Some(e),
             checked_at_ms,
             failures_in_a_row: 0,
@@ -597,11 +679,13 @@ pub async fn connect_start(
 
     // The first probe runs at once, so the exit address is on the screen
     // within a second or two of connecting; then every PROBE_EVERY.
+    let started_at_ms = now_ms();
     let health = Arc::new(Mutex::new(HealthState::default()));
     let probe = {
         let health = Arc::clone(&health);
         let geo = Arc::clone(&app_state.geo);
         let probe_url = Arc::clone(&probe_url);
+        let app = app.clone();
         tauri::async_runtime::spawn(async move {
             loop {
                 let url = probe_url
@@ -609,7 +693,7 @@ pub async fn connect_start(
                     .map(|u| u.clone())
                     .unwrap_or_else(|_| DEFAULT_PROBE_URL.to_string());
                 let h = probe_once(bound, &geo, &url).await;
-                record_health(&health, h);
+                took_probe(&app, started_at_ms, &health, h).await;
                 tokio::time::sleep(PROBE_EVERY).await;
             }
         })
@@ -625,7 +709,7 @@ pub async fn connect_start(
         source,
         stats,
         exit_label,
-        started_at_ms: now_ms(),
+        started_at_ms,
         stop: Some(stop_tx),
         task,
         probe,
@@ -663,6 +747,74 @@ pub async fn stop_from_tray(app: &AppHandle) {
 pub fn connect_status(state: State<'_, RelayState>) -> ConnectStatus {
     let guard = state.inner.lock().ok();
     status_of(guard.as_ref().and_then(|g| g.as_ref()), None)
+}
+
+/// How many free exits the Free tab lists for a country.
+const FREE_LIST_SIZE: usize = 24;
+
+/// One free exit on the Free tab's list, as the pool describes it.
+#[derive(Serialize)]
+pub struct FreeExit {
+    pub host: String,
+    pub port: u16,
+    pub country: String,
+    pub city: String,
+    pub network: String,
+    pub latency_ms: Option<i64>,
+}
+
+/// A country's free exits, best first, untested: the window tests each one
+/// with `free_test` and shows the result on its row.
+#[tauri::command]
+pub async fn free_list(country: Option<String>, socks5: bool) -> Result<Vec<FreeExit>, String> {
+    let pool = Pool::new(country, scheme_of(socks5))?;
+    Ok(pool
+        .list(FREE_LIST_SIZE)
+        .await?
+        .into_iter()
+        .map(|e| FreeExit {
+            host: e.upstream.host,
+            port: e.upstream.port,
+            country: e.country,
+            city: e.city,
+            network: e.network,
+            latency_ms: e.latency_ms,
+        })
+        .collect())
+}
+
+/// Whether one free exit relays, tested from this computer.
+#[derive(Serialize)]
+pub struct FreeTest {
+    pub ok: bool,
+    /// How long the test took, when it worked.
+    pub ms: Option<u32>,
+    /// Why not, in words, when it did not.
+    pub why: Option<String>,
+}
+
+/// Test one free exit the way Connect would use it: our own HTTPS page through
+/// it, certificates checked (`hproxy_relay::pool::test`).
+#[tauri::command]
+pub async fn free_test(host: String, port: u16, socks5: bool) -> FreeTest {
+    let up = Upstream {
+        scheme: scheme_of(socks5),
+        host,
+        port,
+        auth: None,
+    };
+    match hproxy_relay::pool::test(&up).await {
+        Ok(ms) => FreeTest {
+            ok: true,
+            ms: Some(ms),
+            why: None,
+        },
+        Err(why) => FreeTest {
+            ok: false,
+            ms: None,
+            why: Some(why),
+        },
+    }
 }
 
 /// Switch to a different upstream because the person asked: the next member
@@ -713,20 +865,86 @@ fn current_probe_url(r: &Running) -> String {
 /// One probe through the relay right now, for the "Test now" button.
 #[tauri::command]
 pub async fn connect_probe(
+    app: AppHandle,
     state: State<'_, RelayState>,
     app_state: State<'_, AppState>,
 ) -> Result<ConnectStatus, String> {
-    let (listen, health, url) = {
+    let (listen, health, url, session) = {
         let guard = state
             .inner
             .lock()
             .map_err(|_| "the relay state is unavailable".to_string())?;
         let r = guard.as_ref().ok_or("not connected")?;
-        (r.listen, Arc::clone(&r.health), current_probe_url(r))
+        (r.listen, Arc::clone(&r.health), current_probe_url(r), r.started_at_ms)
     };
     let h = probe_once(listen, &app_state.geo, &url).await;
-    record_health(&health, h);
+    took_probe(&app, session, &health, h).await;
     Ok(connect_status(state))
+}
+
+/// One resolver the DNS leak test saw, with its place and network.
+#[derive(Serialize)]
+pub struct LeakResolver {
+    pub ip: String,
+    pub country_code: Option<String>,
+    pub country: Option<String>,
+    pub city: Option<String>,
+    pub asn_org: Option<String>,
+    /// The network the resolver said it asks for, when it sent one.
+    pub client_subnet: Option<String>,
+}
+
+/// What the DNS leak test found through the relay (`hproxy_api::leak`).
+#[derive(Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum DnsLeakView {
+    /// The resolvers the proxy looked the test's made-up name up with.
+    Seen { resolvers: Vec<LeakResolver> },
+    /// The proxy never looked the name up.
+    NotSeen,
+    /// The test could not run, with the reason in words.
+    Unavailable { why: String },
+}
+
+/// The DNS leak test through the running relay: which resolver the proxy
+/// looks names up with, and where it is. The leak check runs it once a
+/// connection is up and again on "Test now".
+#[tauri::command]
+pub async fn leak_dns(
+    state: State<'_, RelayState>,
+    app_state: State<'_, AppState>,
+) -> Result<DnsLeakView, String> {
+    let listen = {
+        let guard = state
+            .inner
+            .lock()
+            .map_err(|_| "the relay state is unavailable".to_string())?;
+        guard.as_ref().ok_or("not connected")?.listen
+    };
+    let door = hproxy_api::http_client("hproxy-checker", Duration::from_secs(6));
+    Ok(match hproxy_api::leak::dns_leak(&format!("http://{listen}"), &door).await {
+        hproxy_api::leak::DnsLeak::Seen(found) => {
+            let ips: Vec<String> = found.iter().map(|r| r.ip.clone()).collect();
+            app_state.geo.prefetch(&ips, |_| {}).await;
+            let resolvers = found
+                .into_iter()
+                .map(|r| {
+                    let label = app_state.geo.label(&r.ip);
+                    LeakResolver {
+                        country_code: label.as_ref().and_then(|l| l.country_code.clone()),
+                        country: label.as_ref().and_then(|l| l.country.clone()),
+                        city: label.as_ref().and_then(|l| l.city.clone()),
+                        asn_org: label.as_ref().and_then(|l| l.asn_org.clone()),
+                        client_subnet: r.client_subnet,
+                        ip: r.ip,
+                    }
+                })
+                .collect();
+            DnsLeakView::Seen { resolvers }
+        }
+        hproxy_api::leak::DnsLeak::NotSeen => DnsLeakView::NotSeen,
+        hproxy_api::leak::DnsLeak::Unavailable(why) => DnsLeakView::Unavailable { why },
+    })
 }
 
 /// Point the running probe somewhere else (Settings, "Connect check"), and
@@ -734,12 +952,13 @@ pub async fn connect_probe(
 /// back to our judge.
 #[tauri::command]
 pub async fn connect_set_probe(
+    app: AppHandle,
     state: State<'_, RelayState>,
     app_state: State<'_, AppState>,
     url: Option<String>,
 ) -> Result<ConnectStatus, String> {
     let url = probe_url_from(url)?;
-    let (listen, health) = {
+    let (listen, health, session) = {
         let guard = state
             .inner
             .lock()
@@ -748,10 +967,10 @@ pub async fn connect_set_probe(
         if let Ok(mut u) = r.probe_url.lock() {
             *u = url.clone();
         }
-        (r.listen, Arc::clone(&r.health))
+        (r.listen, Arc::clone(&r.health), r.started_at_ms)
     };
     let h = probe_once(listen, &app_state.geo, &url).await;
-    record_health(&health, h);
+    took_probe(&app, session, &health, h).await;
     Ok(connect_status(state))
 }
 
@@ -786,7 +1005,16 @@ async fn stop_running(app: &AppHandle, state: &State<'_, RelayState>) -> Option<
         }
         let _ = r.task.await;
     }
-    notice
+    // The time zone, when it was matched to the exit (timezone.rs): back on
+    // every disconnect, even when the relay had already stopped by itself.
+    let zone = match crate::timezone::restore(app) {
+        Ok(words) => words,
+        Err(e) => Some(format!("The time zone could not be put back: {e}.")),
+    };
+    match (notice, zone) {
+        (Some(n), Some(z)) => Some(format!("{n} {z}")),
+        (n, z) => n.or(z),
+    }
 }
 
 #[cfg(test)]
@@ -897,7 +1125,31 @@ mod tests {
                 .unwrap();
         assert!(matches!(list, ConnectSource::List { .. }));
         let free: ConnectSource = serde_json::from_str(r#"{"kind":"free","country":"DE"}"#).unwrap();
-        assert!(matches!(free, ConnectSource::Free { socks5: false, .. }));
+        assert!(matches!(free, ConnectSource::Free { socks5: false, exit: None, .. }));
+        let picked: ConnectSource =
+            serde_json::from_str(r#"{"kind":"free","country":"DE","socks5":true,"exit":"203.0.113.9:1080"}"#).unwrap();
+        match picked {
+            ConnectSource::Free { exit, socks5, .. } => {
+                assert_eq!(exit.as_deref(), Some("203.0.113.9:1080"));
+                assert!(socks5);
+            }
+            _ => panic!("a picked free exit read as another kind of source"),
+        }
+    }
+
+    #[test]
+    fn a_picked_free_exit_becomes_an_open_upstream() {
+        let up = free_upstream(" 203.0.113.9:1080 ", Scheme::Socks5).unwrap();
+        assert_eq!((up.host.as_str(), up.port, up.scheme), ("203.0.113.9", 1080, Scheme::Socks5));
+        assert!(up.auth.is_none());
+        assert!(free_upstream("203.0.113.9", Scheme::Http).is_err());
+        assert!(free_upstream("203.0.113.9:port", Scheme::Http).is_err());
+        assert!(free_upstream(":8080", Scheme::Http).is_err());
+        assert!(free_upstream("[]:8080", Scheme::Http).is_err());
+        // IPv6 in brackets, as the Free tab and `Upstream::addr` write it.
+        let v6 = free_upstream("[2001:db8::7]:3128", Scheme::Http).unwrap();
+        assert_eq!((v6.host.as_str(), v6.port), ("2001:db8::7", 3128));
+        assert_eq!(v6.addr(), "[2001:db8::7]:3128");
     }
 
     #[test]
@@ -911,6 +1163,7 @@ mod tests {
             country: None,
             city: None,
             asn_org: None,
+            timezone: None,
             error: Some("no answer".into()),
             checked_at_ms: at,
             failures_in_a_row: 0,

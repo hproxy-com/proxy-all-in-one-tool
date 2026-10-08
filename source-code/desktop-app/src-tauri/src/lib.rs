@@ -5,21 +5,24 @@
 //!   connect     the Connect screen: the relay and the system proxy setting
 //!   files       import a list, export results: the dialogs open from Rust
 //!   fraud       fraud scores of addresses, with the service picked in Settings
+//!   timezone    the computer's time zone matched to the exit while connected
 //!
 //! The HProxy web APIs (locations, API-mode checking) are the `hproxy-api`
 //! crate, shared with the CLI.
 //!
-//! The updater's policy lives in the window (`src/lib/updater.ts`): check on a
-//! timer, download in the background, install on the person's click after
-//! stopping Connect, or by itself while nobody is using the app (`update`).
-//! The Rust side registers the plugin and puts the system proxy back on every
-//! exit, whichever way the app ends.
+//! Updates (`update`, `channel`, `store`, `versions`): at start a copy takes a newer version
+//! before its screens open, the way its channel allows (src/components/StartGate.tsx); while it
+//! runs the window looks on a timer and offers "Restart to update" (`src/lib/updater.ts`); while
+//! nobody uses it the downloaded version installs itself. The Rust side puts the system proxy
+//! back on every exit, whichever way the app ends.
 
+mod channel;
 mod check;
 mod connect;
 mod files;
 mod fraud;
 mod store;
+mod timezone;
 mod tool;
 mod tray;
 mod update;
@@ -82,10 +85,10 @@ pub fn run() {
         }
     }));
 
-    // Signed updates and the relaunch after one: desktop only. Phones update
-    // through their store, and the two plugins do not build for them. Which
-    // version is taken: newer, and signed after this build was released
-    // (update.rs), so an old build of ours cannot come back as a new one.
+    // Signed updates: desktop only. Phones update through their store, and the
+    // plugin does not build for them. Which version is taken: newer, and signed
+    // after this build was released (update.rs), so an old build of ours cannot
+    // come back as a new one.
     #[cfg(desktop)]
     let builder = builder
         .plugin(
@@ -93,13 +96,16 @@ pub fn run() {
                 .default_version_comparator(update::newer_and_signed_after_release)
                 .build(),
         )
-        .plugin(tauri_plugin_process::init())
         // Start with the computer, only when the person ticks it in Settings
         // (off by default). Started that way, the app waits in the tray.
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--background"]),
         ));
+
+    // On Android, which app installed this copy (Google Play or a download): channel.rs.
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(channel::android::plugin());
 
     let app = builder
         .plugin(tauri_plugin_opener::init())
@@ -125,9 +131,15 @@ pub fn run() {
             app.manage(AppState::new());
             app.manage(connect::RelayState::default());
             app.manage(tray::TrayState::default());
+            app.manage(update::Pending::default());
+            app.manage(timezone::ZoneState::default());
             // A previous run that died while connected left the system proxy
             // pointing at a relay that no longer exists. Put it back first.
             if let Some(notice) = connect::repair_on_start(app.handle()) {
+                log::warn!("{notice}");
+            }
+            // The same for a time zone that was matched to the exit (timezone.rs).
+            if let Some(notice) = timezone::repair_on_start(app.handle()) {
                 log::warn!("{notice}");
             }
             // The icon by the clock. Without it, closing must quit again, or
@@ -187,11 +199,24 @@ pub fn run() {
             connect::connect_probe,
             connect::connect_set_probe,
             connect::system_proxy_current,
+            connect::free_list,
+            connect::free_test,
+            connect::leak_dns,
+            timezone::timezone_set_matching,
+            timezone::timezone_match_again,
+            timezone::timezone_status,
             fraud::fraud_lookup,
             tray::set_keep_running,
+            channel::install_channel,
+            update::update_at_start,
+            update::update_check,
+            update::update_download,
+            update::update_install,
+            update::update_forget,
             update::update_idle,
             update::update_install_quietly,
             store::store_install,
+            store::store_update_at_start,
             versions::versions_check,
             tool_command,
         ])
