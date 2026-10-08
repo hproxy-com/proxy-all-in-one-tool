@@ -1,8 +1,10 @@
 name: Command-line tool, install check
 
 # Runs the one-line installers from hproxy.com the way a person would, on clean machines of every
-# kind: macOS on Apple Silicon and on Intel, Linux, and Windows in PowerShell 7 and in Windows
-# PowerShell 5.1. Each one installs the released file, starts it, and asks it for two free proxies.
+# kind: macOS on Apple Silicon and on Intel; Linux on x86_64, on 64-bit ARM, and on 32-bit ARM (a
+# Raspberry Pi system, emulated); Windows on x64 and on ARM, in PowerShell 7 and in Windows
+# PowerShell 5.1. Each one installs the released file for its machine, starts it, and asks it for
+# two free proxies.
 #
 # Started by hand (Actions, "Command-line tool, install check", Run workflow), after a release.
 # It uses no secret and changes nothing in this repository.
@@ -24,8 +26,10 @@ jobs:
             os: macos-latest
           - name: macOS, Intel
             os: macos-15-intel
-          - name: Linux
+          - name: Linux, x86_64
             os: ubuntu-latest
+          - name: Linux, 64-bit ARM
+            os: ubuntu-24.04-arm
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install, as the README says
@@ -38,13 +42,34 @@ jobs:
           hproxy --version
           hproxy list --limit 2
 
+  raspberry-pi:
+    name: Linux, 32-bit ARM (a Raspberry Pi system, emulated)
+    runs-on: ubuntu-latest
+    steps:
+      - name: An ARM machine to run on (QEMU, from Ubuntu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static
+
+      - name: Install, as the README says, on Debian for 32-bit ARM (what Raspberry Pi OS is built on)
+        run: |
+          docker run --rm --platform linux/arm/v7 debian:bookworm-slim sh -c '
+            set -e
+            apt-get update -qq
+            apt-get install -y -qq curl ca-certificates > /dev/null
+            uname -sm
+            curl -fsSL https://hproxy.com/install.sh | sh
+            ~/.local/bin/hproxy --version
+            ~/.local/bin/hproxy list --limit 2'
+
   windows:
-    name: Windows, PowerShell ${{ matrix.shell == 'pwsh' && '7' || '5.1' }}
+    name: Windows ${{ matrix.os == 'windows-11-arm' && 'on ARM' || 'x64' }}, PowerShell ${{ matrix.shell == 'pwsh' && '7' || '5.1' }}
     strategy:
       fail-fast: false
       matrix:
+        os: [windows-latest, windows-11-arm]
         shell: [pwsh, powershell]
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: ${{ matrix.shell }}
@@ -56,5 +81,6 @@ jobs:
         run: |
           $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine')
           (Get-Command hproxy).Source
+          [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
           hproxy --version
           hproxy list --limit 2
