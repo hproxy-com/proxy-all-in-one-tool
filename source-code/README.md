@@ -24,12 +24,12 @@ All of HProxy's software, in one place (Hproxy-Software-Bundle-Core):
 | Folder | What it is |
 | --- | --- |
 | `desktop-app/` | The app for Windows, macOS and Linux, and the phone app (Android in `src-tauri/gen/android`, iOS generated on a Mac): check proxies, connect through them. |
-| `cli/` | `hproxy`, the same engine on the command line, and `hproxy mcp`, its server for AI assistants. |
-| `engine/` | What every door above shares: the checking engine, the connector (relay), the system proxy glue and the client for hproxy.com's free doors. |
+| `command-line-tool/` | `hproxy`, the same engine on the command line, and `hproxy mcp`, its server for AI assistants. |
+| `proxy-engine/` | What every door above shares: the checking engine, the connector (relay), the system proxy glue and the client for hproxy.com's free doors. |
 | `chrome-extension/` | The browser extension: connect Chrome to your proxies, your HProxy plans or the free pool, with every free exit tested before your pages go through it. |
-| `mcp-server/` | The MCP server as an npm package (the same tools, calling hproxy.com's API). |
+| `ai-tool-npm-package/` | The MCP server as an npm package (the same tools, calling hproxy.com's API). |
 
-Installers built on a machine land in `builds/`, which is never committed.
+Installers built on a machine land in `finished-installers/`, which is never committed.
 
 ## Download
 
@@ -323,9 +323,9 @@ with Xcode: in `desktop-app`, `npm run tauri ios init`, then `npm run tauri ios 
 ## Tech stack
 
 - **[Tauri 2](https://tauri.app)**: a small, fast, native desktop shell.
-- **Rust**: the checking engine (`engine/hproxy-probe`), the connector
-  (`engine/hproxy-relay`), the system proxy glue (`engine/hproxy-system`) and the
-  client for our public API (`engine/hproxy-api`), built on `tokio`, `rustls`
+- **Rust**: the checking engine (`proxy-engine/hproxy-probe`), the connector
+  (`proxy-engine/hproxy-relay`), the system proxy glue (`proxy-engine/hproxy-system`) and the
+  client for our public API (`proxy-engine/hproxy-api`), built on `tokio`, `rustls`
   and `tokio-socks`.
 - **React, TypeScript and Tailwind CSS**: the interface.
 
