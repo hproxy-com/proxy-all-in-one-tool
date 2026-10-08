@@ -7,11 +7,11 @@ agent, read the README's "Command line" and "For AI assistants (MCP)" sections.
 
 | Path | What it is |
 | --- | --- |
-| `engine/hproxy-probe` | The engine: line parser, four timed transports, judge ladder, anonymity grading, HTTPS interception check, adaptive governor, batch runner. No UI, no database. |
-| `engine/hproxy-relay` | The connector: a local HTTP and SOCKS5 proxy with no password that forwards through a real proxy with its login attached. Fixed line, rotating list, or the free pool. |
-| `engine/hproxy-system` | Read, set and restore the operating system's proxy setting. |
-| `engine/hproxy-api` | The client for hproxy.com's free doors: IP locations, API-mode checking, the free list. |
-| `cli` | `hproxy`: check, connect, free, list, ip, and `mcp` (the MCP server). |
+| `proxy-engine/hproxy-probe` | The engine: line parser, four timed transports, judge ladder, anonymity grading, HTTPS interception check, adaptive governor, batch runner. No UI, no database. |
+| `proxy-engine/hproxy-relay` | The connector: a local HTTP and SOCKS5 proxy with no password that forwards through a real proxy with its login attached. Fixed line, rotating list, or the free pool. |
+| `proxy-engine/hproxy-system` | Read, set and restore the operating system's proxy setting. |
+| `proxy-engine/hproxy-api` | The client for hproxy.com's free doors: IP locations, API-mode checking, the free list. |
+| `command-line-tool` | `hproxy`: check, connect, free, list, ip, and `mcp` (the MCP server). |
 | `desktop-app/src-tauri` | The desktop app's Rust side: commands and events around the crates. |
 | `src` | The desktop app's window (React, TypeScript, Tailwind). |
 
@@ -50,7 +50,7 @@ Everything in this repository, and every commit message, can be read by anyone.
   hides false "dead" rows is a regression. A timeout never ends the ladder climb.
 - **Library code never prints to stdout.** stdout belongs to the program: the MCP
   server speaks its protocol there, and `--json` output is parsed by machines.
-  Words for people go to stderr, and only from `cli/` and `desktop-app/src-tauri`.
+  Words for people go to stderr, and only from `command-line-tool/` and `desktop-app/src-tauri`.
 - **Passwords are never printed**, logged or returned in a machine answer that
   did not already contain them. `ProxyLine` and `Upstream` mask them in
   `Display`; use that.
@@ -58,14 +58,14 @@ Everything in this repository, and every commit message, can be read by anyone.
   filled with a guess. A dead row says why in plain words (`FailureDetail::sentence`).
 - **Locations describe the exit.** A working row is located by `exit_ip`, never
   by the gateway it dialled.
-- **A new field on `CheckResult`** also goes into `cli/src/rows.rs` `FIELDS`
+- **A new field on `CheckResult`** also goes into `command-line-tool/src/rows.rs` `FIELDS`
   (a test fails otherwise) and into `desktop-app/src/lib/checker.ts`.
 - **Tests use documentation address space** (`192.0.2.0/24`, `198.51.100.0/24`,
   `203.0.113.0/24`, `2001:db8::/32`) and `example.com` / `.invalid` names, never
   real hosts, never our servers' addresses.
 - **A running connection says so in one place.** Anything that serves a relay
   outside the desktop window (`connect --background`, the MCP server) publishes
-  one file per process through `cli/src/connect.rs` and ends when its file
+  one file per process through `command-line-tool/src/connect.rs` and ends when its file
   is taken away. Never kill a process to stop a connection, never write a shared
   state file two processes edit, and never put a password in it. That file is
   the whole contract behind `hproxy status` and `hproxy stop`, and it is why a
