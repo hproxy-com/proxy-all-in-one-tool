@@ -14,13 +14,14 @@ next version.
 
 ## Command line
 
-The command-line tool is out now, for Apple Silicon and Intel: `hproxy`, the same engine without a
-window, in one file.
+The command-line tool is out now, for Apple Silicon (macOS 11 and later) and Intel (macOS 10.13 and
+later): `hproxy`, the same engine without a window, in one file.
 
 ```sh
 curl -fsSL https://hproxy.com/install.sh | sh
 ```
 
-It lands in `~/.local/bin` after a check against its SHA-256, without sudo. The files are on
-[the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.2.3). The
+It picks the file for your Mac and lands in `~/.local/bin` after a check against its SHA-256,
+without sudo. The files are on
+[the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.2.8). The
 commands are in [source-code/README.md](../source-code/README.md#command-line).
