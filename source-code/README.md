@@ -33,18 +33,14 @@ Installers built on a machine land in `finished-installers/`, which is never com
 
 ## Download
 
-Windows: **[the installer on hproxy.com](https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe)**,
-the same folder the app updates from. The other platforms are on the
-**[Releases page](https://github.com/hproxy-com/proxy-all-in-one-tool/releases)**:
-
-| Platform | File | Notes |
+| Platform | Where | Notes |
 | --- | --- | --- |
-| Windows 10 and 11 | `.exe` installer (or `.msi`) | The installer is not yet code-signed, so SmartScreen shows "Windows protected your PC" the first time. Click "More info", then "Run anyway". Updates after that come from hproxy.com and are checked by the app itself. |
-| macOS 12 and later (Apple Silicon and Intel) | `.dmg` | Not yet notarized with Apple. After the first attempt to open it, go to System Settings, Privacy & Security, and click "Open Anyway" once. |
-| Linux (x86_64) | `.AppImage` or `.deb` | `.deb` installs its dependencies. The AppImage needs `libwebkit2gtk-4.1` on the system (Ubuntu 22.04 and newer, Fedora 37 and newer have it); `chmod +x` it and run. |
-| Android 7 and later | `.apk` | Sideloaded: open the file, allow installs from this source once. The checker runs fully; Connect gives you the Wi-Fi proxy settings to type in, because a phone's proxy cannot be switched by an app. |
+| Windows 10 and 11 | **[The installer on hproxy.com](https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe)**, or the **[Microsoft Store](https://apps.microsoft.com/detail/9NPDSV0K3J1X)** | The installer is not yet code-signed, so SmartScreen shows "Windows protected your PC" the first time. Click "More info", then "Run anyway". Updates after that come from hproxy.com and are checked by the app itself; the Store keeps its own copy up to date. |
+| Android 7 and later | **[Google Play](https://play.google.com/store/apps/details?id=com.hproxy.app)** | The checker runs fully; Connect gives you the Wi-Fi proxy settings to type in, because a phone's proxy cannot be switched by an app. Google Play keeps it up to date. |
+| macOS 12 and later (Apple Silicon and Intel) | not yet | Published once it is signed and notarized with Apple, so that it opens without a warning. |
+| Linux (x86_64) | not yet | `.AppImage` and `.deb`, built by the same release pipeline as the other systems. |
 | iOS | not yet | Needs an Apple developer account for a device build. The code compiles for iOS in CI. |
-| Servers, scripts and AI agents | `hproxy-cli-*` (one file, no installer) | The same engine and connector with no window. See [Command line](#command-line) and [For AI assistants](#for-ai-assistants-mcp). |
+| Servers, scripts and AI agents | `curl -fsSL https://hproxy.com/install.sh \| sh` (macOS, Linux) or `irm https://hproxy.com/install.ps1 \| iex` (Windows) | The same engine and connector with no window: one file for every system and processor, checked against its SHA-256 before it is installed. The files are also on the **[Releases page](https://github.com/hproxy-com/proxy-all-in-one-tool/releases)**. See [Command line](#command-line) and [For AI assistants](#for-ai-assistants-mcp). |
 
 ## Features
 
