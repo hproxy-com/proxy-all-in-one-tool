@@ -12,7 +12,8 @@ name: Command-line tool
 #
 # Every file stands alone: a Linux file carries its own C library (musl), a Windows file its own C
 # runtime, so nothing has to be installed beside it. It uses no secret: only this repository's own
-# token, and only GitHub's own actions.
+# token, and only GitHub's own actions, each pinned to a commit (the repository allows nothing else:
+# a tag can be moved, a commit cannot). To update one, pin the commit its new release tag points to.
 
 on:
   workflow_dispatch:
@@ -82,14 +83,15 @@ jobs:
       AR_arm_unknown_linux_musleabihf: arm-linux-gnueabihf-ar
       CARGO_TARGET_ARM_UNKNOWN_LINUX_MUSLEABIHF_LINKER: arm-linux-gnueabihf-gcc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: Rust (a machine without it gets it from rustup.rs)
+      - name: Rust, as GitHub's machine has it (nothing is fetched and run to get it)
         run: |
           if ! command -v cargo > /dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            echo "::error::this machine has no Rust; the build uses only the toolchain GitHub installs"
+            exit 1
           fi
+          cargo --version
 
       - name: Linux tools (musl; for 32-bit ARM the ARM compiler and an ARMv6 machine to run on)
         if: runner.os == 'Linux'
@@ -160,7 +162,7 @@ jobs:
           $run --help > /dev/null
           $run list --limit 2
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.file }}
           path: ${{ matrix.file }}
@@ -171,9 +173,9 @@ jobs:
     needs: build
     runs-on: windows-11-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: hproxy-cli-windows-arm64.exe
 
@@ -197,9 +199,9 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true
@@ -207,7 +209,7 @@ jobs:
       - name: The sums
         run: cd dist && sha256sum hproxy-cli-* > SHA256SUMS && cat SHA256SUMS
 
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: dist/hproxy-cli-*
 
