@@ -11,6 +11,14 @@ version:
 
 ## Servers and scripts
 
-`hproxy-cli-linux-x86_64` is the same engine without a window: one static file that runs on every
-Linux, for servers, containers and AI agents. The commands are in
-[source-code/README.md](../source-code/README.md).
+The command-line tool is out now: `hproxy`, the same engine without a window, one static file that
+runs on every x86_64 Linux, for servers, containers and AI agents.
+
+```sh
+curl -fsSL https://hproxy.com/install.sh | sh
+```
+
+It lands in `~/.local/bin` (or `$HPROXY_INSTALL_DIR`) after a check against its SHA-256, without
+sudo. The file itself, `hproxy-cli-linux-x86_64`, is on
+[the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.2.3). The
+commands are in [source-code/README.md](../source-code/README.md#command-line).
