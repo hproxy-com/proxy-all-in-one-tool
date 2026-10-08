@@ -8,8 +8,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// The installers build.sh made (builds/migration-test at the repo's root).
-const DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../../builds/migration-test");
+// The installers build.sh made (finished-installers/migration-test at the repo's root).
+const DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../../finished-installers/migration-test");
 const OLD = "hproxy-migtest-old";
 const NEW = "hproxy-migtest-new";
 const BIN = "hproxy-migtest.exe";

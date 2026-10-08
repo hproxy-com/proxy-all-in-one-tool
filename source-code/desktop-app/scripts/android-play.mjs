@@ -1,20 +1,24 @@
 // android-play.mjs: the Android App Bundle (.aab) for Google Play, signed with the upload key.
 // Run from desktop-app/:
 //
-//   node scripts/android-play.mjs         ../builds/android-<version>-google-play/HProxy_<version>_google-play.aab
+//   node scripts/android-play.mjs         ../finished-installers/android-<version>-google-play/HProxy_<version>_google-play.aab
 //   node scripts/android-play.mjs --apk   also a universal APK of the same build, to try it on a
-//                                         phone first (it names Google Play in Settings, so it is
-//                                         not the APK for the releases page)
+//                                         phone first (signed with the upload key: never published)
 //
-// This build tells the app it came from Google Play (VITE_APP_STORE=google-play): Play updates
-// that copy, so Settings offers the Play page instead of the releases page. The upload key is
-// named in src-tauri/gen/android/keystore.properties, which is not in the repository; Play checks
-// that key on every upload and signs what it publishes with its own. Java, the Android SDK and the
-// NDK come from JAVA_HOME, ANDROID_HOME and NDK_HOME, or from Android Studio's usual places.
+// There is one Android build. Play signs what it publishes with Google's own key, and the APK on
+// GitHub and hproxy.com is the universal APK Google signed from this same bundle (fetched through
+// the Play API by the release tool), so every Android copy carries the same signature and can take
+// every later version from any source. The app learns at run time which app installed it
+// (src-tauri/src/channel.rs), never from how it was built. ⛔ An APK signed with the upload key
+// never goes public: Play's copies could not update it, nor it them.
+//
+// The upload key is named in src-tauri/gen/android/keystore.properties, which is not in the
+// repository; Play checks that key on every upload. Java, the Android SDK and the NDK come from
+// JAVA_HOME, ANDROID_HOME and NDK_HOME, or from Android Studio's usual places.
 
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,6 +31,9 @@ const BUNDLE = join(OUTPUTS, "bundle", "universalRelease", "app-universal-releas
 const APK = join(OUTPUTS, "apk", "universal", "release", "app-universal-release.apk");
 
 const withApk = process.argv.slice(2).includes("--apk");
+
+/** The package name of the Google Play app, fixed for good when it was created (2026-09-28). */
+const PLAY_PACKAGE = "com.hproxy.app";
 
 /** The first of these folders that exists. */
 function firstFolder(...candidates) {
@@ -58,12 +65,17 @@ const key = readProperties(KEYSTORE_PROPERTIES);
 if (!key.storeFile || !existsSync(key.storeFile)) throw new Error(`the upload key ${key.storeFile} is not on this PC`);
 
 const conf = JSON.parse(readFileSync(join(APP, "src-tauri", "tauri.conf.json"), "utf8"));
-const out = join(ROOT, "builds", `android-${conf.version}-google-play`);
+const out = join(ROOT, "finished-installers", `android-${conf.version}-google-play`);
 mkdirSync(out, { recursive: true });
 const log = createWriteStream(join(out, "build.log"));
 const started = Date.now();
+// The outputs folder keeps the files of earlier builds, and Gradle leaves a file alone when none
+// of its inputs changed: a second build of the same code rewrote nothing, and the check below
+// refused a correct 0.2.7 build (2026-09-28). Removed first, the files must be written again, so
+// one that exists afterwards is from this run whatever Gradle decided about its inputs.
+for (const earlier of [BUNDLE, APK]) rmSync(earlier, { force: true });
 
-const env = { ...process.env, JAVA_HOME: javaHome, ANDROID_HOME: androidHome, NDK_HOME: ndkHome, VITE_APP_STORE: "google-play" };
+const env = { ...process.env, JAVA_HOME: javaHome, ANDROID_HOME: androidHome, NDK_HOME: ndkHome };
 const buildArgs = ["tauri", "android", "build", "--aab", ...(withApk ? ["--apk"] : [])];
 console.log(`building ${conf.version} for Google Play (JAVA_HOME ${javaHome}, NDK ${ndkHome})`);
 log.write(`${new Date(started).toISOString()} npx ${buildArgs.join(" ")}\n`);
@@ -93,6 +105,48 @@ if (built["tauri.android.versionName"] !== conf.version) {
   throw new Error(`the build says version ${built["tauri.android.versionName"]}, tauri.conf.json says ${conf.version}`);
 }
 
+// The package name the bundle carries must be the one the Play app was created with: Play
+// refuses any other, and the release tool binds the version to this build the moment it passes.
+// Read from the manifest Gradle merged for the bundle. Gradle rewrites that file only when one
+// of its inputs changed, so an unchanged one is rightly older than this build (a check on its
+// time refused a correct build on 2026-09-28). What proves it is this build's is its content:
+// the version and version code this build was given.
+const MERGED_MANIFEST = join(
+  ANDROID, "app", "build", "intermediates", "merged_manifest", "universalRelease", "processUniversalReleaseMainManifest", "AndroidManifest.xml",
+);
+if (!existsSync(MERGED_MANIFEST)) throw new Error(`${MERGED_MANIFEST} is missing: the build merged no manifest`);
+const manifest = readFileSync(MERGED_MANIFEST, "utf8");
+const manifestAttr = (name) => (new RegExp(`<manifest\\b[^>]*\\b${name}="([^"]+)"`).exec(manifest) ?? [])[1];
+const builtPackage = manifestAttr("package");
+if (builtPackage !== PLAY_PACKAGE) {
+  throw new Error(`the bundle's package is ${builtPackage ?? "unknown"}, the Play app is ${PLAY_PACKAGE} (applicationId in build.gradle.kts)`);
+}
+const [manifestName, manifestCode] = [manifestAttr("android:versionName"), manifestAttr("android:versionCode")];
+if (manifestName !== conf.version || manifestCode !== String(built["tauri.android.versionCode"])) {
+  throw new Error(
+    `the merged manifest is ${manifestName} (${manifestCode}), this build is ${conf.version} (${built["tauri.android.versionCode"]}): it is not this build's manifest`,
+  );
+}
+
+// Google Play refuses 64-bit native code laid out for 4 KB memory pages (src-tauri/build.rs links
+// it for 16 KB). Read the ELF program headers of the libraries this bundle carries: every LOAD
+// segment of the 64-bit ones must be aligned to 16 KB or more.
+for (const triple of ["aarch64-linux-android", "x86_64-linux-android"]) {
+  const so = join(ROOT, "target", triple, "release", "libhproxy_checker_lib.so");
+  if (!existsSync(so)) throw new Error(`${so} is missing: the bundle needs the ${triple} library`);
+  const elf = readFileSync(so);
+  if (elf.readUInt32BE(0) !== 0x7f454c46 || elf[4] !== 2) throw new Error(`${so} is not a 64-bit ELF library`);
+  const phoff = Number(elf.readBigUInt64LE(32));
+  const phentsize = elf.readUInt16LE(54);
+  const phnum = elf.readUInt16LE(56);
+  for (let i = 0; i < phnum; i++) {
+    const at = phoff + i * phentsize;
+    if (elf.readUInt32LE(at) !== 1) continue; // PT_LOAD
+    const align = Number(elf.readBigUInt64LE(at + 48));
+    if (align < 16384) throw new Error(`${so}: a LOAD segment is aligned to ${align} bytes; Google Play needs 16 KB (src-tauri/build.rs)`);
+  }
+}
+
 // Play accepts an upload only when it is signed with the upload key it knows. Compare the
 // bundle's signer with the key's own certificate before anyone tries.
 const keytool = join(javaHome, "bin", "keytool.exe");
@@ -114,4 +168,4 @@ for (const [file, name] of made) {
   console.log(`${join(out, name)} (${(statSync(file).size / 1048576).toFixed(1)} MB)`);
 }
 writeFileSync(join(out, "SHA256SUMS"), `${sums.join("\n")}\n`);
-console.log(`version ${conf.version}, version code ${built["tauri.android.versionCode"]}, signed by the upload key (SHA-256 ${signer})`);
+console.log(`${PLAY_PACKAGE} version ${conf.version}, version code ${built["tauri.android.versionCode"]}, signed by the upload key (SHA-256 ${signer})`);
