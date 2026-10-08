@@ -845,8 +845,28 @@ function disconnect() {
       await saveSession(null);
       await setBadge(null, false);
       notifyStatus();
+      // A new version that waited for the connection to end goes in now (below).
+      setTimeout(() => void installUpdateWhenFree(), 5000);
     }
   });
+}
+
+// ── A new version from the Chrome Web Store ─────────────────────────────────
+/* Chrome downloads a new version of the extension by itself and installs it
+   once this worker is idle. A connected extension is rarely idle (it answers
+   every proxy login), so the new version could wait for days. The worker
+   installs it itself the moment nothing is connected and nothing runs: at once
+   when it arrives, or a few seconds after a disconnect. Never while connected:
+   while the new worker starts, pages would leave without the proxy. */
+let updateWaiting = false;
+chrome.runtime.onUpdateAvailable.addListener(() => {
+  updateWaiting = true;
+  void installUpdateWhenFree();
+});
+async function installUpdateWhenFree() {
+  if (!updateWaiting || busy) return;
+  if (await loadSession()) return;
+  chrome.runtime.reload();
 }
 
 // ── Healing a free exit that dies mid-browse (mode "vpn" only) ──────────────
@@ -1067,8 +1087,11 @@ serial(async () => {
 }).catch(() => {});
 
 // The badge is not kept across browser restarts; the setting and the session are.
+// At the browser's start the worker also asks Chrome to look for a new version
+// now rather than at its next round, hours later (Chrome may say "throttled").
 chrome.runtime.onStartup.addListener(async () => {
   setBadge(await loadSession(), false);
+  chrome.runtime.requestUpdateCheck?.().catch(() => {});
 });
 chrome.runtime.onInstalled.addListener(async () => {
   setBadge(await loadSession(), false);
