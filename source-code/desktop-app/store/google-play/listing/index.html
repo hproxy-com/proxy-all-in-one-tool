@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Play pictures</title>
+<!-- The Google Play pictures side by side, for a look before they go up.
+     Made by scripts/store-play-images.mjs; open this file in a browser. -->
+<style>
+  :root { --ink: #0b1220; --mute: #5b6478; --blue: #0158ff; --line: #e3e8f2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #ffffff; color: var(--ink); font: 500 16px/1.5 "DM Sans", system-ui, sans-serif; }
+  main { max-width: 1240px; margin: 0 auto; padding: 48px 16px 80px; }
+  h1 { margin: 0 0 6px; font-size: 32px; letter-spacing: -0.8px; }
+  h2 { margin: 48px 0 6px; font-size: 20px; }
+  p { margin: 0; color: var(--mute); }
+  .row { display: flex; flex-wrap: wrap; gap: 20px; margin-top: 16px; }
+  figure { margin: 0; }
+  figure img { display: block; border: 1px solid var(--line); border-radius: 14px; }
+  figcaption { margin-top: 8px; font-size: 13px; color: var(--mute); }
+  .phone img { width: 270px; }
+  .tablet img { width: 600px; max-width: 100%; }
+  .feature img { width: 1024px; max-width: 100%; }
+</style>
+</head>
+<body>
+<main>
+  <h1>HProxy: Proxy Check &amp; Connect</h1>
+  <p>The pictures for the Google Play listing, drawn from the app's own screens. The dark look throughout (his pick), the blue H, example addresses and example networks only.</p>
+
+  <h2>Feature graphic</h2>
+  <p>1024 x 500, the banner at the top of the listing.</p>
+  <div class="row"><figure class="feature"><img src="feature-graphic.png" alt="Feature graphic"><figcaption>feature-graphic.png</figcaption></figure></div>
+
+  <h2>Phone (and 7-inch tablet)</h2>
+  <p>1080 x 1920. A 7-inch tablet draws the same phone layout, so the same four go there.</p>
+  <div class="row">
+    <figure class="phone"><img src="phone-1-connect.png" alt="Connect in one tap"><figcaption>1. Connect in one tap</figcaption></figure>
+    <figure class="phone"><img src="phone-2-check.png" alt="Check any proxy list"><figcaption>2. Check any proxy list</figcaption></figure>
+    <figure class="phone"><img src="phone-3-details.png" alt="Every proxy, in detail"><figcaption>3. Every proxy, in detail</figcaption></figure>
+    <figure class="phone"><img src="phone-4-map.png" alt="See where you appear"><figcaption>4. See where you appear</figcaption></figure>
+  </div>
+
+  <h2>10-inch tablet</h2>
+  <p>1920 x 1080, the wide layout.</p>
+  <div class="row">
+    <figure class="tablet"><img src="tablet-1-connect.png" alt="Connect in one tap, tablet"><figcaption>1. Connect in one tap</figcaption></figure>
+    <figure class="tablet"><img src="tablet-2-check.png" alt="Check any proxy list, tablet"><figcaption>2. Check any proxy list</figcaption></figure>
+  </div>
+</main>
+</body>
+</html>

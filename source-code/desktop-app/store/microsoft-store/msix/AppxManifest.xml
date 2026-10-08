@@ -8,7 +8,7 @@
   already reserved by someone else (2026-09-25), so both display names are the reserved
   "HProxy: Proxy Connector and Checker".
 
-  Connect writes the system proxy into the user's Internet Settings key (engine/hproxy-system).
+  Connect writes the system proxy into the user's Internet Settings key (proxy-engine/hproxy-system).
   Windows gives a packaged app a private copy of HKEY_CURRENT_USER, where that write would change
   nothing, so the key is declared unvirtualized: on Windows 11 only that key
   (virtualization:ExcludedKeys), on Windows 10 all of HKCU (desktop6, the only form it knows).
