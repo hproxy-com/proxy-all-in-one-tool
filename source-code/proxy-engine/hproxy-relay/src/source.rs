@@ -304,23 +304,16 @@ impl List {
 }
 
 impl Source {
-    /// How many pool exits to try before giving up on finding one that works.
-    ///
-    /// Sized from a measurement, not a guess: on 2026-08-08, 11 of 12
-    /// consecutive `/api/vpn/next` picks were web servers rather than proxies
-    /// (see the note on `Pool::next_working`). At roughly a 1-in-12 hit rate,
-    /// a handful of attempts would fail most of the time and read to the
-    /// customer as "this tool is broken" rather than "the free pool is rough".
-    const VERIFY_TRIES: usize = 15;
-
     /// Build a pool source by taking a first WORKING exit, so a bad pool is
-    /// reported at startup rather than on the customer's first page load.
+    /// reported at startup rather than on the customer's first page load. The
+    /// search tests a batch of exits side by side and gives up within
+    /// `pool::SEARCH_DEADLINE` (`Pool::first_working`).
     ///
     /// Prints nothing: stdout belongs to the caller, and a caller that speaks a
     /// protocol on it (the MCP server, `--json`) would be corrupted by a stray
     /// line. Progress words are the caller's job.
     pub async fn from_pool(pool: Pool) -> Result<(Self, String), String> {
-        let exit = pool.next_working(Self::VERIFY_TRIES).await?;
+        let exit = pool.first_working().await?;
         let label = exit.describe();
         Ok((
             Source::Pool {
@@ -329,6 +322,30 @@ impl Source {
             },
             label,
         ))
+    }
+
+    /// A pool source that starts on the exit the person picked from the free
+    /// list. It is tested once more (it may have died since the list was
+    /// drawn); if it no longer relays, it is reported and the pool's search
+    /// takes over, exactly as when an exit dies mid-browse.
+    pub async fn from_pool_starting_at(pool: Pool, first: Upstream) -> Result<(Self, String), String> {
+        match crate::pool::test(&first).await {
+            Ok(_) => {
+                pool.remember(&first.host).await;
+                let label = first.addr();
+                Ok((
+                    Source::Pool {
+                        pool,
+                        current: RwLock::new(first),
+                    },
+                    label,
+                ))
+            }
+            Err(_) => {
+                pool.report_dead(&first);
+                Self::from_pool(pool).await
+            }
+        }
     }
 
     pub fn kind(&self) -> SourceKind {
@@ -396,7 +413,7 @@ impl Source {
             Source::Fixed(_) => Err("this is your own proxy, there is nothing to switch to".into()),
             Source::List(l) => Ok(l.advance().to_string()),
             Source::Pool { pool, current } => {
-                let exit = pool.next_working(Self::VERIFY_TRIES).await?;
+                let exit = pool.first_working().await?;
                 let label = exit.describe();
                 *current.write().await = exit.upstream;
                 Ok(label)
@@ -430,7 +447,7 @@ impl Source {
                     }
                 }
                 pool.report_dead(dead);
-                let exit = pool.next_working(Self::VERIFY_TRIES).await.ok()?;
+                let exit = pool.first_working().await.ok()?;
                 let mut w = current.write().await;
                 // Re-check under the write lock: between dropping the read
                 // guard and taking this one, someone else may have won the race.
