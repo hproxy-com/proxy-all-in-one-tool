@@ -23,7 +23,9 @@ both are under "What our servers keep", with what they hold and for how long.
 | Connect, "Free proxy" | `hproxy.com/api/vpn/next`, `/api/vpn/report` | The country and protocol you asked for, the last exits you were given (so you get a different one), and a report when an exit stops answering. The report is kept (below, "What our servers keep"). | Only when you choose a free proxy |
 | Fraud score, Connect (on by default) | `api.ffraud.com` (free, no key), or the service whose key you gave: IPQualityScore, Scamalytics, proxycheck.io or AbuseIPDB | The address you appear as, once for each new exit. Your key goes to its own service only. Nothing passes through HProxy, and nothing a service answers is kept past the session or sent anywhere. | Settings, "Fraud score" |
 | Fraud score, Check (only when you ask) | The same | The exit address of each working proxy you ask about ("Fraud scores", or "Look it up" on a row). | Nothing is sent until you ask |
-| Updates (desktop only) | `hproxy.com/downloads/desktop/` | A version check at launch and every six hours: one file, the same for everyone, and the installer when there is a newer version. Downloads are signed and verified before they are installed. | Nothing is sent about you |
+| Updates, the download for Windows, macOS or Linux (AppImage) | `hproxy.com/downloads/desktop/` | At start and every six hours: one list, the same for everyone, and the installer when there is a newer version. Downloads are signed and verified before they are installed. | Nothing is sent about you |
+| Version check, every copy | `hproxy.com/downloads/versions.json` | At start and every six hours: one list, the same for everyone. The request names this copy's version and where it came from, for example `hproxy-checker/0.2.4 (windows)`, and nothing else. It is how a copy from a store or a downloaded package learns of a fix, and how we count how many copies run each version (kept 30 days, with the address shortened: "What our servers keep"). | Always on: it is how a fix reaches every copy |
+| Updates, a copy from the Microsoft Store or Google Play | The store | The store's own update check, at start, under the store's own policy. | The store's settings |
 
 To send **nothing at all**: keep checking on "This computer" ("This device" on
 a phone), switch the location lookup off, do not use Connect, and do not ask
@@ -47,6 +49,16 @@ looked-up address is asked about, never who asked; the address you ask from
 is used only in memory, to limit how fast one address may ask. A service whose
 key you gave keeps what its own policy says.
 
+The update files are served without any record of who asked. The version
+check (`hproxy.com/downloads/versions.json`) is logged, so we can count how
+many copies run each version: the time, the network it came from, the request,
+the answer's status, and the app's own line (`hproxy-checker/0.2.4 (windows)`).
+The network is the address with its end cut off, the same shortening Google
+Analytics uses (an IPv4 address loses its last part, 203.0.113.7 becomes
+203.0.113.0; an IPv6 address keeps only its first three groups). The whole
+address is never written. The log is kept 30 days, then deleted
+(hproxy.com's server configuration, 2026-09-27).
+
 (Checked against the code of hproxy.com and api.ffraud.com on 2026-09-24.)
 
 ## The command-line tool and its MCP server
@@ -64,6 +76,7 @@ runs on. What it sends, and when:
 | `hproxy mcp`, `proxy_check` | The proxies, the judges, and `hproxy.com/api/ip` | Exit addresses for their locations, unless the call says `geo: false`. |
 | `hproxy mcp`, `proxy_list`, `ip_lookup` | `hproxy.com/api/proxy-list`, `hproxy.com/api/ip` | As `hproxy list` and `hproxy ip`. |
 | `hproxy mcp`, `proxy_connect` | As Connect in the app | As above; a probe through the new connection to our judge, to report the exit. |
+| Any command run at a terminal, once a day | `hproxy.com/downloads/versions.json` | `hproxy/0.2.4 (cli)`: the version and nothing else, to say in one line when a newer one is out. Never in a pipe, with `--json` or `--fields`, or for the MCP server; `HPROXY_NO_UPDATE_CHECK=1` turns it off. |
 
 The MCP server puts no secret into the assistant's conversation that the
 assistant did not send itself: a proxy taken from its environment
@@ -122,6 +135,7 @@ tracking**, and it never sends a proxy's login to us.
 | Testing a proxy, yours or a free one | `probe.hproxy.com/api/free-proxy/echo`, THROUGH that proxy | One request per try. Our side sees the proxy's address, never your list or a login: a proxy's login goes only to that proxy. Your own proxy is tested in your browser, so a proxy locked to your address passes. (Until version 1.0 the line of a proxy you pasted, login included, was sent to our checker to learn its protocols; that call is gone.) | Only when you connect |
 | Free proxies | `hproxy.com/api/vpn/pool`, `/api/vpn/report` | The country you picked; and, when a free exit stops answering, a report naming that exit (address, port, protocol). The report is kept ("What our servers keep"). | Only when you use a free proxy |
 | The checks under "This connection", after you connect | The judges above, THROUGH the proxy; `hproxy.com/api/ip/` | Requests through the proxy, so the judges see the proxy's address and the headers it adds; and the exit's address, to show its country and network. | Only while connected |
+| Updates | The Chrome Web Store | Chrome's own update check for its extensions; the extension asks Chrome to look at the browser's start. It sends us nothing for it. | Chrome's settings |
 
 **On your computer, in the browser:** your saved proxies with their logins
 (Chrome's local extension storage, which Chrome does not sync), the connection
@@ -144,7 +158,7 @@ public proxy.
 
 ## The code
 
-All of it is in this repository, MIT licensed. The engine (`engine/hproxy-probe`),
-the relay (`engine/hproxy-relay`) and the system glue (`engine/hproxy-system`) are
+All of it is in this repository, MIT licensed. The engine (`proxy-engine/hproxy-probe`),
+the relay (`proxy-engine/hproxy-relay`) and the system glue (`proxy-engine/hproxy-system`) are
 ordinary Rust crates you can read and build yourself; the desktop app and the
 command-line tool are thin layers on them.
