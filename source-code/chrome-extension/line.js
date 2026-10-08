@@ -26,7 +26,7 @@
      {"ip":"1.2.3.4","port":8080}          a JSON object, read by its keys
 
    A password containing ":", "@", "/", "?" or "#" survives. Every line in
-   engine/hproxy-probe/tests/fixtures/proxy-lines.json is read here exactly
+   proxy-engine/hproxy-probe/tests/fixtures/proxy-lines.json is read here exactly
    as the engine reads it (tests/line.test.mjs holds this file to it, and the
    desktop app, which imports this file, is held to it too). Change one,
    change all.
