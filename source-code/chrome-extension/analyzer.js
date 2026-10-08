@@ -267,15 +267,74 @@ async function checkTransparency(ctx) {
  * whether it sits where the exit claims to be. Measuring that needs
  * authoritative nameservers we run. Not built, so not claimed.
  */
+/* DNS: which resolver the proxy looks names up with, measured by the DNS
+   leak test (hproxy.com/api/leak; the monorepo's hproxy-dns-leak). A made-up
+   name under leak.hproxy.com is fetched THROUGH the proxy (every *.hproxy.com
+   goes through it; only hproxy.com itself is bypassed), so the proxy's
+   resolver asks our nameserver for it; then the door says who asked. The
+   fetch fails on purpose: the name does not exist. Until the door answers,
+   the row says it could not measure, never a pass. */
+const LEAK_ZONE = "leak.hproxy.com";
+
+/** 20 random lowercase letters and digits: nobody can guess another
+    person's name and read which resolver they use. */
+export function madeUpName() {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  return Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => alphabet[b % alphabet.length]).join("");
+}
+
+/** The row for the resolvers the door reported, each with its `/api/ip`
+    answer (`geo`, null when the lookup failed), against the exit's country. */
+export function dnsVerdict(resolvers, exit) {
+  const base = { id: "dns", label: "DNS resolver" };
+  if (!resolvers.length) {
+    return { ...base, status: "unknown", headline: "Not seen", detail: "The proxy did not look up our test name, so its resolver is unknown." };
+  }
+  const names = [...new Set(resolvers.map((r) => r.geo?.asn_org || r.ip))].slice(0, 2).join(" and ");
+  const countries = [...new Set(resolvers.map((r) => String(r.geo?.country || "").toUpperCase()).filter(Boolean))];
+  if (!exit || !countries.length) {
+    return { ...base, status: "ok", headline: names, detail: "The proxy looks names up itself, so your own provider does not see them." };
+  }
+  if (countries.every((c) => c === exit)) {
+    return { ...base, status: "ok", headline: `${names}, ${exit}`, detail: `The proxy looks names up in ${exit}, like your exit.` };
+  }
+  const other = countries.find((c) => c !== exit);
+  return {
+    ...base,
+    status: "warn",
+    headline: `${names}, ${other}`,
+    detail: `The proxy's resolver is in ${other}, your exit in ${exit}. Sites can see which resolver asked for them and compare the two.`,
+  };
+}
+
 async function checkDns(ctx) {
   const base = { id: "dns", label: "DNS resolver" };
   if (!ctx.active) return { ...base, status: "skip", headline: "Not connected", detail: "" };
-  return {
-    ...base,
-    status: "unknown",
-    headline: "Not measured yet",
-    detail: "Chrome sends names to the proxy to resolve. Which resolver the proxy uses needs nameservers we run; not built, so not claimed.",
-  };
+  const name = madeUpName();
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 8000);
+  await fetch(`https://${name}.${LEAK_ZONE}/`, { cache: "no-store", mode: "no-cors", signal: ctl.signal }).catch(() => {});
+  clearTimeout(timer);
+  let resolvers = null;
+  for (let i = 0; i < 4 && !resolvers; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 700));
+    let answer;
+    try {
+      answer = await getJson(`${API}/api/leak/${name}`, { ms: 6000 });
+    } catch {
+      return {
+        ...base,
+        status: "unknown",
+        headline: "Not measured",
+        detail: "Chrome sends names to the proxy to resolve. Which resolver the proxy uses is measured by our DNS test, which did not answer.",
+      };
+    }
+    if (answer?.seen) resolvers = answer.resolvers || [];
+  }
+  const seen = await Promise.all(
+    (resolvers || []).slice(0, 4).map(async (r) => ({ ip: r.ip, geo: await getJson(`${API}/api/ip/${encodeURIComponent(r.ip)}`).catch(() => null) })),
+  );
+  return dnsVerdict(seen, await exitCountry(ctx));
 }
 
 /**
@@ -336,19 +395,26 @@ function localeCountry(tag) {
   return m ? m[1].toUpperCase() : null;
 }
 
+/** The language verdict. The first language is the one sites compare
+    (`navigator.language`, the head of Accept-Language), so a German browser
+    that also takes English does not look American. */
+export function localeVerdict(langs, country) {
+  const base = { id: "locale", label: "Language" };
+  const shown = langs.slice(0, 3).join(", ");
+  const first = langs[0];
+  const claimed = localeCountry(first);
+  if (!country || !claimed) {
+    return { ...base, status: "unknown", headline: shown, detail: "Your first language does not name a country, so there is nothing to contradict." };
+  }
+  if (claimed === country) return { ...base, status: "ok", headline: shown, detail: `Consistent with a ${country} exit.` };
+  return { ...base, status: "warn", headline: shown, detail: `Your browser asks for ${first} content first, from a ${country} address.` };
+}
+
 /** Does the browser's language agree with where you appear to be? */
 async function checkLocale(ctx) {
-  const base = { id: "locale", label: "Language" };
   const langs = (navigator.languages || [navigator.language]).filter(Boolean);
-  const shown = langs.slice(0, 3).join(", ");
-  if (!ctx.active) return { ...base, status: "skip", headline: shown, detail: "" };
-  const country = await exitCountry(ctx);
-  const claimed = langs.map(localeCountry).filter(Boolean);
-  if (!country || !claimed.length) {
-    return { ...base, status: "unknown", headline: shown, detail: "Your locale does not name a country, so there is nothing to contradict." };
-  }
-  if (claimed.includes(country)) return { ...base, status: "ok", headline: shown, detail: `Consistent with a ${country} exit.` };
-  return { ...base, status: "warn", headline: shown, detail: `Your browser asks for ${claimed[0]} content from a ${country} address.` };
+  if (!ctx.active) return { id: "locale", label: "Language", status: "skip", headline: langs.slice(0, 3).join(", "), detail: "" };
+  return localeVerdict(langs, await exitCountry(ctx));
 }
 
 /** How much the tunnel costs, measured through it. */
