@@ -16,6 +16,9 @@
 //!   versions. Attempted; a refusal comes back as a clear error with the
 //!   manual steps, never as a silent no-op.
 //! - **Everything else**: [`Support::Manual`] with the address to paste.
+//!
+//! The same promise for the time zone ([`timezone`]): matched to the exit's
+//! place while connected, on Windows, and put back exactly as found.
 
 use serde::{Deserialize, Serialize};
 
@@ -23,8 +26,10 @@ use serde::{Deserialize, Serialize};
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+pub mod timezone;
 #[cfg(windows)]
 mod windows;
+mod windows_zones;
 
 /// What the OS proxy setting looks like right now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
