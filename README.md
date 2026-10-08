@@ -29,11 +29,12 @@
 | **macOS** 12 and later, Apple Silicon and Intel | with the next version | [macOS](macOS/) |
 | **Linux** x86_64: AppImage and .deb | with the next version | [Linux](Linux/) |
 | **Android** 7 and later | Google Play and the APK | [Android](Android/) |
-| **Command line and AI assistants** on macOS, Linux and Windows | **[Install in one line](#command-line)** | [all the commands](source-code/README.md#command-line) |
+| **Command line and AI assistants** on macOS, Linux and Windows, x64 and ARM | **[Install in one line](#command-line)** | [all the commands](source-code/README.md#command-line) |
 
 ## Command line
 
-`hproxy` is the same engine without a window, in one file. On macOS and Linux:
+`hproxy` is the same engine without a window, in one file, on x64 and ARM: Apple Silicon and Intel
+Macs, any Linux (Raspberry Pi included) and Windows. On macOS and Linux:
 
 ```sh
 curl -fsSL https://hproxy.com/install.sh | sh
@@ -45,10 +46,11 @@ On Windows, in PowerShell:
 irm https://hproxy.com/install.ps1 | iex
 ```
 
-It lands in `~/.local/bin` (Windows: `%LOCALAPPDATA%\hproxy`, added to your PATH) after a check
-against its SHA-256, with no administrator rights. Every file, its sum and its build record are on
-[the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.2.3), built
-by this repository's own workflow from [source-code](source-code/). Then:
+The installer picks the file for your system and processor. It lands in `~/.local/bin` (Windows:
+`%LOCALAPPDATA%\hproxy`, added to your PATH) after a check against its SHA-256, with no
+administrator rights, and nothing has to be installed beside it. Every file, its sum and its build
+record are on [the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.2.8),
+built by this repository's own workflow from [source-code](source-code/). Then:
 
 ```sh
 hproxy list --protocol socks5 | hproxy check --first 5 --alive   # 5 free SOCKS5 that work here
