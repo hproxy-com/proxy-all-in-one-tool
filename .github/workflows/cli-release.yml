@@ -105,6 +105,8 @@ jobs:
           cat > notes.md <<EOF
           The hproxy command-line tool ${version}: check proxies, list the free pool, look up an address, connect through a proxy, and give the same tools to an AI assistant with \`hproxy mcp\`.
 
+          Install it in one line: \`curl -fsSL https://hproxy.com/install.sh | sh\` on macOS and Linux, or \`irm https://hproxy.com/install.ps1 | iex\` in PowerShell on Windows. The installer checks the file against its SHA-256 before it puts it in place.
+
           Built by this repository's workflow from \`source-code/\` at this commit, with no secret involved. Check a file against \`SHA256SUMS\`, or its build record with \`gh attestation verify <file> --repo hproxy-com/proxy-all-in-one-tool\`.
 
           | File | System |
@@ -114,7 +116,11 @@ jobs:
           | \`hproxy-cli-linux-x86_64\` | Linux x86_64, one static file |
           | \`hproxy-cli-windows-x86_64.exe\` | Windows x86_64 |
           EOF
-          if ! gh release view "$tag" > /dev/null 2>&1; then
-            gh release create "$tag" --title "hproxy command-line tool ${version}" --notes-file notes.md --target "$GITHUB_SHA"
+          # A version is built once. hproxy.com's installers check every file against the sum
+          # published here, so the files of a release never change: to build again, raise the
+          # version in source-code/Cargo.toml.
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "::error::$tag is released already, and a release never changes. Raise the version in source-code/Cargo.toml to build a new one."
+            exit 1
           fi
-          gh release upload "$tag" dist/* --clobber
+          gh release create "$tag" dist/* --title "hproxy command-line tool ${version}" --notes-file notes.md --target "$GITHUB_SHA"
