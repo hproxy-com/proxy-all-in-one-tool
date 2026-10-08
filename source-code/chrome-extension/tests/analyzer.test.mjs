@@ -2,7 +2,7 @@
 // Run: node --test tests/*.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { gradeEcho, wireIp, publicIp, medianMs, verdictFor, LEAK_HEADERS } from "../analyzer.js";
+import { gradeEcho, wireIp, publicIp, medianMs, verdictFor, dnsVerdict, localeVerdict, madeUpName, LEAK_HEADERS } from "../analyzer.js";
 
 const ME = "198.51.100.23"; // this browser's own address, in the tests
 const EXIT = "203.0.113.9"; // where the proxy leaves
@@ -80,4 +80,36 @@ test("the verdict never calls unmeasured clean", () => {
   assert.equal(verdictFor(rows).status, "unknown");
   assert.equal(verdictFor([{ label: "Header leaks", status: "bad" }, ...rows]).status, "bad");
   assert.equal(verdictFor([{ label: "x", status: "skip" }]).status, "skip");
+});
+
+test("the DNS test uses a fresh name nobody can guess", () => {
+  const a = madeUpName();
+  assert.match(a, /^[a-z0-9]{20}$/);
+  assert.notEqual(a, madeUpName());
+});
+
+test("the DNS row names the resolver and compares its country with the exit", () => {
+  const google = (country) => ({ ip: "198.51.100.53", geo: { asn_org: "Google LLC", country } });
+  assert.deepEqual(
+    [dnsVerdict([google("DE")], "DE").status, dnsVerdict([google("DE")], "DE").headline],
+    ["ok", "Google LLC, DE"],
+  );
+  const elsewhere = dnsVerdict([google("DE")], "NL");
+  assert.equal(elsewhere.status, "warn");
+  assert.match(elsewhere.detail, /in DE, your exit in NL/);
+});
+
+test("the DNS row never passes what it did not see", () => {
+  assert.equal(dnsVerdict([], "DE").status, "unknown");
+  assert.equal(dnsVerdict([{ ip: "192.0.2.1", geo: null }], "DE").status, "ok", "a resolver without a country is named, not judged");
+  assert.equal(dnsVerdict([{ ip: "192.0.2.1", geo: null }], "DE").headline, "192.0.2.1");
+});
+
+test("the language row judges by the first language, the one sites compare", () => {
+  assert.equal(localeVerdict(["en-US", "en"], "US").status, "ok");
+  const german = localeVerdict(["de-DE", "de", "en-US"], "US");
+  assert.equal(german.status, "warn", "English further down does not make a German browser look American");
+  assert.match(german.detail, /de-DE content first, from a US address/);
+  assert.equal(localeVerdict(["en", "de-DE"], "US").status, "unknown", "a first language with no country contradicts nothing");
+  assert.equal(localeVerdict([], "US").status, "unknown");
 });

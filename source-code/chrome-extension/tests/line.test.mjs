@@ -141,14 +141,14 @@ test("a malformed address is not a hostname", () => {
   assert.equal(isHostname("8080"), false);
 });
 
-// The shared list (engine/hproxy-probe/tests/fixtures/proxy-lines.json): the
+// The shared list (proxy-engine/hproxy-probe/tests/fixtures/proxy-lines.json): the
 // engine, this port and the desktop app read every line of it the same way,
 // or refuse it.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 test("the shared corpus reads exactly like the engine", () => {
-  const corpus = JSON.parse(readFileSync(fileURLToPath(new URL("../../engine/hproxy-probe/tests/fixtures/proxy-lines.json", import.meta.url)), "utf8"));
+  const corpus = JSON.parse(readFileSync(fileURLToPath(new URL("../../proxy-engine/hproxy-probe/tests/fixtures/proxy-lines.json", import.meta.url)), "utf8"));
   assert.ok(corpus.length >= 90, `the corpus shrank to ${corpus.length} cases`);
   for (const c of corpus) {
     const r = parseLine(c.line);
