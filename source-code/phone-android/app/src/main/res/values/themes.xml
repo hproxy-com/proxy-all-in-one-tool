@@ -1,0 +1,11 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- The window Android shows while the app starts, in the app's own night colour (the app
+         starts dark), with light status bar icons. The screens draw everything else. -->
+    <style name="Theme.HProxy" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+    </style>
+</resources>

@@ -1,0 +1,5 @@
+<resources>
+    <!-- A debug or preview build installs beside the store's copy (applicationIdSuffix .dev): the
+         name says which is which, on the phone, in its VPN settings and on the quick tile. -->
+    <string name="app_name">HProxy Dev</string>
+</resources>

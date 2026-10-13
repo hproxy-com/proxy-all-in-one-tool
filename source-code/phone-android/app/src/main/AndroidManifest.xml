@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Wi-Fi or mobile data: the firewall's rules depend on which one the phone is on. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- The VPN's notification keeps the connection in front; Android 14 and later want the
+         reason, which for an active VPN is "system exempted". Android 13 and later ask the person
+         before notifications show; the VPN works without them. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- "Connect on startup". -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Which apps (the firewall) lists the apps a person opens from the launcher, never every
+         package on the phone. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <!-- No backups (res/xml/data_extraction_rules.xml says why): saved proxies and their
+         passwords stay on this phone, as PRIVACY.md promises. -->
+    <application
+        android:name=".HProxyApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.HProxy">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize|stateAlwaysHidden"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|uiMode|density">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Proxies shared from another app (the dashboard in the browser, a chat) land in
+                 Add proxies, read and ready to add. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <!-- The phone's VPN. Only Android holds BIND_VPN_SERVICE, so only Android can bind it.
+             Always-on works: the engine lives with this service, not with the screen. -->
+        <!-- systemExempted: Android lets a VPN app keep this service type (the app is the
+             phone's VPN); lint's check only knows the exact-alarm way in. Verified on Android 7
+             and 16: the service runs in front with it. -->
+        <service
+            android:name=".vpn.HProxyVpnService"
+            android:exported="true"
+            android:foregroundServiceType="systemExempted"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            tools:ignore="ForegroundServicePermission">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
+                android:value="true" />
+        </service>
+
+        <!-- HProxy in quick settings, named as the app is ("HProxy Dev" for a test copy). -->
+        <service
+            android:name=".vpn.QuickTile"
+            android:exported="true"
+            android:icon="@drawable/ic_connected"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".vpn.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- The firewall's "Allow" on a notification about a blocked app. -->
+        <receiver
+            android:name=".firewall.AllowReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

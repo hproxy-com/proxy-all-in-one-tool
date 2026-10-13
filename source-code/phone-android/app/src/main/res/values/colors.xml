@@ -1,0 +1,4 @@
+<resources>
+    <!-- The app's ink, the night it starts in (ui/theme/Tokens.kt says the same). -->
+    <color name="bg">#FF070A12</color>
+</resources>
