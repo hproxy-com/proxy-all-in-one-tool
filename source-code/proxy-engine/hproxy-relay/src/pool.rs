@@ -82,6 +82,22 @@ struct PoolProxy {
     asn_org: Option<String>,
     #[serde(default)]
     latency_ms: Option<i64>,
+    // What a list of exits shows a person picking one (the phone's free
+    // list, 2026-10-11): where it is on the map, how often it answered, and
+    // whether its address belongs to a data centre. All optional: the pool
+    // adds fields over time and an older pool simply leaves them out.
+    #[serde(default)]
+    region: Option<String>,
+    #[serde(default)]
+    latitude: Option<f64>,
+    #[serde(default)]
+    longitude: Option<f64>,
+    #[serde(default)]
+    uptime_7d: Option<f64>,
+    #[serde(default)]
+    is_datacenter: Option<bool>,
+    #[serde(default)]
+    last_verified_at: Option<String>,
 }
 
 /// One exit, plus the labels worth printing when we switch to it.
@@ -93,6 +109,17 @@ pub struct Exit {
     /// The network it belongs to, as the pool names it.
     pub network: String,
     pub latency_ms: Option<i64>,
+    /// The state or region, when the pool's IP data knows one.
+    pub region: String,
+    /// Where it is, for a map. None when the pool does not say.
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    /// Share of the pool's checks it answered in the last seven days, 0 to 100.
+    pub uptime: Option<f64>,
+    /// Its address belongs to a data centre (hosting), not to a home or a phone.
+    pub datacenter: Option<bool>,
+    /// When the pool last saw it relay (RFC 3339), if it says.
+    pub verified_at: Option<String>,
 }
 
 impl Exit {
@@ -126,15 +153,85 @@ struct State {
     recent: VecDeque<String>,
 }
 
+/// The client for calls to the control plane. Made by this process directly,
+/// never through the relay (rule 1 above): the crate's reqwest is built without
+/// its `system-proxy` feature, so even with the system proxy pointing at our own
+/// relay these calls go straight to hproxy.com.
+fn control_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        // The pool API is fast and this call sits in front of a user's very
+        // first request. A long hang here reads as "the tool is broken".
+        .timeout(Duration::from_secs(12))
+        .user_agent(concat!("hproxy-connector/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| format!("could not start the HTTP client: {e}"))
+}
+
+#[derive(Deserialize)]
+struct CountriesResponse {
+    #[serde(default)]
+    countries: Vec<PoolCountry>,
+}
+
+#[derive(Deserialize)]
+struct PoolCountry {
+    #[serde(default)]
+    country_code: Option<String>,
+    #[serde(default)]
+    count: u64,
+}
+
+/// One country of the free pool, and how many exits it holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Country {
+    /// The two-letter code, upper case.
+    pub code: String,
+    /// Exits of every protocol, untested: how much there is to choose from,
+    /// not how much works from here.
+    pub count: u64,
+}
+
+/// The countries the pool has exits in, the most first (`/api/vpn/countries`,
+/// the list behind the extension's country menu).
+pub async fn countries() -> Result<Vec<Country>, String> {
+    let resp = control_client()?
+        .get(format!("{API}/api/vpn/countries"))
+        .send()
+        .await
+        .map_err(|e| format!("could not reach the HProxy pool: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("the HProxy pool answered {}", resp.status()));
+    }
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("could not read the pool's answer: {e}"))?;
+    countries_from(&body)
+}
+
+/// The countries in the pool's answer: two-letter codes only, upper case, each
+/// once, none empty, the most exits first (ties by code).
+fn countries_from(body: &str) -> Result<Vec<Country>, String> {
+    let parsed: CountriesResponse =
+        serde_json::from_str(body).map_err(|e| format!("could not read the pool's answer: {e}"))?;
+    let mut out: Vec<Country> = Vec::new();
+    for c in parsed.countries {
+        let code = c.country_code.unwrap_or_default().trim().to_ascii_uppercase();
+        if code.len() != 2 || !code.bytes().all(|b| b.is_ascii_uppercase()) || c.count == 0 {
+            continue;
+        }
+        match out.iter_mut().find(|o| o.code == code) {
+            Some(o) => o.count += c.count,
+            None => out.push(Country { code, count: c.count }),
+        }
+    }
+    out.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.code.cmp(&b.code)));
+    Ok(out)
+}
+
 impl Pool {
     pub fn new(country: Option<String>, scheme: Scheme) -> Result<Self, String> {
-        let client = reqwest::Client::builder()
-            // The pool API is fast and this call sits in front of a user's very
-            // first request. A long hang here reads as "the tool is broken".
-            .timeout(Duration::from_secs(12))
-            .user_agent(concat!("hproxy-connector/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|e| format!("could not start the HTTP client: {e}"))?;
+        let client = control_client()?;
         Ok(Self {
             client,
             country: country.map(|c| c.trim().to_uppercase()).filter(|c| !c.is_empty()),
@@ -176,7 +273,11 @@ impl Pool {
     /// the pool's own checks accept exits a browser refuses, so a caller tests
     /// an exit before trusting it (`test`, `first_working`).
     pub async fn list(&self, limit: usize) -> Result<Vec<Exit>, String> {
-        let mut url = format!("{API}/api/vpn/pool?protocol={}&limit={}", self.protocol, limit.clamp(1, 200));
+        let mut url = format!(
+            "{API}/api/vpn/pool?protocol={}&limit={}",
+            self.protocol,
+            limit.clamp(1, 200)
+        );
         if let Some(cc) = &self.country {
             url.push_str(&format!("&country={cc}"));
         }
@@ -207,18 +308,31 @@ impl Pool {
             // An entry that cannot speak the protocol asked for would fail on
             // every request with no explanation, so it is checked, not assumed.
             .filter(|p| p.protocols.is_empty() || p.protocols.iter().any(|x| x == self.protocol))
-            .map(|p| Exit {
-                upstream: Upstream {
-                    scheme,
-                    host: p.ip,
-                    port: p.port,
-                    // Pool exits are open proxies. There is no login to attach.
-                    auth: None,
-                },
-                country: p.country_code.unwrap_or_default(),
-                city: p.city.unwrap_or_default(),
-                network: p.asn_org.unwrap_or_default(),
-                latency_ms: p.latency_ms,
+            .map(|p| {
+                // The pool's "nowhere" (0, 0) is no place on a map.
+                let at = p
+                    .latitude
+                    .zip(p.longitude)
+                    .filter(|(a, b)| a.abs() > 0.01 || b.abs() > 0.01);
+                Exit {
+                    upstream: Upstream {
+                        scheme,
+                        host: p.ip,
+                        port: p.port,
+                        // Pool exits are open proxies. There is no login to attach.
+                        auth: None,
+                    },
+                    country: p.country_code.unwrap_or_default(),
+                    city: p.city.unwrap_or_default(),
+                    network: p.asn_org.unwrap_or_default(),
+                    latency_ms: p.latency_ms,
+                    region: p.region.unwrap_or_default(),
+                    latitude: at.map(|(a, _)| a),
+                    longitude: at.map(|(_, b)| b),
+                    uptime: p.uptime_7d.map(|u| u.clamp(0.0, 100.0)),
+                    datacenter: p.is_datacenter,
+                    verified_at: p.last_verified_at,
+                }
             })
             .collect())
     }
@@ -246,7 +360,8 @@ impl Pool {
                 self.place()
             ));
         }
-        let (fresh, used): (Vec<Exit>, Vec<Exit>) = listed.into_iter().partition(|e| !recent.contains(&e.upstream.host));
+        let (fresh, used): (Vec<Exit>, Vec<Exit>) =
+            listed.into_iter().partition(|e| !recent.contains(&e.upstream.host));
         let candidates: Vec<Exit> = fresh.into_iter().chain(used).collect();
         let tried = candidates.len();
 
@@ -347,9 +462,16 @@ async fn works(up: Upstream) -> Result<(), String> {
         .build()
         .map_err(|e| format!("client: {e}"))?;
 
-    let resp = client.get(format!("{API}/api/vpn/countries")).send().await.map_err(|e| in_words(&e))?;
+    let resp = client
+        .get(format!("{API}/api/vpn/countries"))
+        .send()
+        .await
+        .map_err(|e| in_words(&e))?;
     if !resp.status().is_success() {
-        return Err(format!("answered with HTTP {} instead of relaying", resp.status().as_u16()));
+        return Err(format!(
+            "answered with HTTP {} instead of relaying",
+            resp.status().as_u16()
+        ));
     }
     let v: serde_json::Value = resp
         .json()
@@ -432,9 +554,27 @@ where
     }
     loop {
         match tokio::time::timeout_at(end, running.join_next()).await {
-            Err(_) => return Raced { found: None, failed, timed_out: true },
-            Ok(None) => return Raced { found: None, failed, timed_out: false },
-            Ok(Some(Ok(Ok(winner)))) => return Raced { found: Some(winner), failed, timed_out: false },
+            Err(_) => {
+                return Raced {
+                    found: None,
+                    failed,
+                    timed_out: true,
+                }
+            }
+            Ok(None) => {
+                return Raced {
+                    found: None,
+                    failed,
+                    timed_out: false,
+                }
+            }
+            Ok(Some(Ok(Ok(winner)))) => {
+                return Raced {
+                    found: Some(winner),
+                    failed,
+                    timed_out: false,
+                }
+            }
             Ok(Some(Ok(Err((loser, why))))) => failed.push((loser, why)),
             // A test that panicked names no candidate; the next one takes its place.
             Ok(Some(Err(_))) => {}
@@ -499,12 +639,21 @@ mod tests {
             city: city.into(),
             network: String::new(),
             latency_ms: ms,
+            region: String::new(),
+            latitude: None,
+            longitude: None,
+            uptime: None,
+            datacenter: None,
+            verified_at: None,
         }
     }
 
     #[tokio::test]
     async fn an_exit_describes_itself_for_the_banner() {
-        assert_eq!(exit("203.0.113.209", 80, "FR", "Lauterbourg", Some(6)).describe(), "203.0.113.209:80 (Lauterbourg, FR) 6ms");
+        assert_eq!(
+            exit("203.0.113.209", 80, "FR", "Lauterbourg", Some(6)).describe(),
+            "203.0.113.209:80 (Lauterbourg, FR) 6ms"
+        );
     }
 
     #[tokio::test]
@@ -519,14 +668,62 @@ mod tests {
     }
 
     #[test]
-    fn failures_read_as_what_happened() {
-        assert_eq!(reason_from(true, "error sending request"), "did not answer within 10 seconds");
+    fn the_pools_countries_are_read_once_each_the_most_first() {
+        let body = r#"{"countries":[
+            {"count":49,"country_code":"JP"},
+            {"count":1621,"country_code":"US"},
+            {"count":3,"country_code":"de"},
+            {"count":101,"country_code":"DE"},
+            {"count":0,"country_code":"FR"},
+            {"count":7,"country_code":"EUR"},
+            {"count":5,"country_code":""},
+            {"count":9},
+            {"count":49,"country_code":"GB"}
+        ]}"#;
+        let got: Vec<(String, u64)> = countries_from(body)
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.code, c.count))
+            .collect();
         assert_eq!(
-            reason_from(false, "error sending request | client error (Connect) | invalid peer certificate: UnknownIssuer"),
+            got,
+            vec![
+                ("US".into(), 1621),
+                ("DE".into(), 104),
+                ("GB".into(), 49),
+                ("JP".into(), 49)
+            ],
+            "lower case joins its upper case, empty and odd codes go, ties go by code"
+        );
+    }
+
+    #[test]
+    fn a_countries_answer_without_countries_is_an_empty_list_and_a_page_is_an_error() {
+        assert_eq!(countries_from(r#"{"error":"busy"}"#).unwrap(), vec![]);
+        assert!(countries_from("<html>maintenance</html>").is_err());
+    }
+
+    #[test]
+    fn failures_read_as_what_happened() {
+        assert_eq!(
+            reason_from(true, "error sending request"),
+            "did not answer within 10 seconds"
+        );
+        assert_eq!(
+            reason_from(
+                false,
+                "error sending request | client error (Connect) | invalid peer certificate: UnknownIssuer"
+            ),
             "hands out its own HTTPS certificates, so it could read what you send"
         );
-        assert_eq!(reason_from(false, "tcp connect error: Connection refused (os error 10061)"), "refused the connection");
-        assert_eq!(reason_from(false, "socks connect error: unexpected eof"), "does not relay HTTPS");
+        assert_eq!(
+            reason_from(false, "tcp connect error: Connection refused (os error 10061)"),
+            "refused the connection"
+        );
+        assert_eq!(
+            reason_from(false, "socks connect error: unexpected eof"),
+            "does not relay HTTPS"
+        );
     }
 
     /// What one pretend test gives back, in time.
@@ -571,7 +768,10 @@ mod tests {
         let raced = race_first(vec![2, 4, 6], 3, Duration::from_millis(60), pretend(5_000)).await;
         assert_eq!(raced.found, None);
         assert!(raced.timed_out);
-        assert!(started.elapsed() < Duration::from_secs(2), "the search outlived its deadline");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the search outlived its deadline"
+        );
     }
 
     #[tokio::test]
@@ -579,16 +779,21 @@ mod tests {
         let now = Arc::new(AtomicUsize::new(0));
         let most = Arc::new(AtomicUsize::new(0));
         let (n2, m2) = (now.clone(), most.clone());
-        let raced = race_first((0u32..12).map(|i| i * 2 + 1).collect(), 3, Duration::from_secs(5), move |n: u32| {
-            let (now, most) = (n2.clone(), m2.clone());
-            async move {
-                let running = now.fetch_add(1, Ordering::SeqCst) + 1;
-                most.fetch_max(running, Ordering::SeqCst);
-                tokio::time::sleep(Duration::from_millis(15)).await;
-                now.fetch_sub(1, Ordering::SeqCst);
-                Err::<u32, (u32, String)>((n, "no".into()))
-            }
-        })
+        let raced = race_first(
+            (0u32..12).map(|i| i * 2 + 1).collect(),
+            3,
+            Duration::from_secs(5),
+            move |n: u32| {
+                let (now, most) = (n2.clone(), m2.clone());
+                async move {
+                    let running = now.fetch_add(1, Ordering::SeqCst) + 1;
+                    most.fetch_max(running, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(15)).await;
+                    now.fetch_sub(1, Ordering::SeqCst);
+                    Err::<u32, (u32, String)>((n, "no".into()))
+                }
+            },
+        )
         .await;
         assert_eq!(raced.failed.len(), 12);
         assert_eq!(most.load(Ordering::SeqCst), 3);
@@ -599,16 +804,30 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_free_search_answers_within_the_deadline() {
-        for (cc, scheme) in [(Some("US"), Scheme::Http), (Some("DE"), Scheme::Socks5), (Some("AU"), Scheme::Http), (None, Scheme::Socks5)] {
+        for (cc, scheme) in [
+            (Some("US"), Scheme::Http),
+            (Some("DE"), Scheme::Socks5),
+            (Some("AU"), Scheme::Http),
+            (None, Scheme::Socks5),
+        ] {
             let pool = Pool::new(cc.map(String::from), scheme).unwrap();
             let started = Instant::now();
             let found = pool.first_working().await;
             let took = started.elapsed();
-            println!("{:?} {:?}: {:.1} s -> {}", cc, scheme, took.as_secs_f32(), match &found {
-                Ok(e) => format!("works: {}", e.describe()),
-                Err(why) => why.clone(),
-            });
-            assert!(took < SEARCH_DEADLINE + Duration::from_secs(15), "the search overran its deadline");
+            println!(
+                "{:?} {:?}: {:.1} s -> {}",
+                cc,
+                scheme,
+                took.as_secs_f32(),
+                match &found {
+                    Ok(e) => format!("works: {}", e.describe()),
+                    Err(why) => why.clone(),
+                }
+            );
+            assert!(
+                took < SEARCH_DEADLINE + Duration::from_secs(15),
+                "the search overran its deadline"
+            );
         }
     }
 
@@ -619,7 +838,13 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_free_list_how_many_pass_from_here() {
-        for (cc, scheme) in [(None, Scheme::Http), (None, Scheme::Socks5), (Some("US"), Scheme::Http), (Some("DE"), Scheme::Http), (Some("GB"), Scheme::Http)] {
+        for (cc, scheme) in [
+            (None, Scheme::Http),
+            (None, Scheme::Socks5),
+            (Some("US"), Scheme::Http),
+            (Some("DE"), Scheme::Http),
+            (Some("GB"), Scheme::Http),
+        ] {
             let pool = Pool::new(cc.map(String::from), scheme).unwrap();
             let started = Instant::now();
             let listed = match pool.list(24).await {

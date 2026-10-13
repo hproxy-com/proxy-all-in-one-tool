@@ -2,6 +2,7 @@
 //! `hproxy connect` / `hproxy free`, so the two never drift.
 
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use crate::pool;
 use crate::source::{List, Rotation, Source};
@@ -27,7 +28,8 @@ OPTIONS
       --file <PATH>     A list of proxies, one per line, used in turn.
       --rotate <RULE>   With --file: every (a new proxy per connection, the
                         default), every:N (a new one every N connections),
-                        random, or on-failure (stay until it stops answering).
+                        every:Nm (a new one every N minutes), random, or
+                        on-failure (stay until it stops answering).
   -f, --free            Use the free HProxy proxy pool instead of your own proxy.
       --country <CC>    With --free: a two-letter country, e.g. US, DE, FR.
       --socks5          With --free: ask the pool for a SOCKS5 exit.
@@ -51,25 +53,46 @@ pub struct Args {
     pub free: bool,
     pub country: Option<String>,
     pub socks5: bool,
+    /// A proxy or group saved in the HProxy app, by its name or id. This
+    /// crate cannot read saved places: `hproxy connect` reads them and builds
+    /// the source itself (`run_with_source`).
+    pub place: Option<String>,
+    /// With `place`, a group's member to start on, counted from 1.
+    pub member: Option<usize>,
     pub listen: String,
     pub allow_lan: bool,
     pub json: bool,
     pub verbose: bool,
 }
 
-/// `every`, `every:N`, `random`, `on-failure`.
+/// `every`, `every:N` (connections), `every:Nm` (minutes), `random`, `on-failure`.
 pub fn parse_rotation(s: &str) -> Result<Rotation, String> {
     let s = s.trim().to_ascii_lowercase();
+    let refused = || {
+        format!(
+            "`{s}` is not a rotation rule. Use every, every:N (N connections, at least 1), every:Nm \
+             (N minutes, at least 1), random or on-failure."
+        )
+    };
     match s.as_str() {
         "every" | "every-connection" | "each" => Ok(Rotation::EveryConnection),
         "random" => Ok(Rotation::Random),
         "on-failure" | "onfailure" | "sticky" => Ok(Rotation::OnFailure),
-        other => match other.strip_prefix("every:").map(str::parse::<u32>) {
-            Some(Ok(n)) if n >= 1 => Ok(Rotation::Every(n)),
-            _ => Err(format!(
-                "`{s}` is not a rotation rule. Use every, every:N (N at least 1), random or on-failure."
-            )),
-        },
+        other => {
+            let Some(step) = other.strip_prefix("every:") else {
+                return Err(refused());
+            };
+            if let Some(minutes) = step.strip_suffix('m') {
+                return match minutes.parse::<u64>() {
+                    Ok(n) if (1..=10_080).contains(&n) => Ok(Rotation::Timed(Duration::from_secs(n * 60))),
+                    _ => Err(refused()),
+                };
+            }
+            match step.parse::<u32>() {
+                Ok(n) if n >= 1 => Ok(Rotation::Every(n)),
+                _ => Err(refused()),
+            }
+        }
     }
 }
 
@@ -110,6 +133,8 @@ pub fn parse_args(argv: impl Iterator<Item = String>) -> Result<Option<Args>, St
     let mut file: Option<String> = None;
     let mut rotate: Option<Rotation> = None;
     let mut country: Option<String> = None;
+    let mut place: Option<String> = None;
+    let mut member: Option<usize> = None;
     let mut listen = DEFAULT_LISTEN.to_string();
     let (mut free, mut socks5, mut allow_lan, mut json, mut verbose) = (false, false, false, false, false);
 
@@ -130,6 +155,24 @@ pub fn parse_args(argv: impl Iterator<Item = String>) -> Result<Option<Args>, St
                 )?)
             }
             "--country" => country = Some(it.next().ok_or("--country needs a two-letter code, e.g. US")?),
+            "--place" => {
+                place = Some(
+                    it.next()
+                        .ok_or("--place needs the name or id of a proxy or group saved in the HProxy app")?,
+                )
+            }
+            "--member" => {
+                let n = it
+                    .next()
+                    .ok_or("--member needs a number, 1 for a group's first proxy")?;
+                member = Some(
+                    n.trim()
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|n| *n >= 1)
+                        .ok_or(format!("--member takes a number from 1, not `{n}`"))?,
+                );
+            }
             "-l" | "--listen" => listen = it.next().ok_or("--listen needs an address, e.g. 127.0.0.1:8080")?,
             "-p" | "--proxy" => proxy = Some(it.next().ok_or("--proxy needs a proxy line")?),
             other if other.starts_with('-') => return Err(format!("unknown option `{other}`")),
@@ -138,14 +181,17 @@ pub fn parse_args(argv: impl Iterator<Item = String>) -> Result<Option<Args>, St
         }
     }
 
-    let sources = [proxy.is_some(), file.is_some(), free].iter().filter(|x| **x).count();
+    let sources = [proxy.is_some(), file.is_some(), free, place.is_some()]
+        .iter()
+        .filter(|x| **x)
+        .count();
     if sources > 1 {
-        return Err("a proxy line, --file and --free each say where traffic goes. Pick one.".into());
+        return Err("a proxy line, --file, --free and --place each say where traffic goes. Pick one.".into());
     }
     if sources == 0 {
         return Err(
             "no proxy given. Pass your own line (host:port:user:pass), a list (--file proxies.txt), \
-             or use the free pool (--free)."
+             one saved in the HProxy app (--place NAME), or use the free pool (--free)."
                 .into(),
         );
     }
@@ -153,7 +199,14 @@ pub fn parse_args(argv: impl Iterator<Item = String>) -> Result<Option<Args>, St
         return Err("--country only applies to --free. Your own proxy already has a location.".into());
     }
     if rotate.is_some() && file.is_none() {
-        return Err("--rotate only applies to --file. One proxy has nothing to rotate to.".into());
+        return Err(if place.is_some() {
+            "--rotate only applies to --file. A saved group keeps the rule it was saved with.".into()
+        } else {
+            "--rotate only applies to --file. One proxy has nothing to rotate to.".into()
+        });
+    }
+    if member.is_some() && place.is_none() {
+        return Err("--member only applies to --place: a member of a saved group.".into());
     }
     Ok(Some(Args {
         proxy,
@@ -162,6 +215,8 @@ pub fn parse_args(argv: impl Iterator<Item = String>) -> Result<Option<Args>, St
         free,
         country,
         socks5,
+        place,
+        member,
         listen,
         allow_lan,
         json,
@@ -184,6 +239,9 @@ pub fn listen_addr(args: &Args) -> Result<SocketAddr, String> {
 /// pool picked one. Shared by `run` below and by `hproxy connect`, which serves
 /// it with its own readiness and shutdown (background mode).
 pub async fn source_from(args: &Args) -> Result<(Source, Option<String>), String> {
+    if args.place.is_some() {
+        return Err("a saved place is read by `hproxy connect`, which keeps the HProxy app's places".into());
+    }
     if args.free {
         let scheme = if args.socks5 { Scheme::Socks5 } else { Scheme::Http };
         let p = pool::Pool::new(args.country.clone(), scheme)?;
@@ -207,8 +265,17 @@ pub async fn source_from(args: &Args) -> Result<(Source, Option<String>), String
 /// Run until Ctrl+C, printing the banner a person needs to configure their
 /// software, or with `--json` one line a program can read.
 pub async fn run(args: Args) -> Result<(), String> {
-    let addr = listen_addr(&args)?;
+    // The address before the source: asking the pool for an exit and then
+    // finding the port taken wastes a pick.
+    listen_addr(&args)?;
     let (src, first_exit) = source_from(&args).await?;
+    run_with_source(args, src, first_exit).await
+}
+
+/// `run`, for a source the caller built itself: `hproxy connect --place`,
+/// which reads the place from the HProxy app's library.
+pub async fn run_with_source(args: Args, src: Source, first_exit: Option<String>) -> Result<(), String> {
+    let addr = listen_addr(&args)?;
     let label = src.label(first_exit.as_deref());
     let kind = src.kind();
     let allow_lan = args.allow_lan;
@@ -218,7 +285,7 @@ pub async fn run(args: Args) -> Result<(), String> {
         addr,
         args.allow_lan,
         args.verbose,
-        std::sync::Arc::new(src),
+        std::sync::Arc::new(crate::SwitchableSource::new(src)),
         std::sync::Arc::new(crate::Stats::default()),
         move |local| {
             if json {
@@ -302,6 +369,39 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_place_is_one_more_source_with_its_own_rules() {
+        let a = parse_args(argv("--place Shop --member 3 --json")).unwrap().unwrap();
+        assert_eq!(a.place.as_deref(), Some("Shop"));
+        assert_eq!(a.member, Some(3));
+        assert!(parse_args(argv("--place Shop 1.2.3.4:80"))
+            .unwrap_err()
+            .contains("Pick one"));
+        assert!(parse_args(argv("--place Shop --free"))
+            .unwrap_err()
+            .contains("Pick one"));
+        assert!(parse_args(argv("--place Shop --rotate random"))
+            .unwrap_err()
+            .contains("keeps the rule it was saved with"));
+        assert!(parse_args(argv("1.2.3.4:80 --member 2"))
+            .unwrap_err()
+            .contains("--member only applies to --place"));
+        assert!(parse_args(argv("--place Shop --member 0"))
+            .unwrap_err()
+            .contains("from 1"));
+        assert!(parse_args(argv("--place Shop --member two"))
+            .unwrap_err()
+            .contains("from 1"));
+        assert!(parse_args(argv("--place")).unwrap_err().contains("needs the name"));
+    }
+
+    #[tokio::test]
+    async fn the_relay_alone_cannot_read_a_saved_place_and_says_who_can() {
+        let a = parse_args(argv("--place Shop")).unwrap().unwrap();
+        let e = source_from(&a).await.err().expect("this crate keeps no places");
+        assert!(e.contains("hproxy connect"), "{e}");
+    }
+
+    #[test]
     fn a_list_with_a_rotation_rule_and_json() {
         let a = parse_args(argv("--file list.txt --rotate every:25 --json --listen 127.0.0.1:0"))
             .unwrap()
@@ -325,6 +425,17 @@ mod tests {
         assert_eq!(parse_rotation("on-failure").unwrap(), Rotation::OnFailure);
         assert!(parse_rotation("every:0").is_err());
         assert!(parse_rotation("sometimes").unwrap_err().contains("every:N"));
+        assert_eq!(
+            parse_rotation("every:10m").unwrap(),
+            Rotation::Timed(Duration::from_secs(600))
+        );
+        assert_eq!(
+            parse_rotation(" EVERY:1M ").unwrap(),
+            Rotation::Timed(Duration::from_secs(60))
+        );
+        assert!(parse_rotation("every:0m").is_err());
+        assert!(parse_rotation("every:m").is_err());
+        assert!(parse_rotation("every:99999m").is_err(), "a week is the most");
     }
 
     #[test]

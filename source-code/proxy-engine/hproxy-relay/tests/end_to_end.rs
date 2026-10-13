@@ -431,3 +431,104 @@ fn opening_the_port_in_a_browser_explains_itself() {
     assert!(resp.contains("400"), "{resp}");
     assert!(resp.to_lowercase().contains("proxy"), "{resp}");
 }
+
+/// A fake upstream SOCKS5 proxy, no login. Like real ones, it hangs up on
+/// anything that does not start with the version byte 5.
+fn spawn_socks5_upstream() -> u16 {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            thread::spawn(move || {
+                let mut s = s;
+                let mut greeting = [0u8; 2];
+                if s.read_exact(&mut greeting).is_err() || greeting[0] != 0x05 {
+                    return;
+                }
+                let mut methods = vec![0u8; greeting[1] as usize];
+                if s.read_exact(&mut methods).is_err() {
+                    return;
+                }
+                let _ = s.write_all(&[0x05, 0x00]);
+                let mut req = [0u8; 4];
+                if s.read_exact(&mut req).is_err() {
+                    return;
+                }
+                let target = match req[3] {
+                    0x01 => {
+                        let mut a = [0u8; 6];
+                        if s.read_exact(&mut a).is_err() {
+                            return;
+                        }
+                        format!(
+                            "{}.{}.{}.{}:{}",
+                            a[0],
+                            a[1],
+                            a[2],
+                            a[3],
+                            u16::from_be_bytes([a[4], a[5]])
+                        )
+                    }
+                    0x03 => {
+                        let mut len = [0u8; 1];
+                        if s.read_exact(&mut len).is_err() {
+                            return;
+                        }
+                        let mut name = vec![0u8; len[0] as usize + 2];
+                        if s.read_exact(&mut name).is_err() {
+                            return;
+                        }
+                        let n = name.len();
+                        let port = u16::from_be_bytes([name[n - 2], name[n - 1]]);
+                        format!("{}:{port}", String::from_utf8_lossy(&name[..n - 2]))
+                    }
+                    _ => return,
+                };
+                let Ok(server) = TcpStream::connect(&target) else {
+                    let _ = s.write_all(&[0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0]);
+                    return;
+                };
+                let _ = s.write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]);
+                let (c2, s2) = (s.try_clone().unwrap(), server.try_clone().unwrap());
+                let up = thread::spawn(move || pipe(c2, s2));
+                pipe(server, s);
+                let _ = up.join();
+            });
+        }
+    });
+    port
+}
+
+/// A bare `host:port` line for a SOCKS5 proxy, the way free lists print them.
+/// The checker reported such proxies as working while the relay spoke HTTP to
+/// them and carried nothing; now the relay hears the wrong protocol and switches.
+#[test]
+fn a_bare_socks5_line_carries_a_tunnel() {
+    let origin = spawn_origin();
+    let upstream = spawn_socks5_upstream();
+    let c = start_connector(&format!("127.0.0.1:{upstream}"));
+
+    for round in ["first", "second"] {
+        let mut s = TcpStream::connect(("127.0.0.1", c.port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        write!(
+            s,
+            "CONNECT 127.0.0.1:{origin} HTTP/1.1\r\nHost: 127.0.0.1:{origin}\r\n\r\n"
+        )
+        .unwrap();
+        s.flush().unwrap();
+        let mut r = BufReader::new(s.try_clone().unwrap());
+        let head = read_head(&mut r);
+        assert!(head.contains("200"), "{round} tunnel was not established:\n{head}");
+        write!(s, "GET /{round} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").unwrap();
+        s.flush().unwrap();
+        let mut body = String::new();
+        let _ = r.read_to_string(&mut body);
+        assert!(body.contains(&format!("ORIGIN-OK /{round}")), "{round}: {body}");
+    }
+
+    // Once the tunnel taught the relay what the proxy speaks, a plain http://
+    // request goes through it too, in origin form.
+    let resp = get_via(c.port, &format!("http://127.0.0.1:{origin}/plain"));
+    assert!(resp.contains("ORIGIN-OK /plain"), "{resp}");
+}

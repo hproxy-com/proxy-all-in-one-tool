@@ -34,12 +34,12 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::source::Source;
 use crate::stats::{Counted, Stats};
-use crate::upstream::{Scheme, Upstream};
+use crate::switchable::Ticket;
+use crate::upstream::{self, Scheme, Upstream};
 
 /// Cap on a request head. Real ones are a couple of KB; anything past this is a
 /// client that will never send `\r\n\r\n`, and without a cap that is unbounded
@@ -61,6 +61,44 @@ const UPSTREAM_CONNECT: Duration = Duration::from_secs(10);
 /// or SOCKS5 exchange, during which the upstream itself reaches the target. A
 /// proxy that accepts the connection and then says nothing is dead too.
 const UPSTREAM_DIAL: Duration = Duration::from_secs(30);
+
+/// How long a SOCKS5 greeting may wait for its answer when SOCKS5 is the
+/// second guess. A SOCKS5 server answers the greeting at once,
+/// before it reaches anything; an HTTP proxy that got those bytes instead may
+/// sit waiting for a line ending that never comes, and that wait must not eat
+/// the dial's whole budget.
+const SECOND_GUESS_GREETING: Duration = Duration::from_secs(4);
+
+/// The upstream answered, but not in the protocol we spoke to it: the line's
+/// prefix was wrong, or it had none and the proxy is SOCKS5. The one failure
+/// worth a second try in the other protocol.
+#[derive(Debug)]
+struct WrongProtocol(String);
+
+impl std::fmt::Display for WrongProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for WrongProtocol {}
+
+fn wrong_protocol(why: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, WrongProtocol(why.into()))
+}
+
+fn is_wrong_protocol(e: &io::Error) -> bool {
+    e.get_ref().is_some_and(|inner| inner.is::<WrongProtocol>())
+}
+
+/// How a plain http:// request reached its server: through the HTTP proxy
+/// itself (absolute URI, our login attached), or through a tunnel straight to
+/// the origin (origin-form request, no proxy login).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Leg {
+    Proxy,
+    Origin,
+}
 
 /// Read up to and including the blank line that ends the request head.
 ///
@@ -179,7 +217,29 @@ async fn dial_through(up: &Upstream, host: &str, port: u16) -> io::Result<TcpStr
     dial_through_within(up, host, port, UPSTREAM_CONNECT, UPSTREAM_DIAL).await
 }
 
+/// One dial in one protocol. `greeting` caps the wait for a SOCKS5 greeting's
+/// answer (when SOCKS5 is the second guess); `None` leaves it to the total.
+async fn dial_as(
+    scheme: Scheme,
+    up: &Upstream,
+    host: &str,
+    port: u16,
+    connect: Duration,
+    greeting: Option<Duration>,
+) -> io::Result<TcpStream> {
+    match scheme {
+        Scheme::Http => http_connect(up, host, port, connect).await,
+        Scheme::Socks5 => socks5_connect(up, host, port, connect, greeting).await,
+    }
+}
+
 /// `dial_through` with its two limits as parameters, so a test can use short ones.
+///
+/// A line's prefix is only a guess at what the proxy speaks: scraped lists are
+/// full of bare SOCKS5 proxies (no prefix means HTTP) and of wrong prefixes.
+/// So the first try is what the address is known to speak, else the line's
+/// word; if the proxy answers in the other protocol, that one is tried once,
+/// and whichever worked is remembered so later connections go straight to it.
 async fn dial_through_within(
     up: &Upstream,
     host: &str,
@@ -188,9 +248,25 @@ async fn dial_through_within(
     total: Duration,
 ) -> io::Result<TcpStream> {
     let dial = async {
-        match up.scheme {
-            Scheme::Http => http_connect(up, host, port, connect).await,
-            Scheme::Socks5 => socks5_connect(up, host, port, connect).await,
+        let first = upstream::first_try(up);
+        match dial_as(first, up, host, port, connect, None).await {
+            Ok(s) => {
+                upstream::remember(up, first);
+                Ok(s)
+            }
+            Err(e) if is_wrong_protocol(&e) => {
+                let second = first.other();
+                match dial_as(second, up, host, port, connect, Some(SECOND_GUESS_GREETING)).await {
+                    Ok(s) => {
+                        upstream::remember(up, second);
+                        Ok(s)
+                    }
+                    // The first answer describes what the line was taken to be;
+                    // the second only says the other guess failed too.
+                    Err(_) => Err(e),
+                }
+            }
+            Err(e) => Err(e),
         }
     };
     match tokio::time::timeout(total, dial).await {
@@ -203,6 +279,59 @@ async fn dial_through_within(
                 total.as_secs()
             ),
         )),
+    }
+}
+
+/// Read an upstream's answer up to the blank line that ends its head. Bytes
+/// after the head are dropped: nothing may arrive in a fresh tunnel before the
+/// client speaks.
+///
+/// An answer that is not HTTP at all, or a connection closed before a single
+/// byte, is [`WrongProtocol`]: the proxy speaks something else. A SOCKS5
+/// server reads the C of `CONNECT` as its version byte and hangs up at once.
+async fn read_reply_head(s: &mut TcpStream) -> io::Result<Vec<u8>> {
+    const HTTP: &[u8] = b"HTTP/";
+    let mut buf = Vec::with_capacity(512);
+    let mut chunk = [0u8; 2048];
+    loop {
+        if let Some(i) = find_head_end(&buf) {
+            buf.truncate(i);
+            return Ok(buf);
+        }
+        // Still HTTP as long as what arrived could begin "HTTP/".
+        let could_be_http = HTTP.starts_with(&buf[..buf.len().min(HTTP.len())]);
+        if !could_be_http {
+            return Err(wrong_protocol("the proxy answered, but not in HTTP"));
+        }
+        if buf.len() > MAX_HEAD {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the proxy's answer is too large",
+            ));
+        }
+        let n = match s.read(&mut chunk).await {
+            Ok(n) => n,
+            Err(e)
+                if buf.is_empty()
+                    && matches!(
+                        e.kind(),
+                        io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionAborted
+                    ) =>
+            {
+                return Err(wrong_protocol("the proxy hung up without an HTTP answer"));
+            }
+            Err(e) => return Err(e),
+        };
+        if n == 0 {
+            if buf.is_empty() {
+                return Err(wrong_protocol("the proxy closed the connection without an HTTP answer"));
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "the proxy closed the connection in the middle of its answer",
+            ));
+        }
+        buf.extend_from_slice(&chunk[..n]);
     }
 }
 
@@ -221,7 +350,7 @@ async fn http_connect(up: &Upstream, host: &str, port: u16, connect: Duration) -
     req.push_str("Proxy-Connection: Keep-Alive\r\n\r\n");
     s.write_all(req.as_bytes()).await?;
 
-    let (head, _) = read_head(&mut s).await?;
+    let head = read_reply_head(&mut s).await?;
     let status = std::str::from_utf8(&head)
         .ok()
         .and_then(|h| h.split_whitespace().nth(1))
@@ -239,7 +368,13 @@ async fn http_connect(up: &Upstream, host: &str, port: u16, connect: Duration) -
 /// Worth having for its own sake: the Windows system proxy setting cannot speak
 /// SOCKS5 at all, so pointing it at this connector is the only way a lot of
 /// Windows software reaches a SOCKS5 proxy.
-async fn socks5_connect(up: &Upstream, host: &str, port: u16, connect: Duration) -> io::Result<TcpStream> {
+async fn socks5_connect(
+    up: &Upstream,
+    host: &str,
+    port: u16,
+    connect: Duration,
+    greeting: Option<Duration>,
+) -> io::Result<TcpStream> {
     let mut s = connect_upstream(up, connect).await?;
 
     // Greeting: offer exactly what we can actually do.
@@ -249,9 +384,25 @@ async fn socks5_connect(up: &Upstream, host: &str, port: u16, connect: Duration)
         s.write_all(&[0x05, 0x01, 0x00]).await?;
     }
     let mut m = [0u8; 2];
-    s.read_exact(&mut m).await?;
+    let answered = match greeting {
+        Some(limit) => match tokio::time::timeout(limit, s.read_exact(&mut m)).await {
+            Ok(r) => r,
+            Err(_) => return Err(wrong_protocol("no SOCKS5 answer to the greeting")),
+        },
+        None => s.read_exact(&mut m).await,
+    };
+    match answered {
+        Ok(_) => {}
+        // Hung up on the greeting without a word: not a SOCKS5 server.
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+            return Err(wrong_protocol(
+                "the proxy closed the connection without a SOCKS5 answer",
+            ))
+        }
+        Err(e) => return Err(e),
+    }
     if m[0] != 0x05 {
-        return Err(io::Error::other("upstream is not a SOCKS5 proxy"));
+        return Err(wrong_protocol("upstream is not a SOCKS5 proxy"));
     }
     match m[1] {
         0x00 => {}
@@ -349,6 +500,20 @@ fn socks_reply(code: u8) -> &'static str {
         0x07 => "command not supported",
         0x08 => "address type not supported",
         _ => "unknown error",
+    }
+}
+
+/// Carry bytes both ways until either side closes, or until the turn this
+/// connection belongs to ends (a switch of place, "Next IP", the relay
+/// stopping). Ended, both sockets close and the program opens a new
+/// connection, which goes through whatever the relay uses now.
+async fn carry<S>(client: &mut TcpStream, server: &mut S, ticket: &mut Ticket)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    tokio::select! {
+        _ = tokio::io::copy_bidirectional(client, server) => {}
+        _ = ticket.ended() => {}
     }
 }
 
@@ -459,7 +624,8 @@ where
 
 /// Serve a client that spoke SOCKS5 to us: read its request, dial the target
 /// through the upstream exactly as a CONNECT would, then relay bytes.
-async fn socks5_client(mut client: TcpStream, src: &Source, verbose: bool, stats: &Arc<Stats>) {
+async fn socks5_client(mut client: TcpStream, ticket: &mut Ticket, verbose: bool, stats: &Arc<Stats>) {
+    let src = Arc::clone(&ticket.source);
     let request = match tokio::time::timeout(CLIENT_IDLE, socks5_read_request(&mut client)).await {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {
@@ -513,26 +679,29 @@ async fn socks5_client(mut client: TcpStream, src: &Source, verbose: bool, stats
     if client.write_all(&socks5_reply(0x00)).await.is_err() {
         return;
     }
-    let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
+    carry(&mut client, &mut server, ticket).await;
 }
 
 /// Serve one client connection start to finish.
 ///
-/// Takes a `Source` rather than an `Upstream` because a free-pool exit can die
-/// between one request and the next, and the right answer there is to rotate
-/// rather than to fail. `Source` owns that decision; this file only has to ask.
+/// Takes the connection's [`Ticket`] rather than an `Upstream`: its `Source`
+/// decides failover (a free-pool exit can die between one request and the
+/// next, and the right answer there is to rotate rather than to fail), and its
+/// turn says when a switch or "Next IP" ends this connection. This file only
+/// has to ask.
 ///
 /// `stats` counts this connection, its failure if it cannot reach the proxy,
 /// and every byte that crosses the proxy side of it.
-pub async fn handle(mut client: TcpStream, src: &Source, verbose: bool, stats: &Arc<Stats>) {
+pub async fn handle(mut client: TcpStream, mut ticket: Ticket, verbose: bool, stats: &Arc<Stats>) {
     let _open = stats.opened();
+    let src = Arc::clone(&ticket.source);
 
     // One port, two protocols. A SOCKS5 greeting starts with the byte 5; an
     // HTTP request starts with its method's first letter.
     let mut first_byte = [0u8; 1];
     match tokio::time::timeout(CLIENT_IDLE, client.peek(&mut first_byte)).await {
         Ok(Ok(1)) if first_byte[0] == 0x05 => {
-            socks5_client(client, src, verbose, stats).await;
+            socks5_client(client, &mut ticket, verbose, stats).await;
             return;
         }
         Ok(Ok(n)) if n > 0 => {}
@@ -602,7 +771,7 @@ pub async fn handle(mut client: TcpStream, src: &Source, verbose: bool, stats: &
         if !leftover.is_empty() && server.write_all(&leftover).await.is_err() {
             return;
         }
-        let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
+        carry(&mut client, &mut server, &mut ticket).await;
         return;
     }
 
@@ -628,13 +797,17 @@ pub async fn handle(mut client: TcpStream, src: &Source, verbose: bool, stats: &
     proxies refuse CONNECT to port 80, and the origin server then receives an
     absolute-URI request, which many reject outright. Found by the end-to-end
     test: the origin echoed back `http://host:port/path` as its path. */
+    // A bare line goes by what its address was found to speak. One that was
+    // never dialled yet is taken as HTTP here: a plain request cannot be
+    // re-sent in the other protocol once it is on its way, and the first
+    // https:// tunnel (nearly all traffic) or the app's own check settles it.
     let dialed = src
         .dial_with_failover(|up| {
             let h = host.clone();
             async move {
-                match up.scheme {
-                    Scheme::Http => connect_upstream(&up, UPSTREAM_CONNECT).await,
-                    Scheme::Socks5 => dial_through(&up, &h, port).await,
+                match upstream::first_try(&up) {
+                    Scheme::Http => connect_upstream(&up, UPSTREAM_CONNECT).await.map(|s| (s, Leg::Proxy)),
+                    Scheme::Socks5 => dial_through(&up, &h, port).await.map(|s| (s, Leg::Origin)),
                 }
             }
         })
@@ -642,12 +815,13 @@ pub async fn handle(mut client: TcpStream, src: &Source, verbose: bool, stats: &
     // `used` is the upstream that actually carried the connection, which after a
     // failover is NOT the one we started with. Signing with the retired exit's
     // credentials would 407 on the very request the rotation just rescued.
-    let (mut server, used) = match dialed {
+    let (mut server, used, leg) = match dialed {
         Ok(d) => {
             if d.rotated {
                 stats.rotated();
             }
-            (Counted::new(d.stream, Arc::clone(stats)), d.used)
+            let (stream, leg) = d.stream;
+            (Counted::new(stream, Arc::clone(stats)), d.used, leg)
         }
         Err(e) => {
             stats.failed();
@@ -656,12 +830,13 @@ pub async fn handle(mut client: TcpStream, src: &Source, verbose: bool, stats: &
         }
     };
 
-    // An HTTP upstream still wants the absolute URI (it is doing the fetching).
-    // A SOCKS5 upstream has already connected us straight to the origin server,
-    // which expects the origin form and would 400 on an absolute one.
-    let (line, auth) = match used.scheme {
-        Scheme::Http => (first.clone(), used.basic_header()),
-        Scheme::Socks5 => {
+    // An HTTP proxy still wants the absolute URI (it is doing the fetching).
+    // A tunnel (SOCKS5, or CONNECT after a second guess) already reaches the
+    // origin server, which expects the origin form and would 400 on an
+    // absolute one.
+    let (line, auth) = match leg {
+        Leg::Proxy => (first.clone(), used.basic_header()),
+        Leg::Origin => {
             let ver = first.split_whitespace().nth(2).unwrap_or("HTTP/1.1");
             (format!("{method} {path} {ver}"), None)
         }
@@ -673,7 +848,7 @@ pub async fn handle(mut client: TcpStream, src: &Source, verbose: bool, stats: &
     if !leftover.is_empty() && server.write_all(&leftover).await.is_err() {
         return;
     }
-    let _ = tokio::io::copy_bidirectional(&mut client, &mut server).await;
+    carry(&mut client, &mut server, &mut ticket).await;
 }
 
 #[cfg(test)]
@@ -866,6 +1041,161 @@ mod tests {
             "took {:?}",
             started.elapsed()
         );
+    }
+
+    /// A SOCKS5 server with no login that answers every CONNECT with success
+    /// and then echoes. Anything that does not start with the version byte is
+    /// dropped at once, as real SOCKS5 servers do. Returns its port and a count
+    /// of the connections it accepted.
+    async fn fake_socks5() -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&accepted);
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut greeting = [0u8; 2];
+                    if s.read_exact(&mut greeting).await.is_err() || greeting[0] != 0x05 {
+                        return;
+                    }
+                    let mut methods = vec![0u8; greeting[1] as usize];
+                    if s.read_exact(&mut methods).await.is_err() {
+                        return;
+                    }
+                    let _ = s.write_all(&[0x05, 0x00]).await;
+                    let mut req = [0u8; 4];
+                    if s.read_exact(&mut req).await.is_err() {
+                        return;
+                    }
+                    let skip = match req[3] {
+                        0x01 => 6,
+                        0x04 => 18,
+                        _ => {
+                            let mut len = [0u8; 1];
+                            if s.read_exact(&mut len).await.is_err() {
+                                return;
+                            }
+                            len[0] as usize + 2
+                        }
+                    };
+                    let mut rest = vec![0u8; skip];
+                    if s.read_exact(&mut rest).await.is_err() {
+                        return;
+                    }
+                    let _ = s.write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await;
+                    let mut buf = [0u8; 64];
+                    while let Ok(n) = s.read(&mut buf).await {
+                        if n == 0 || s.write_all(&buf[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        (port, accepted)
+    }
+
+    async fn says_ping_back(mut s: TcpStream) {
+        s.write_all(b"ping").await.unwrap();
+        let mut back = [0u8; 4];
+        s.read_exact(&mut back).await.unwrap();
+        assert_eq!(&back, b"ping");
+    }
+
+    /// The bug this guards: a bare `host:port` SOCKS5 proxy checked as working
+    /// and then dialled as HTTP, so Connect carried nothing.
+    #[tokio::test]
+    async fn a_bare_line_to_a_socks5_proxy_is_dialled_as_socks5() {
+        let (port, accepted) = fake_socks5().await;
+        let up = upstream::parse(&format!("127.0.0.1:{port}")).unwrap();
+
+        let s = dial_through(&up, "example.com", 443)
+            .await
+            .expect("the second guess should carry it");
+        says_ping_back(s).await;
+        assert_eq!(upstream::first_try(&up), Scheme::Socks5, "what it speaks is remembered");
+        assert_eq!(
+            accepted.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "HTTP first, then SOCKS5"
+        );
+
+        // The next connection goes straight to SOCKS5: one more accept, not two.
+        let s = dial_through(&up, "example.com", 443).await.unwrap();
+        says_ping_back(s).await;
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    /// "http://" in front of a SOCKS5 proxy is a common slip. The checker
+    /// reports what answered whatever the prefix says, and so does the relay.
+    #[tokio::test]
+    async fn a_wrong_prefix_does_not_stop_the_connection() {
+        let (port, accepted) = fake_socks5().await;
+        let up = upstream::parse(&format!("http://127.0.0.1:{port}")).unwrap();
+        let s = dial_through(&up, "example.com", 443)
+            .await
+            .expect("SOCKS5 should carry it");
+        says_ping_back(s).await;
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(upstream::first_try(&up), Scheme::Socks5);
+    }
+
+    /// An HTTP proxy that says no is still an HTTP proxy: its answer is
+    /// reported, and nothing is tried in SOCKS5.
+    #[tokio::test]
+    async fn an_http_refusal_is_reported_not_second_guessed() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&accepted);
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                let _ = read_head(&mut s).await;
+                let _ = s
+                    .write_all(b"HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n")
+                    .await;
+            }
+        });
+        let up = upstream::parse(&format!("127.0.0.1:{port}:user:wrong")).unwrap();
+        let err = dial_through(&up, "example.com", 443).await.unwrap_err();
+        assert!(err.to_string().contains("407"), "{err}");
+        assert_eq!(accepted.load(Ordering::SeqCst), 1);
+        assert_eq!(upstream::first_try(&up), Scheme::Http);
+    }
+
+    /// An HTTP proxy that drops a CONNECT without a word gets one SOCKS5
+    /// greeting, which it ignores; the second guess gives up within its short
+    /// limit and the first answer is the one reported.
+    #[tokio::test]
+    async fn a_silent_second_guess_gives_up_quickly() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let mut first = true;
+            while let Ok((s, _)) = listener.accept().await {
+                if first {
+                    first = false;
+                    drop(s);
+                } else {
+                    // Hold the second connection open and say nothing.
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(20)).await;
+                        drop(s);
+                    });
+                }
+            }
+        });
+        let up = upstream::parse(&format!("127.0.0.1:{port}")).unwrap();
+        let started = std::time::Instant::now();
+        let err = dial_through(&up, "example.com", 443).await.unwrap_err();
+        assert!(err.to_string().contains("without an HTTP answer"), "{err}");
+        assert!(started.elapsed() < SECOND_GUESS_GREETING + Duration::from_secs(2));
+        assert_eq!(upstream::first_try(&up), Scheme::Http, "nothing was learned");
     }
 
     #[tokio::test]

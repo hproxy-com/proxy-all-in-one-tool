@@ -4,8 +4,17 @@
 //! the checker reads is a line the relay reads, in every shape a provider
 //! prints. What this module adds is the one decision a relay has to make that
 //! a checker does not: HOW to speak to the upstream, HTTP or SOCKS5.
+//!
+//! The line's scheme (`socks5://…`, `http://…`, or none, which means HTTP) is
+//! only the first guess, the same way the checker reports what answered
+//! rather than trusting a prefix. Lists are full of bare SOCKS5 proxies and of
+//! lines with the wrong prefix, so when a proxy answers in the other protocol
+//! the relay switches (`relay::dial_through`) and remembers what that address
+//! speaks for the rest of the run ([`remember`]).
 
+use std::collections::HashMap;
 use std::fmt;
+use std::sync::{Mutex, OnceLock};
 
 pub use hproxy_probe::line::b64;
 
@@ -15,13 +24,64 @@ pub enum Scheme {
     Socks5,
 }
 
+impl From<hproxy_probe::Way> for Scheme {
+    /// The way a check proved, as the relay speaks it.
+    fn from(way: hproxy_probe::Way) -> Self {
+        match way {
+            hproxy_probe::Way::Http => Scheme::Http,
+            hproxy_probe::Way::Socks5 => Scheme::Socks5,
+        }
+    }
+}
+
+impl Scheme {
+    /// The protocol to try when this one was the wrong guess.
+    pub fn other(self) -> Self {
+        match self {
+            Scheme::Http => Scheme::Socks5,
+            Scheme::Socks5 => Scheme::Http,
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Upstream {
+    /// The protocol to try first while nothing is known about this address.
     pub scheme: Scheme,
     pub host: String,
     pub port: u16,
     /// Absent for open proxies and for providers using IP authorisation.
     pub auth: Option<(String, String)>,
+}
+
+/// What each proxy turned out to speak, by address, for the life of this
+/// program. A fact about the proxy, not about one relay, so it is shared by
+/// every relay and every switch in the process.
+fn spoken() -> &'static Mutex<HashMap<String, Scheme>> {
+    static SPOKEN: OnceLock<Mutex<HashMap<String, Scheme>>> = OnceLock::new();
+    SPOKEN.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The protocol to speak first: what this address was found to speak, else
+/// the line's own word (HTTP when it has none).
+pub fn first_try(up: &Upstream) -> Scheme {
+    let known = spoken().lock().unwrap_or_else(|e| e.into_inner());
+    known.get(&up.addr()).copied().unwrap_or(up.scheme)
+}
+
+/// Record what a proxy speaks: after a dial worked, or when a check proved it
+/// before anything was dialled.
+pub fn remember(up: &Upstream, scheme: Scheme) {
+    remember_at(&up.addr(), scheme);
+}
+
+/// [`remember`] by address (`host:port`, IPv6 in brackets, as
+/// [`Upstream::addr`] and the probe's `ProxyLine::addr` print it).
+pub fn remember_at(addr: &str, scheme: Scheme) {
+    let mut known = spoken().lock().unwrap_or_else(|e| e.into_inner());
+    if known.get(addr) != Some(&scheme) {
+        known.insert(addr.to_string(), scheme);
+    }
 }
 
 impl Upstream {
@@ -58,9 +118,9 @@ impl fmt::Display for Upstream {
 }
 
 /// Accept a proxy line in any of the shapes a provider might hand out. The
-/// scheme prefix decides HTTP versus SOCKS5; without one the upstream is
-/// spoken to as HTTP, which is what every seller's `host:port:user:pass`
-/// line means.
+/// scheme prefix is the first guess; without one it is HTTP, which is what
+/// every seller's `host:port:user:pass` line means. The relay switches when the
+/// proxy answers in the other protocol.
 pub fn parse(raw: &str) -> Result<Upstream, String> {
     let line = hproxy_probe::line::parse(raw).map_err(|e| e.0)?;
     let scheme = match line.scheme {
@@ -161,5 +221,34 @@ mod tests {
         assert!(parse("").is_err());
         assert!(parse("nonsense").unwrap_err().contains("no port"));
         assert!(parse("gate.example.com:notaport").unwrap_err().contains("port number"));
+    }
+
+    #[test]
+    fn a_bare_line_speaks_what_its_address_was_found_to_speak() {
+        // Documentation-range addresses no other test uses, so the shared
+        // memory cannot leak between tests.
+        let bare = up("192.0.2.71:1080");
+        assert_eq!(bare.scheme, Scheme::Http);
+        assert_eq!(first_try(&bare), Scheme::Http, "HTTP is the first guess");
+        remember(&bare, Scheme::Socks5);
+        assert_eq!(first_try(&bare), Scheme::Socks5);
+        // The same proxy written another way is the same address.
+        assert_eq!(first_try(&up("192.0.2.71:1080:user:pass")), Scheme::Socks5);
+    }
+
+    #[test]
+    fn what_a_proxy_speaks_beats_the_prefix_on_its_line() {
+        let wrong = up("http://192.0.2.72:1080");
+        assert_eq!(first_try(&wrong), Scheme::Http, "the prefix is the first guess");
+        remember(&wrong, Scheme::Socks5);
+        assert_eq!(first_try(&wrong), Scheme::Socks5);
+        assert_eq!(first_try(&up("socks5://192.0.2.73:1080")), Scheme::Socks5);
+    }
+
+    #[test]
+    fn ipv6_addresses_are_remembered_in_brackets() {
+        let bare = up("[2001:db8::74]:1080");
+        remember_at("[2001:db8::74]:1080", Scheme::Socks5);
+        assert_eq!(first_try(&bare), Scheme::Socks5);
     }
 }

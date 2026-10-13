@@ -19,7 +19,9 @@
 //!              is the deal, so the right response is to report the corpse,
 //!              take a different exit and carry on. The Chrome extension has
 //!              done exactly this since it shipped; this is the same behaviour
-//!              for the rest of the machine.
+//!              for the rest of the machine. Only when the person asked for
+//!              any exit ("the fastest"): one they picked from the list is a
+//!              Fixed source (`exact_free`), never swapped behind their back.
 
 use std::io;
 use std::sync::Mutex;
@@ -58,11 +60,12 @@ impl SourceKind {
     }
 }
 
-/// A successful dial: the socket, the upstream that carried it, and whether the
-/// source had to switch upstream to get there.
+/// A successful dial: the socket (or whatever the dial produced around it),
+/// the upstream that carried it, and whether the source had to switch upstream
+/// to get there.
 #[derive(Debug)]
-pub struct Dialed {
-    pub stream: tokio::net::TcpStream,
+pub struct Dialed<T = tokio::net::TcpStream> {
+    pub stream: T,
     pub used: Upstream,
     pub rotated: bool,
 }
@@ -78,6 +81,10 @@ pub enum Rotation {
     Random,
     /// Stay on a member until it stops answering, then move on.
     OnFailure,
+    /// Stay on a member for this long, then move on. Connections already open
+    /// keep their member until they close, the way a provider's timed session
+    /// behaves; "Next IP" is the way to move every open connection at once.
+    Timed(Duration),
 }
 
 impl Rotation {
@@ -87,7 +94,19 @@ impl Rotation {
             Rotation::Every(n) => format!("a different proxy every {n} connections"),
             Rotation::Random => "a random proxy for every connection".into(),
             Rotation::OnFailure => "the same proxy until it stops answering".into(),
+            Rotation::Timed(every) => format!("a different proxy every {}", spell_duration(every)),
         }
+    }
+}
+
+/// "minute", "10 minutes", "90 seconds": a rotation time in words.
+fn spell_duration(d: Duration) -> String {
+    let secs = d.as_secs();
+    match secs {
+        60 => "minute".into(),
+        s if s % 60 == 0 => format!("{} minutes", s / 60),
+        1 => "second".into(),
+        s => format!("{s} seconds"),
     }
 }
 
@@ -97,6 +116,10 @@ pub const REST_FOR: Duration = Duration::from_secs(60);
 /// The customer's own list, rotated by a rule.
 pub struct List {
     members: Vec<Upstream>,
+    /// The line of the person's own list each member came from (from 0). A
+    /// line that could not be used leaves no member, so after one the two
+    /// numbers differ; a person names a member by its line.
+    lines: Vec<usize>,
     rule: Rotation,
     rest_for: Duration,
     state: Mutex<ListState>,
@@ -111,6 +134,8 @@ struct ListState {
     resting: Vec<Option<Instant>>,
     /// The member that carried the most recent connection.
     last_used: Option<usize>,
+    /// When the member at `index` became the one in use, for `Timed`.
+    since: Instant,
     /// xorshift state for `Random`.
     seed: u64,
 }
@@ -128,6 +153,9 @@ impl List {
         if rule == Rotation::Every(0) {
             return Err("\"every N connections\" needs N to be at least 1".into());
         }
+        if matches!(rule, Rotation::Timed(every) if every.is_zero()) {
+            return Err("\"every N minutes\" needs N to be at least 1".into());
+        }
         let n = members.len();
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -136,6 +164,7 @@ impl List {
             | 1;
         Ok(Self {
             members,
+            lines: (0..n).collect(),
             rule,
             rest_for,
             state: Mutex::new(ListState {
@@ -143,9 +172,21 @@ impl List {
                 served: 0,
                 resting: vec![None; n],
                 last_used: None,
+                since: Instant::now(),
                 seed,
             }),
         })
+    }
+
+    /// Say which line of the person's own list each member came from, when
+    /// lines were left out: one entry per member, in order, each later than
+    /// the one before.
+    pub fn with_lines(mut self, lines: Vec<usize>) -> Result<Self, String> {
+        if lines.len() != self.members.len() || lines.windows(2).any(|w| w[0] >= w[1]) {
+            return Err("every member needs its own line, in order".into());
+        }
+        self.lines = lines;
+        Ok(self)
     }
 
     pub fn len(&self) -> usize {
@@ -228,8 +269,13 @@ impl List {
         let i = match self.rule {
             Rotation::Random => self.random_up(&mut st, now),
             _ => {
-                let from = st.index;
+                // A timed member whose time is up hands over to the next one.
+                let expired = matches!(self.rule, Rotation::Timed(every) if now.duration_since(st.since) >= every);
+                let from = if expired { st.index + 1 } else { st.index };
                 let i = self.next_up(&mut st, from, now);
+                if expired || i != st.index {
+                    st.since = now;
+                }
                 st.index = i;
                 i
             }
@@ -246,7 +292,7 @@ impl List {
                     st.index = self.next_up(&mut st, i + 1, now);
                 }
             }
-            Rotation::Random | Rotation::OnFailure => {}
+            Rotation::Random | Rotation::OnFailure | Rotation::Timed(_) => {}
         }
         self.members[i].clone()
     }
@@ -281,6 +327,7 @@ impl List {
             }
         };
         st.last_used = Some(i);
+        st.since = now;
         if self.rule == Rotation::EveryConnection {
             st.index = self.next_up(&mut st, i + 1, now);
         }
@@ -296,9 +343,53 @@ impl List {
             Rotation::Random => self.random_up(&mut st, now),
             _ => self.next_up(&mut st, from, now),
         };
+        self.settle_on(&mut st, i, now)
+    }
+
+    /// Go back to the member before the one in use (wrapping), skipping the
+    /// resting ones, because the person asked. Under every rule: back is the
+    /// list's own order, even where connections are spread at random.
+    fn back(&self) -> Upstream {
+        let mut st = self.lock();
+        let now = Instant::now();
+        let n = self.members.len();
+        let from = st.last_used.unwrap_or(st.index);
+        let i = (1..=n)
+            .map(|k| (from + n - k % n) % n)
+            .find(|i| self.is_up(&st, *i, now))
+            .unwrap_or_else(|| {
+                // Every member is resting: the rest is over for all of them,
+                // as when moving forward.
+                st.resting.iter_mut().for_each(|r| *r = None);
+                (from + n - 1) % n
+            });
+        self.settle_on(&mut st, i, now)
+    }
+
+    /// Make the member from `line` the one in use because the person picked
+    /// it. One that is resting is tried anyway: the person asked for that one.
+    /// `None` when no member came from that line.
+    fn go_to_line(&self, line: usize) -> Option<Upstream> {
+        let i = self.lines.binary_search(&line).ok()?;
+        let mut st = self.lock();
+        st.resting[i] = None;
+        Some(self.settle_on(&mut st, i, Instant::now()))
+    }
+
+    /// The line the member in use came from: the member that carried the most
+    /// recent connection, or the one the next connection will use.
+    pub fn line_in_use(&self) -> usize {
+        let st = self.lock();
+        self.lines[st.last_used.unwrap_or(st.index)]
+    }
+
+    /// Member `i` is the one in use from now: its count and its time start
+    /// over, and under every-connection the next connection moves on from it.
+    fn settle_on(&self, st: &mut ListState, i: usize, now: Instant) -> Upstream {
         st.index = i;
         st.served = 0;
         st.last_used = Some(i);
+        st.since = now;
         self.members[i].clone()
     }
 }
@@ -324,26 +415,27 @@ impl Source {
         ))
     }
 
-    /// A pool source that starts on the exit the person picked from the free
-    /// list. It is tested once more (it may have died since the list was
-    /// drawn); if it no longer relays, it is reported and the pool's search
-    /// takes over, exactly as when an exit dies mid-browse.
-    pub async fn from_pool_starting_at(pool: Pool, first: Upstream) -> Result<(Self, String), String> {
-        match crate::pool::test(&first).await {
+    /// The one free exit the person picked from the free list, and only that
+    /// one (2026-10-11: a person sees which one they connect to). Until then a picked exit that failed its
+    /// test was quietly replaced by the pool's search, and a picked exit that
+    /// died later by the next one: the person asked for one proxy and got
+    /// another without a word.
+    ///
+    /// It is tested once (it may have died since the list was drawn). If it
+    /// relays, it is a `Fixed` source, held like a person's own line: if it
+    /// stops later, that is news the screen says ("Stopped answering"), and
+    /// the person picks another. If it does not relay, that is said at once,
+    /// with the reason. Either way a dead exit is reported, so the pool learns.
+    pub async fn exact_free(pool: &Pool, picked: Upstream) -> Result<(Self, String), String> {
+        match crate::pool::test(&picked).await {
             Ok(_) => {
-                pool.remember(&first.host).await;
-                let label = first.addr();
-                Ok((
-                    Source::Pool {
-                        pool,
-                        current: RwLock::new(first),
-                    },
-                    label,
-                ))
+                pool.remember(&picked.host).await;
+                let label = picked.addr();
+                Ok((Source::Fixed(picked), label))
             }
-            Err(_) => {
-                pool.report_dead(&first);
-                Self::from_pool(pool).await
+            Err(why) => {
+                pool.report_dead(&picked);
+                Err(format!("{} did not answer from here ({why})", picked.addr()))
             }
         }
     }
@@ -404,6 +496,41 @@ impl Source {
     /// Whether `advance` can do anything.
     pub fn can_rotate(&self) -> bool {
         !matches!(self, Source::Fixed(_))
+    }
+
+    /// For a list, the line of the person's own list the member in use came
+    /// from (from 0); `None` for any other source.
+    pub fn line_in_use(&self) -> Option<usize> {
+        match self {
+            Source::List(l) => Some(l.line_in_use()),
+            _ => None,
+        }
+    }
+
+    /// Go back to the member before the one in use. Only a list has members
+    /// in an order to go back through. Returns how the member is described.
+    pub fn back(&self) -> Result<String, String> {
+        match self {
+            Source::List(l) => Ok(l.back().to_string()),
+            Source::Fixed(_) => Err("this is your own proxy, there is nothing to switch to".into()),
+            Source::Pool { .. } => {
+                Err("free proxies are found as they are needed, so there is none to go back to".into())
+            }
+        }
+    }
+
+    /// Use the member of a list that came from `line` (from 0). Returns how it
+    /// is described.
+    pub fn go_to_line(&self, line: usize) -> Result<String, String> {
+        match self {
+            Source::List(l) => l.go_to_line(line).map(|u| u.to_string()).ok_or_else(|| {
+                format!(
+                    "proxy {} of the group is not in use: it could not be read when connecting",
+                    line + 1
+                )
+            }),
+            _ => Err("only a group has proxies to pick from".into()),
+        }
     }
 
     /// Move to a different upstream because the person asked. Returns how the
@@ -469,10 +596,10 @@ impl Source {
     /// rotate once and try again. One retry, not a loop: a pool-wide outage
     /// should surface as an error the customer can read, not as a connection
     /// that hangs forever while the tool works through a thousand dead exits.
-    pub async fn dial_with_failover<F, Fut>(&self, dial: F) -> io::Result<Dialed>
+    pub async fn dial_with_failover<F, Fut, T>(&self, dial: F) -> io::Result<Dialed<T>>
     where
         F: Fn(Upstream) -> Fut,
-        Fut: std::future::Future<Output = io::Result<tokio::net::TcpStream>>,
+        Fut: std::future::Future<Output = io::Result<T>>,
     {
         let up = self.take().await;
         match dial(up.clone()).await {
@@ -552,7 +679,7 @@ mod tests {
     async fn a_fixed_source_surfaces_the_dial_error() {
         let up = upstream::parse("198.51.100.7:8080:u:p").unwrap();
         let src = Source::Fixed(up);
-        let out = src
+        let out: io::Result<Dialed> = src
             .dial_with_failover(|_| async { Err(io::Error::other("nope")) })
             .await;
         assert!(out.is_err());
@@ -618,6 +745,46 @@ mod tests {
     }
 
     #[test]
+    fn a_timed_list_stays_on_a_member_until_its_time_is_up() {
+        let list = List::new(members(3), Rotation::Timed(Duration::from_millis(60))).unwrap();
+        assert_eq!(hosts(&list, 3), ["198.51.100.1"; 3]);
+        std::thread::sleep(Duration::from_millis(80));
+        assert_eq!(
+            hosts(&list, 2),
+            ["198.51.100.2"; 2],
+            "time up: the next member, and it stays"
+        );
+    }
+
+    #[test]
+    fn a_timed_member_that_dies_hands_over_and_the_next_gets_a_full_turn() {
+        let list = List::new(members(3), Rotation::Timed(Duration::from_millis(80))).unwrap();
+        let first = list.take();
+        std::thread::sleep(Duration::from_millis(50));
+        let next = list.rest(&first);
+        assert_eq!(next.host, "198.51.100.2");
+        // Less than a full turn since the hand-over: still the same member.
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(list.take().host, "198.51.100.2");
+    }
+
+    #[test]
+    fn a_timed_rule_reads_in_words() {
+        assert_eq!(
+            Rotation::Timed(Duration::from_secs(600)).describe(),
+            "a different proxy every 10 minutes"
+        );
+        assert_eq!(
+            Rotation::Timed(Duration::from_secs(60)).describe(),
+            "a different proxy every minute"
+        );
+        assert_eq!(
+            Rotation::Timed(Duration::from_secs(90)).describe(),
+            "a different proxy every 90 seconds"
+        );
+    }
+
+    #[test]
     fn on_failure_stays_until_the_member_dies() {
         let list = List::new(members(3), Rotation::OnFailure).unwrap();
         assert_eq!(hosts(&list, 3), ["198.51.100.1"; 3]);
@@ -671,6 +838,7 @@ mod tests {
     fn an_empty_or_zero_step_list_is_refused() {
         assert!(List::new(Vec::new(), Rotation::EveryConnection).is_err());
         assert!(List::new(members(2), Rotation::Every(0)).is_err());
+        assert!(List::new(members(2), Rotation::Timed(Duration::ZERO)).is_err());
     }
 
     #[tokio::test]
@@ -683,6 +851,86 @@ mod tests {
         assert!(src.can_rotate());
         assert_eq!(src.size(), Some(3));
         assert_eq!(src.kind(), SourceKind::List);
+    }
+
+    #[tokio::test]
+    async fn back_goes_to_the_member_before_wrapping_and_skips_the_resting() {
+        let src = Source::List(List::new(members(4), Rotation::OnFailure).unwrap());
+        assert_eq!(src.take().await.host, "198.51.100.1");
+        assert_eq!(src.line_in_use(), Some(0));
+        let label = src.back().unwrap();
+        assert!(
+            label.contains("198.51.100.4"),
+            "back from the first is the last: {label}"
+        );
+        assert_eq!(src.take().await.host, "198.51.100.4", "and it stays there");
+        assert_eq!(src.line_in_use(), Some(3));
+        if let Source::List(l) = &src {
+            l.rest(&members(4)[2]);
+        }
+        assert_eq!(
+            src.line_in_use(),
+            Some(3),
+            "resting another member leaves this one in use"
+        );
+        assert!(
+            src.back().unwrap().contains("198.51.100.2"),
+            "the resting third is skipped"
+        );
+        assert!(src.back().unwrap().contains("198.51.100.1"));
+    }
+
+    #[tokio::test]
+    async fn go_to_line_uses_the_member_asked_for_even_one_that_rests() {
+        let src = Source::List(List::new(members(5), Rotation::Timed(Duration::from_secs(600))).unwrap());
+        assert!(src.go_to_line(3).unwrap().contains("198.51.100.4"));
+        assert_eq!(src.take().await.host, "198.51.100.4");
+        assert_eq!(src.line_in_use(), Some(3));
+        if let Source::List(l) = &src {
+            l.rest(&members(5)[1]);
+        }
+        assert!(
+            src.go_to_line(1).unwrap().contains("198.51.100.2"),
+            "asked for, so tried again"
+        );
+        assert_eq!(src.take().await.host, "198.51.100.2");
+        assert!(src.go_to_line(5).is_err(), "there is no sixth");
+    }
+
+    #[tokio::test]
+    async fn a_member_is_named_by_the_line_it_came_from_when_lines_were_left_out() {
+        // Lines 0, 2 and 3 were proxies; line 1 could not be used.
+        let list = List::new(members(3), Rotation::OnFailure)
+            .unwrap()
+            .with_lines(vec![0, 2, 3])
+            .unwrap();
+        let src = Source::List(list);
+        assert_eq!(src.line_in_use(), Some(0));
+        assert!(
+            src.go_to_line(2).unwrap().contains("198.51.100.2"),
+            "line 2 is the second member"
+        );
+        assert_eq!(src.line_in_use(), Some(2));
+        assert!(src.go_to_line(1).is_err(), "line 1 left no member");
+        assert_eq!(src.line_in_use(), Some(2), "a refused pick changes nothing");
+        assert!(src.back().unwrap().contains("198.51.100.1"));
+        assert_eq!(src.line_in_use(), Some(0));
+        assert!(List::new(members(2), Rotation::OnFailure)
+            .unwrap()
+            .with_lines(vec![0])
+            .is_err());
+        assert!(List::new(members(2), Rotation::OnFailure)
+            .unwrap()
+            .with_lines(vec![3, 1])
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn only_a_list_goes_back_or_picks_a_member() {
+        let fixed = Source::Fixed(members(1).remove(0));
+        assert!(fixed.back().is_err());
+        assert!(fixed.go_to_line(0).is_err());
+        assert_eq!(fixed.line_in_use(), None);
     }
 
     #[tokio::test]

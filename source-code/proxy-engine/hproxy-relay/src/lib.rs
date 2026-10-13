@@ -18,15 +18,18 @@
 //! `127.0.0.1:<port>`, which every program can do.
 //!
 //! `serve` is the whole thing. The command line, the desktop app and anything
-//! else call it with a [`Source`] (a fixed line, the customer's own list with
-//! a rotation rule, or the free pool with failover), a [`Stats`] to count into,
-//! and a way to stop it.
+//! else call it with a [`SwitchableSource`] holding a [`Source`] (a fixed line,
+//! the customer's own list with a rotation rule, or the free pool with
+//! failover), a [`Stats`] to count into, and a way to stop it. The caller keeps
+//! its handle on the source, which is how a window switches places without the
+//! port ever closing.
 
 pub mod cli;
 pub mod pool;
 pub mod relay;
 pub mod source;
 pub mod stats;
+pub mod switchable;
 pub mod upstream;
 
 use std::future::Future;
@@ -37,6 +40,7 @@ use tokio::net::TcpListener;
 
 pub use source::{Dialed, List, Rotation, Source, SourceKind, REST_FOR};
 pub use stats::{Stats, StatsSnapshot};
+pub use switchable::{SwitchableSource, Ticket};
 pub use upstream::{Scheme, Upstream};
 
 /// The default listen address. Loopback, so only this machine can use it.
@@ -73,13 +77,14 @@ pub fn check_bind(addr: &SocketAddr, allow_lan: bool) -> Result<(), String> {
 /// matters when the caller asked for port 0.
 ///
 /// The caller keeps its own handles on `source` and `stats`: that is how a
-/// window switches upstream on request and reads the counters while the relay
-/// runs.
+/// window switches places or asks for a new IP while the relay runs (see
+/// [`SwitchableSource`]), and reads the counters. Stopping ends the open
+/// connections too, so nothing keeps going through the proxy after it.
 pub async fn serve<R, S>(
     addr: SocketAddr,
     allow_lan: bool,
     verbose: bool,
-    source: Arc<Source>,
+    source: Arc<SwitchableSource>,
     stats: Arc<Stats>,
     on_ready: R,
     shutdown: S,
@@ -104,9 +109,9 @@ where
                         // Nagle batches small writes, which on an interactive
                         // tunnel shows up as a stall before the first byte.
                         let _ = sock.set_nodelay(true);
-                        let src = Arc::clone(&source);
+                        let ticket = source.ticket();
                         let stats = Arc::clone(&stats);
-                        tokio::spawn(async move { relay::handle(sock, &src, verbose, &stats).await });
+                        tokio::spawn(async move { relay::handle(sock, ticket, verbose, &stats).await });
                     }
                     Err(e) => {
                         // One failed accept (a descriptor limit, a client that
@@ -120,6 +125,7 @@ where
                 }
             }
             _ = &mut shutdown => {
+                source.end_open_connections();
                 return Ok(());
             }
         }
@@ -163,7 +169,7 @@ mod tests {
                 sock("127.0.0.1:0"),
                 false,
                 false,
-                Arc::new(Source::Fixed(up)),
+                Arc::new(SwitchableSource::new(Source::Fixed(up))),
                 Arc::new(Stats::default()),
                 |a| {
                     let _ = ready_tx.send(a);
