@@ -1,9 +1,14 @@
 # HProxy: Proxy Connector and Checker (Chrome extension)
 
-A Manifest V3 browser extension. Its popup is the desktop app's Connect card
-made for the toolbar (1.0, 2026-09-24): the state in words, the switch, and
-the route from this browser through the H to the exit, with the H itself a
-button that connects. Under it, two places to connect to:
+A Manifest V3 browser extension, and a proxy connector first (2026-10-12): it
+connects your own proxies, and the free exits are the extra. Its popup: on
+top the power button, the one control, as a VPN app has it (a blue arc runs
+round it while it connects; on, blue floods the whole top from the button
+out and one ring travels out from it), with the state in words and where
+you appear under it; while connected, the checks of that connection as one line that
+opens; then two places to connect to, each a list of rows you connect with
+one click. (Until 1.0.3 a large card stood on top: the desktop app's
+Connect card with the route through the H, the H itself a button.)
 
 1. **My proxies**: paste any proxy line (every shape the desktop app reads,
    login included), and it is tested **in this browser** (only the test goes
@@ -90,11 +95,13 @@ kills exits to force failover, and runs two small proxies of its own on
 | `popup.html/css/js` | Popup UI (light only; the site's white Electric theme) |
 | `tokens.css` | **GENERATED.** Every colour, copied from the website. Never edit |
 | `scripts/sync-tokens.mjs` | Writes `tokens.css` from `hproxy-website/app/globals.css` |
-| `scripts/verify-design.mjs` | Fails the build on any off-system colour, dead token or off-ruler size |
+| `scripts/verify-design.mjs` | Fails the build on any off-system colour, dead token, off-ruler size or see-through fill |
 | `flags/` | 271 country flags: the SVGs (flag-icons 7.5.0, MIT, `flags/LICENSE`) are the source, the 66x48 PNGs are what ships (259 KB instead of 2.0 MB) |
 | `scripts/rasterize-flags.mjs` | Draws `flags/*.png` from `flags/*.svg`; `--check` fails the build on a stale PNG |
 | `tests/e2e/` | The real-browser run, the free-pool health check, the CDP client and the test proxy |
-| `fonts/` | DM Sans variable font (self-hosted, matches the site) |
+| `fonts/` | Inter variable font, latin (the computer app's font; `Inter-OFL.txt` is its licence) |
+| `scripts/popup-states.mjs` | Draws every state of the popup in Chrome for Testing, for a look before a release |
+| `scripts/store-shots.mjs` | The Chrome Web Store pictures, from the real popup |
 | `icons/` | Toolbar icons (16/48/128) |
 
 ## Backend endpoints it depends on (all live in the Rust brain)
@@ -176,39 +183,51 @@ The popup is a faithful small-screen sibling of the website, built to
   Practical rules that fall out of it:
   - **No hex literals in `popup.css`.** Pure white is the only exception, since
     white is the absence of a brand decision and the popup cannot theme.
-  - **No hand-typed `rgba()` triples.** `rgba(1, 88, 255, 0.07)` is the same
-    copy in disguise. Use `rgba(var(--digi-rgb), 0.07)`; every brand and status
-    token ships an `-rgb` companion for exactly this.
+  - **No hand-typed `rgba()` triples.** `rgba(1, 88, 255, 0.45)` is the same
+    copy in disguise. Use `rgba(var(--digi-night-rgb), 0.45)`; every brand and
+    status token ships an `-rgb` companion for exactly this. Only lines and
+    shadows take one: a fill is never see-through (the house rule since
+    2026-09-26, enforced by `verify-design.mjs`).
   - **Need a new colour? Add it to the website's globals.css.** That is the
     only door, deliberately.
   - Off-ruler font sizes need `ruler-exempt: <why>` on the line. Three exist
     today, all logotype or glyph sizing, and the verifier reports them.
 
-- No invented blues, no amber. Favorite stars are brand blue; green is a status
-  color only (the connected dot), never a button surface — so the connected
-  Quick Connect flips to the ink pill, not a green one.
+- **The computer app's look** (2026-10-12): words and hairlines instead of
+  cards, one solid blue for what is chosen or on, the H's corners on what you
+  press. A row (a saved proxy, a country, the fastest free proxy) is its name
+  and a second line at rest; pointed at, it shows Connect (and a saved one its
+  ×, a country its star); the one in use has the H's crossbar on its left and
+  says Connected in green. Amber is the warning colour (a login refused, no
+  answer yet), green and red status only, never a surface.
 - **Light only, on purpose** (decided 2026-07-23). The popup is always the white
   Electric theme regardless of the OS scheme. `color-scheme: light` on `:root`
   plus the `<meta name="color-scheme" content="light">` tag stop a dark-OS
   browser from dark-ifying the inputs and scrollbar. No `prefers-color-scheme`
   block exists; do not re-add one.
-- **The type ruler.** Sizes come from the ruler (13px dense body, 13.5px
-  standfirst, 12px caption, 11px label at 0.14em, 10px micro label at 0.18em).
-  No half-pixel sizes. DM Sans only; IP/port text uses tabular figures (the
-  site's `.num` treatment).
-- **Grammars borrowed verbatim.** Tabs are the underline grammar on a hairline
-  rail; the protocol switcher is the site's `FilterBar` segmented control
-  (solid-blue active chip with the blue glow, no pill track); secondary buttons
-  are hairline-bordered ghosts; cards are `radius:16`, rows/tiles `12`, inputs
-  and chips `8`, buttons are pills. Elevation is blue-tinted only, never gray.
-- **Brand rules honored.** No eyebrow pills (the "VPN" mark is a naked micro
-  label), no emoji (the old ⚡/✓ glyphs are gone — CTAs are text only), no icon
-  glyphs inside buttons.
+- **The type ruler.** Sizes come from the ruler (10, 11, 12, 13, 13.5 and
+  15 px; `verify-design.mjs` holds the list). Inter only, the computer app's
+  font (`fonts/Inter-Variable-latin.woff2`; DM Sans until 1.0.3). The address
+  you appear on is plain text with kerning off: when it changes its digits
+  roll over and land exactly where the plain text puts them, then it is plain
+  text again (`motion.js` rollDigits, the app's Roll.tsx).
+- **Grammars borrowed from the computer app.** The tabs are words on a
+  hairline with the H's crossbar under the current one, sliding to the next;
+  inputs and buttons have the H's corners. No emoji, no icon tiles: an icon
+  stands alone.
+- **The power button's moves are all CSS** (`popup.css`, "THE POWER
+  BUTTON"), driven by `data-phase` and `data-failing` on `#conn`, which
+  `popup.js` sets. The blue is solid at every moment, uncovered by a circle
+  growing out of the button (and the button's mark turns blue under a
+  circle of its own, never faded); only the travelling ring, a line, fades.
+  The moves are recorded with `scripts/power-video.mjs`.
 
-Re-render all four tabs with the scratchpad `shoot-popup.mjs` (isolated headless
-Chrome, stubbed `chrome.*` + `fetch`, never the user's browser). It also shoots
-each tab under an emulated dark OS (the `-dark` files) — those must come out
-white, proving the light lock holds.
+Every state of the popup, drawn in Chrome for Testing (never the browser in
+use): `node scripts/popup-states.mjs <folder>` (not connected, a hover, your
+own proxy connected with its checks open, Free, a login refused, a proxy that
+does not answer, a first-time user; `--free` adds a live free exit). The store's
+three pictures: `node scripts/store-shots.mjs <folder>`. Both swap every
+address on screen for an example one.
 
 ## Develop / load unpacked
 
