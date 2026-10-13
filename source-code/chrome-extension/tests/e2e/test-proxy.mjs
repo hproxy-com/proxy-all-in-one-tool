@@ -7,6 +7,10 @@
        like every paid proxy.
      - `refuse`: hosts it answers 403 for, like a proxy that blocks some
        sites while working fine for everything else.
+     - `stallMs`: for this long after it starts, a tunnel it accepted is held
+       without an answer and only then opened, like a new phone or home line
+       that takes its time to answer the first time (the login is still asked
+       for at once, as a gateway does).
 
    It leaves through THIS machine's own connection, so the analyzer
    rightly reports "your own address reaches sites" through it.
@@ -15,7 +19,8 @@
 import http from "node:http";
 import net from "node:net";
 
-export function startTestProxy({ user = "", pass = "", refuse = [] } = {}) {
+export function startTestProxy({ user = "", pass = "", refuse = [], stallMs = 0 } = {}) {
+  const wakeAt = Date.now() + stallMs;
   const stats = { challenges: 0, accepted: 0, refused: 0, tunnels: 0 };
   const expected = user ? `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}` : null;
   /* rechallenge() makes the next request get a 407 in a NEW realm even with
@@ -87,14 +92,22 @@ export function startTestProxy({ user = "", pass = "", refuse = [] } = {}) {
     }
     stats.accepted++;
     stats.tunnels++;
-    const upstream = net.connect(port, host, () => {
-      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      if (head && head.length) upstream.write(head);
-      upstream.pipe(socket);
-      socket.pipe(upstream);
-    });
-    upstream.on("error", () => socket.destroy());
-    socket.on("close", () => upstream.destroy());
+    const open = () => {
+      if (socket.destroyed) return;
+      const upstream = net.connect(port, host, () => {
+        socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        if (head && head.length) upstream.write(head);
+        upstream.pipe(socket);
+        socket.pipe(upstream);
+      });
+      upstream.on("error", () => socket.destroy());
+      socket.on("close", () => upstream.destroy());
+    };
+    const wait = wakeAt - Date.now();
+    if (wait > 0) {
+      stats.held = (stats.held || 0) + 1;
+      setTimeout(open, wait);
+    } else open();
   });
 
   /* Every socket, tunnels included. Chrome keeps an HTTP/2 connection

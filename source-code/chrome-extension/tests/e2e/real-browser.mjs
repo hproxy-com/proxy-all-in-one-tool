@@ -269,7 +269,7 @@ try {
 
     if (want("popup-connected")) {
       const p = await openPopup();
-      const verdict = await cdp.evaluate(p.page.sessionId, `document.getElementById("verdictHead")?.textContent + " / " + document.getElementById("verdictSub")?.textContent`);
+      const verdict = await cdp.evaluate(p.page.sessionId, `document.getElementById("verdictHead")?.textContent + " / " + document.getElementById("checksToggle")?.title`);
       const rows = await cdp.evaluate(
         p.page.sessionId,
         `[...document.querySelectorAll("#analyzeList .arow")].map((r) => r.dataset.status + ":" + r.querySelector(".arow-label")?.textContent).join(", ")`,
@@ -479,6 +479,44 @@ try {
     );
     await other.close();
     await send({ type: "disconnect" });
+  }
+
+  /* ── a proxy that answers late (2026-10-11: a customer's new mobile line
+        answered nothing for its first minutes and the popup said "Nothing
+        came back" for good): the test gives up after one HTTP try (no SOCKS5
+        after a timeout), it connects anyway, is asked again, and turns
+        Connected and saved the moment it answers ── */
+  if (want("pin-late")) {
+    /* Silent for 34 s: past the test (12 s), the probe after connecting (8 s) and the first ask
+       again, which runs out of time; the second ask gets the answer. The status is read every
+       second meanwhile, as an open popup does, and must not set off asks of its own. */
+    const slow = await startTestProxy({ user: "late", pass: "answer", stallMs: 34_000 });
+    const line = { host: "127.0.0.1", port: slow.port, username: "late", password: "answer" };
+    const t = Date.now();
+    const found = await send({ type: "pinFind", proxy: line, schemes: ["http", "socks5"] });
+    const findMs = Date.now() - t;
+    const conn = await send({ type: "pinConnect", proxy: { scheme: "http", ...line }, label: "late answer", keep: true });
+    const first = conn?.active;
+    let now = null;
+    let askedAgain = !!first?.rechecking;
+    for (let i = 0; i < 50; i++) {
+      await sleep(1000);
+      now = (await send({ type: "status" }))?.active;
+      if (now?.rechecking) askedAgain = true;
+      if (now?.verified === true) break;
+    }
+    const saved = await cdp.evaluate(
+      control.sessionId,
+      `chrome.storage.local.get("hproxy_byo").then((o) => (o.hproxy_byo || []).some((x) => Number(x.port) === ${slow.port}))`,
+    );
+    const page = now?.verified === true ? await traceIp(15_000) : { ok: false };
+    record(
+      "pin-late-answer",
+      found?.ok && found.found === null && findMs < 16_000 && first?.verified === false && askedAgain && now?.verified === true && saved === true && page.ok && (slow.stats.held || 0) <= 8,
+      `test: no answer after ${findMs} ms; connected unanswered: ${first?.verified === false}; asked again: ${askedAgain}; answered ${Math.round((Date.now() - t) / 1000)} s after the paste: ${now?.verified === true}; saved: ${saved}; a page loads: ${page.ok}; tunnels held ${slow.stats.held || 0}x`,
+    );
+    await send({ type: "disconnect" });
+    await slow.close();
   }
 
   /* ── the worker is stopped (Chrome does this after 30 s idle) and a
