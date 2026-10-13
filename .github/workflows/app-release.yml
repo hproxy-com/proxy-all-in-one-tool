@@ -1,0 +1,225 @@
+name: App for macOS and Linux
+
+# Builds the HProxy app (source-code/desktop-app: Tauri, Rust and React) for macOS, one universal file
+# for Apple Silicon and Intel, and for Linux on x86_64 (AppImage and .deb), checks that every file is
+# what it says, and attaches the files, their SHA-256 sums and a signed record of how each was built
+# to a release named app-v<version>.
+#
+# Started by hand (Actions, App for macOS and Linux, Run workflow): unticked, "publish" only builds and
+# checks every file; ticked, or on a pushed tag app-v<version>, it also makes the release. A version is
+# built once, as the command-line tool's is.
+#
+# No signing key here, by design. The app updates itself from hproxy.com (its list is
+# https://hproxy.com/downloads/desktop/latest.json) and the key that signs those updates stays with the
+# maintainers, so nobody who reaches this repository or its machines can sign an update the app would
+# take. This build makes the files the updater takes without that signature
+# (src-tauri/tauri.github.conf.json): the .app packed as .tar.gz on the Mac, where its links and modes
+# survive, and the AppImage. The maintainers' release tool checks them against this release's sums and
+# commit, signs them on its own computer and puts them on hproxy.com beside the Windows installer.
+#
+# macOS: signed ad hoc, with no Apple developer name, so the first start asks once to allow it
+# (System Settings, Privacy & Security, Open Anyway). Linux: the AppImage runs on its own and updates
+# itself; the .deb installs with the system's package manager.
+#
+# Only GitHub's own actions, each pinned to a commit, and the Rust and Node.js that GitHub's machines
+# have: nothing is fetched and run to set up.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Make the release (unticked: build and check every file only)"
+        type: boolean
+        default: false
+  push:
+    tags: ["app-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macos-universal
+          - os: ubuntu-22.04
+            name: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: source-code
+    env:
+      # Ad hoc: a signature that names no developer. Apple Silicon runs nothing unsigned, and a Mac
+      # reads an app with no signature at all as damaged instead of asking once to open it.
+      APPLE_SIGNING_IDENTITY: "-"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Rust and Node.js, as GitHub's machine has them (nothing is fetched and run to get them)
+        run: |
+          for tool in cargo node npm; do
+            if ! command -v "$tool" > /dev/null 2>&1; then
+              echo "::error::this machine has no $tool; the build uses only what GitHub installs"
+              exit 1
+            fi
+          done
+          cargo --version
+          node --version
+          npm --version
+
+      - name: The libraries the app's window and tray need (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Both Mac processors
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      # macOS 26 and later draw an app's icon only from an asset catalog (Assets.car, compiled from the
+      # Icon Composer package by Xcode 26's actool); older macOS uses icon.icns. The newest Xcode on the
+      # machine compiles it; where none can, the app carries icon.icns alone.
+      - name: The icon for macOS 26
+        if: runner.os == 'macOS'
+        id: icon
+        working-directory: source-code/desktop-app/src-tauri
+        run: |
+          newest=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$newest" ]; then sudo xcode-select -s "$newest"; fi
+          xcodebuild -version
+          mkdir -p icons/macos/build
+          if xcrun actool icons/macos/AppIcon.icon --compile icons/macos/build \
+               --output-format human-readable-text --notices --warnings --errors \
+               --output-partial-info-plist icons/macos/build/partial.plist \
+               --app-icon AppIcon --include-all-app-icons \
+               --enable-on-demand-resources NO --development-region en \
+               --target-device mac --minimum-deployment-target 26.0 --platform macosx \
+             && test -s icons/macos/build/Assets.car; then
+            echo "catalog=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::no Xcode here compiles the icon for macOS 26; the app carries icon.icns alone"
+            echo "catalog=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: The window's libraries, at the versions package-lock.json names
+        working-directory: source-code/desktop-app
+        run: npm ci
+
+      # The moment of this build, compiled in: the app takes an update only when its signature was made
+      # after it (src-tauri/src/update.rs), so an old build cannot come back announced as a new one.
+      - name: The release time
+        run: echo "HPROXY_RELEASED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Build (macOS, universal)
+        if: runner.os == 'macOS'
+        working-directory: source-code/desktop-app
+        run: |
+          extra=()
+          if [ "${{ steps.icon.outputs.catalog }}" != yes ]; then
+            extra=(--config '{"bundle":{"macOS":{"files":{"Resources/Assets.car":null}}}}')
+          fi
+          npx tauri build --ci --target universal-apple-darwin --bundles app,dmg \
+            --config src-tauri/tauri.github.conf.json "${extra[@]}"
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        working-directory: source-code/desktop-app
+        run: npx tauri build --ci --bundles appimage,deb --config src-tauri/tauri.github.conf.json
+
+      - name: Name the files, and check each is what it says (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          app=$(ls -d target/universal-apple-darwin/release/bundle/macos/*.app | head -1)
+          dmg=$(ls target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -1)
+          plist="$app/Contents/Info.plist"
+          said=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
+          if [ "$said" != "$version" ]; then echo "::error::the app says $said, not $version"; exit 1; fi
+          bin="$app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")"
+          lipo -archs "$bin" | tee archs.txt
+          grep -q arm64 archs.txt
+          grep -q x86_64 archs.txt
+          codesign -dv "$app" 2>&1 | tee signature.txt
+          grep -q "Signature=adhoc" signature.txt
+          codesign --verify --deep --strict "$app"
+          tar -czf ../hproxy-macos-universal.app.tar.gz -C "$(dirname "$app")" "$(basename "$app")"
+          cp "$dmg" ../hproxy-macos-universal.dmg
+
+      - name: Name the files, and check each is what it says (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          deb=$(ls target/release/bundle/deb/*.deb | head -1)
+          image=$(ls target/release/bundle/appimage/*.AppImage | head -1)
+          said=$(dpkg-deb -f "$deb" Version)
+          if [ "$said" != "$version" ]; then echo "::error::the .deb says $said, not $version"; exit 1; fi
+          file "$image" | tee kind.txt
+          grep -q "ELF 64-bit" kind.txt
+          cp "$image" ../hproxy-linux-x86_64.AppImage
+          cp "$deb" ../hproxy-linux-x86_64.deb
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.name }}
+          path: hproxy-*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: The sums
+        run: cd dist && sha256sum hproxy-* > SHA256SUMS && cat SHA256SUMS
+
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: dist/hproxy-*
+
+      - name: The release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' source-code/Cargo.toml | head -1)
+          tag="app-v${version}"
+          cat > notes.md <<EOF
+          HProxy ${version} for macOS and Linux: check proxies, see where each one comes out, and connect your whole computer through the one you pick.
+
+          The downloads are on hproxy.com, where the app also updates itself from (the update files there are these, signed by the maintainers): https://hproxy.com/downloads. These are the same files as built here, unsigned for the updater.
+
+          Built by this repository's workflow from \`source-code/\` at this commit, with no secret involved. Check a file against \`SHA256SUMS\`, or its build record with \`gh attestation verify <file> --repo hproxy-com/proxy-all-in-one-tool\`.
+
+          | File | System |
+          | --- | --- |
+          | \`hproxy-macos-universal.dmg\` | macOS on Apple Silicon and Intel. Signed ad hoc: the first time, allow it in System Settings, Privacy & Security, Open Anyway |
+          | \`hproxy-macos-universal.app.tar.gz\` | The same app, packed for the updater |
+          | \`hproxy-linux-x86_64.AppImage\` | Linux on x86_64: make it executable and run it; it updates itself |
+          | \`hproxy-linux-x86_64.deb\` | Debian, Ubuntu and their relatives on x86_64 |
+          EOF
+          # A version is built once: to build again, raise the version in source-code/Cargo.toml.
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "::error::$tag is released already, and a release never changes. Raise the version in source-code/Cargo.toml to build a new one."
+            exit 1
+          fi
+          # A draft first, every file attached, then published: nobody ever sees a release without all
+          # its files, and the repository's immutable releases lock them once it is out.
+          gh release create "$tag" --draft --title "HProxy ${version} for macOS and Linux" --notes-file notes.md --target "$GITHUB_SHA"
+          gh release upload "$tag" dist/*
+          gh release edit "$tag" --draft=false
