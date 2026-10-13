@@ -88,6 +88,9 @@ let queue = Promise.resolve();
 let queued = 0;
 function serial(task) {
   queued += 1;
+  /* A connection change starts: a recheck still waiting on the proxy in use
+     stops at once, so its answer can never be read as the new proxy's. */
+  stopRecheck();
   const run = queue.then(
     () => task(),
     () => task(),
@@ -368,11 +371,19 @@ async function setBadge(session, failing) {
    the address our server saw it come from and the country Cloudflare places
    that address in ("" when it cannot say), or null. Fails on a certificate
    Chrome does not trust, on a refused tunnel, on a dead or silent proxy, and
-   on a Cloudflare block page (a non-2xx), which most sites would show too. */
-async function probeExit(timeoutMs = PROBE_TIMEOUT_MS) {
-  const ctl = new AbortController();
-  probeAbort = ctl;
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+   on a Cloudflare block page (a non-2xx), which most sites would show too.
+   `why` (when given) learns whether it ran out of time (`why.slow`) rather
+   than failing outright: a slow proxy and a wrong protocol are not the same
+   news. `own` is a recheck's own stop button (pinRecheck), so a disconnect's
+   stop and a recheck's stop never cancel each other's request. */
+async function probeExit(timeoutMs = PROBE_TIMEOUT_MS, { why = null, own = null } = {}) {
+  const ctl = own || new AbortController();
+  if (!own) probeAbort = ctl;
+  let ranOut = false;
+  const timer = setTimeout(() => {
+    ranOut = true;
+    ctl.abort();
+  }, timeoutMs);
   try {
     const nonce = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const res = await fetch(`${PROBE_URL}?probe=${nonce}`, { cache: "no-store", credentials: "omit", signal: ctl.signal });
@@ -384,6 +395,7 @@ async function probeExit(timeoutMs = PROBE_TIMEOUT_MS) {
     const cc = String(body?.headers?.["cf-ipcountry"] || "").toUpperCase();
     return { ip, country: /^[A-Z]{2}$/.test(cc) && cc !== "XX" && cc !== "T1" ? cc : "" };
   } catch {
+    if (why) why.slow = ranOut;
     return null;
   } finally {
     clearTimeout(timer);
@@ -552,6 +564,12 @@ async function connectProxy(proxy, meta) {
     country: meta.country || "",
     vpn: meta.vpn || null, // { country, protocol, recent:[] } for mode "vpn"
     verified: meta.verified ?? null,
+    /* When this session began: a recheck that outlives its session (a
+       disconnect, another proxy) recognises that it is not its own any more. */
+    since: Date.now(),
+    /* Mode "pin": keep the proxy in the saved list once it answers (the popup
+       saves one that answered at once; this is for one that answers later). */
+    keep: !!meta.keep,
   };
   // Warm the login cache BEFORE the proxy is applied, so the very first
   // request through an authenticated proxy already has it waiting in memory.
@@ -590,6 +608,10 @@ function publicStatus(session) {
     /* Mode "pin": whether our probe got an answer through it after connect.
        null = not checked (older session). */
     verified: session.verified ?? null,
+    /* Mode "pin", no answer yet: it is being asked right now, or will be
+       again (pinRecheck), so the popup says "asking again" rather than
+       "nothing came back" while there is still a chance. */
+    rechecking: session.mode === "pin" && session.verified === false && (recheckBusy || !!recheck),
     /* The proxy refused the login we sent. Shown as its own state: it looks
        exactly like a dead proxy otherwise, and the fix is the password. */
     loginRefused,
@@ -739,8 +761,17 @@ function validProxy(p) {
    our server never could. The first scheme that brings an answer back wins;
    a refused login stops the test, because every scheme would refuse it too.
    Returns { scheme, exitIp, country }, { scheme, loginRefused: true }, or
-   null when nothing answered. */
+   null when nothing answered.
+
+   A line with a login gets longer for its first try, over HTTP: a phone or a
+   home connection can take several seconds to give its very first answer
+   (2026-10-11: a customer's mobile line, four minutes old, answered nothing
+   in 6 s and worked a few minutes later), and the protocol is not in doubt,
+   as Chrome can send a login only over HTTP. When that try runs out of time
+   rather than failing, SOCKS5 is not tried after it: a slow proxy stays slow
+   in any protocol, and SOCKS5 could not carry the login anyway. */
 const PIN_TEST_MS = 6000;
+const PIN_FIRST_MS = 12000;
 function pinFind(msg) {
   return serial(async () => {
     stopRequested = false;
@@ -756,16 +787,18 @@ function pinFind(msg) {
       const login = msg.proxy.username ? { username: String(msg.proxy.username), password: String(msg.proxy.password || "") } : null;
       let result = null;
       try {
-        for (const scheme of schemes) {
+        for (const [i, scheme] of schemes.entries()) {
           if (stopRequested) throw new Stopped();
           const candidate = { scheme, host: String(msg.proxy.host), port: Number(msg.proxy.port) };
           testingHost = candidate.host;
           testingCreds = login;
           testLoginRefused = false;
           let seen = null;
+          const why = {};
+          const firstWithLogin = i === 0 && !!login && scheme === "http";
           try {
             await applyProxy(testConfig(candidate, current));
-            seen = await probeExit(PIN_TEST_MS);
+            seen = await probeExit(firstWithLogin ? PIN_FIRST_MS : PIN_TEST_MS, { why });
           } finally {
             testingHost = null;
             testingCreds = null;
@@ -784,6 +817,8 @@ function pinFind(msg) {
             result = { scheme, exitIp: seen.ip, country: seen.country };
             break;
           }
+          // Slow over HTTP with a login: not the wrong protocol (above).
+          if (firstWithLogin && why.slow) break;
         }
       } catch (e) {
         if (!e.stopped) await restore(current);
@@ -808,15 +843,17 @@ function pinConnect(msg) {
     try {
       if (!validProxy(msg.proxy)) throw new Error("That proxy address is not valid.");
       if (!(await loadSession())) await learnRealIps();
-      await connectProxy(msg.proxy, { mode: "pin", label: msg.label, exitIp: msg.exitIp, country: msg.country });
+      await connectProxy(msg.proxy, { mode: "pin", label: msg.label, exitIp: msg.exitIp, country: msg.country, keep: msg.keep });
       /* Whether anything comes back through it. Not a gate: the person chose
          this proxy and it stays on either way. It decides whether the popup
-         says Connected or that nothing answered yet. */
-      const seen = await probe(8000);
+         says Connected or that nothing answered yet, and the answer names the
+         exit (the test before connecting may not have had one). */
+      const seen = await probeExit(8000);
       const session = await loadSession();
       if (!session) return null;
-      session.verified = !!seen;
-      await saveSession(session);
+      await settlePin(session, seen);
+      // A refused login is not asked again: it would only send the same password.
+      if (!seen && !loginRefused) pinRecheck(session, 0);
       notifyStatus();
       return describe(session);
     } finally {
@@ -824,6 +861,119 @@ function pinConnect(msg) {
       busyWith = null;
     }
   });
+}
+
+/* What a pin session learns from an answer, or from none. */
+async function settlePin(session, seen) {
+  session.verified = !!seen;
+  if (seen) {
+    session.exitIp = seen.ip;
+    if (seen.country) session.country = seen.country;
+    if (session.keep) await keepSaved(session);
+    session.keep = false;
+  }
+  await saveSession(session);
+}
+
+/* Into the saved list, the shape the popup writes (popup.js saveByo), and
+   the place the switch goes back to. Only for a proxy that answered: one
+   that never did would sit in the list looking usable. */
+async function keepSaved(session) {
+  const p = session.proxy;
+  const key = `${p.host}:${p.port}`;
+  try {
+    const o = await chrome.storage.local.get("hproxy_byo");
+    const list = Array.isArray(o?.hproxy_byo) ? o.hproxy_byo : [];
+    const entry = { host: p.host, port: p.port, username: p.username, password: p.password, scheme: p.scheme, country: session.country || "", label: key };
+    await chrome.storage.local.set({
+      hproxy_byo: [entry, ...list.filter((x) => `${x.host}:${x.port}` !== key)].slice(0, 50),
+      hproxy_last_target: { kind: "pin", key },
+    });
+  } catch {
+    /* the popup's list stays as it was; the connection is not affected */
+  }
+}
+
+/* ── A proxy that gave no answer yet is asked again (mode "pin") ─────────
+   A proxy of the person's own that answered nothing right after connecting
+   is asked again a few times while it stays connected, and the popup turns
+   to Connected the moment it answers (2026-10-11: a customer's new mobile
+   line kept "Nothing came back through this proxy" on screen for good, while
+   the same line worked minutes later). Each ask is one small request through
+   the proxy itself, on the plan below. A sleeping worker misses the later
+   ones; opening the popup asks at once (the "look" message, sent once per
+   opening, never on a status refresh: on 2026-10-11 it rode on every refresh,
+   and the refresh each ask causes fired the next ask at once, so the whole
+   plan ran out in half a minute). Any connection change stops a waiting ask
+   (serial), and an ask that was stopped plans nothing more. */
+const RECHECK_AFTER_S = [3, 8, 20, 45, 90];
+const RECHECK_MS = 8000;
+const RECHECK_STOPPED = "stopped by a connection change";
+let recheck = null; // { key, step, timer } while one is planned
+let recheckBusy = false;
+let recheckStop = null;
+let recheckDoneAt = 0;
+
+function sessionKey(s) {
+  return s?.proxy ? `${s.mode}|${s.proxy.host}|${s.proxy.port}|${s.since || 0}` : "";
+}
+
+function stopRecheck() {
+  clearTimeout(recheck?.timer);
+  recheck = null;
+  recheckStop?.abort(RECHECK_STOPPED);
+  recheckStop = null;
+}
+
+function pinRecheck(session, step) {
+  clearTimeout(recheck?.timer);
+  recheck = null;
+  if (session?.mode !== "pin" || session.verified !== false || step >= RECHECK_AFTER_S.length) return;
+  const key = sessionKey(session);
+  recheck = { key, step, timer: setTimeout(() => void recheckNow(key, step), RECHECK_AFTER_S[step] * 1000) };
+}
+
+async function recheckNow(key, step) {
+  if (busy || recheckBusy || loginRefused) return;
+  const session = await loadSession();
+  if (sessionKey(session) !== key || session.verified !== false) return;
+  clearTimeout(recheck?.timer);
+  recheck = null;
+  recheckBusy = true;
+  const own = new AbortController();
+  recheckStop = own;
+  notifyStatus();
+  let seen = null;
+  try {
+    // Its own time limit aborts the same controller, without this reason.
+    seen = await probeExit(RECHECK_MS, { own });
+  } finally {
+    recheckBusy = false;
+    recheckDoneAt = Date.now();
+    if (recheckStop === own) recheckStop = null;
+  }
+  // Stopped by a connection change, or the session is another one by now.
+  if (!seen && own.signal.reason === RECHECK_STOPPED) return notifyStatus();
+  const now = await loadSession();
+  if (sessionKey(now) !== key || now.verified !== false) return notifyStatus();
+  if (seen) {
+    await settlePin(now, seen);
+    await setBadge(now, false);
+  } else {
+    pinRecheck(now, step + 1);
+  }
+  notifyStatus();
+}
+
+/* The popup was opened on a proxy that has not answered yet: the ask that is
+   planned next happens now, or, once the plan has run out, one more. Not when
+   an ask is running or ended a moment ago. The popup hears the answer
+   (statusChanged). */
+async function recheckOnLook() {
+  if (busy || recheckBusy || loginRefused || Date.now() - recheckDoneAt < 4000) return;
+  const session = await loadSession();
+  if (session?.mode !== "pin" || session.verified !== false) return;
+  void recheckNow(sessionKey(session), recheck?.step ?? RECHECK_AFTER_S.length - 1);
 }
 
 function disconnect() {
@@ -1023,6 +1173,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     try {
       switch (msg?.type) {
+        case "look":
+          // The popup just opened: a proxy of their own that has not answered yet is asked now.
+          void recheckOnLook();
+          sendResponse({ ok: true });
+          break;
         case "status":
           sendResponse({
             ok: true,
