@@ -20,6 +20,12 @@ path = "src/main.rs"
 [dependencies]
 hproxy-probe = { workspace = true }
 hproxy-relay = { workspace = true }
+# The places a person saved in the HProxy app, read (never written) by
+# `hproxy places`, `connect --place` and the MCP server (src/places.rs).
+hproxy-places = { workspace = true }
+# One connection for every door: a saved place becomes the relay's source
+# there (source_of), for this tool, the desktop app and the phone app alike.
+hproxy-connection = { workspace = true }
 hproxy-api = { workspace = true }
 # `io-std`: the MCP server reads and writes stdio without blocking a thread.
 tokio = { workspace = true, features = ["io-std"] }
