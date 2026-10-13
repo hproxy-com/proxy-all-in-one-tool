@@ -4,12 +4,18 @@
    For the places a bar would otherwise grow a row of tiny buttons:
    export formats today, export shapes tomorrow. The menu is a
    filled sheet with a soft shadow; each row has a label and one
-   line saying what it does. Click-away closes it.
+   line saying what it does. Click-away or Escape closes it (Escape
+   was missing until 2026-10-12: the Checker's Export menu stayed
+   open over the list), and Escape stops there, so it never also
+   stops a running check.
 
    SPLIT (look D, 2026-09-23): with `onMain`, the button becomes two
    halves of one silhouette. The label half does the everyday thing
    at once (Export = the working list as .txt), the arrow half opens
    the other choices.
+
+   On a phone the choices come up from the bottom in a sheet
+   (phone/PhoneSheet.tsx), within the thumb's reach; Back closes it.
 
    USAGE
      <Dropdown label="Export" icon={<Icon.download />} onMain={txt} items={[
@@ -17,7 +23,9 @@
      ]} />
    ============================================================ */
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { isMobile } from "../../lib/tauri";
+import PhoneSheet, { SheetItem } from "../phone/PhoneSheet";
 import { Button, type ButtonSize, type ButtonVariant } from "./Button";
 import { Icon } from "./Icon";
 import { cx } from "./tokens";
@@ -56,6 +64,17 @@ export function Dropdown({
   disabled = false,
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
+  // Caught on the way down, before the page's own Escape (which stops a check) hears it.
+  useEffect(() => {
+    if (!open) return;
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setOpen(false);
+    };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [open]);
   const arrow = (
     <Icon.chevronDown className={cx("h-4 w-4 transition-transform", open !== (opens === "up") && "rotate-180")} />
   );
@@ -78,7 +97,21 @@ export function Dropdown({
           {arrow}
         </Button>
       )}
-      {open && (
+      {isMobile() ? (
+        <PhoneSheet open={open} onClose={() => setOpen(false)} title={label}>
+          {items.map((it) => (
+            <SheetItem
+              key={it.label}
+              label={it.label}
+              note={it.note}
+              onClick={() => {
+                setOpen(false);
+                it.onClick();
+              }}
+            />
+          ))}
+        </PhoneSheet>
+      ) : open && (
         <>
           <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="fixed inset-0 z-40 cursor-default" />
           <div

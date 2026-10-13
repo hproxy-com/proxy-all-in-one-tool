@@ -25,12 +25,18 @@
 
 import type { ClipboardEvent, CSSProperties, KeyboardEvent, ReactNode, RefObject } from "react";
 import { Icon } from "./Icon";
+import { InfoTip } from "./Tip";
 import { cx } from "./tokens";
 
-export function BlockTitle({ name, value, aside }: { name: string; value?: ReactNode; aside?: ReactNode }) {
+/** `info` puts the "i" right beside the name (2026-10-02); `aside` is a
+    control at the far end. */
+export function BlockTitle({ name, value, aside, info }: { name: string; value?: ReactNode; aside?: ReactNode; info?: ReactNode }) {
   return (
     <div className="ux-title">
-      <span className="name">{name}</span>
+      <span className="name">
+        {name}
+        {info && <InfoTip label={name}>{info}</InfoTip>}
+      </span>
       {aside}
       {value != null && <span className="value num">{value}</span>}
     </div>
@@ -169,11 +175,14 @@ export type CheckProps = {
   /** A count after the label, muted. */
   count?: ReactNode;
   disabled?: boolean;
+  /** A hint on hover, also while disabled (why it cannot change now). */
+  title?: string;
 };
 
-export function Check({ on, onChange, label, count, disabled = false }: CheckProps) {
+export function Check({ on, onChange, label, count, disabled = false, title }: CheckProps) {
   return (
-    <label className={cx("ux-check", disabled && "pointer-events-none opacity-50")}>
+    // Disabled reads as solid grey (globals.css .ux-check.is-disabled), never a faded blue.
+    <label className={cx("ux-check", disabled && "is-disabled")} title={title}>
       <input type="checkbox" checked={on} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
       <span className="dot">
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -194,9 +203,11 @@ export type RangeProps = {
   step?: number;
   /** Required: the accessible name. */
   label: string;
+  /** Past a safe point: the filled part of the track turns red. */
+  danger?: boolean;
 };
 
-export function Range({ value, onChange, min, max, step = 1, label }: RangeProps) {
+export function Range({ value, onChange, min, max, step = 1, label, danger = false }: RangeProps) {
   // The blue part of the track: a native range cannot colour its own
   // progress in Chromium, so the component tells the stylesheet where it is.
   const at = max > min ? ((value - min) / (max - min)) * 100 : 0;
@@ -210,6 +221,7 @@ export function Range({ value, onChange, min, max, step = 1, label }: RangeProps
       onChange={(e) => onChange(Number(e.target.value))}
       aria-label={label}
       className="ux-range"
+      data-tone={danger ? "danger" : undefined}
       style={{ "--at": Math.max(0, Math.min(100, at)) } as CSSProperties}
     />
   );

@@ -86,14 +86,11 @@ export function WorksWith({ label }: { label: ReactNode }) {
   return (
     <div className="flex flex-col items-start gap-2 self-start">
       <span className="text-[12px] font-bold text-accent-ink">{label}</span>
-      <ul className="flex flex-wrap gap-1.5 max-sm:gap-1" aria-label="Works with">
+      {/* Each mark alone, nothing behind it (2026-10-11: pure icons, never a tile). */}
+      <ul className="flex flex-wrap items-center gap-4 max-sm:gap-3" aria-label="Works with">
         {AGENTS.map((a) => (
-          <li
-            key={a.mark}
-            title={a.name}
-            className="grid h-[38px] w-[38px] place-items-center rounded-[10px_3px_10px_3px] bg-[var(--well)] text-ink max-sm:h-8 max-sm:w-8"
-          >
-            <AgentMark mark={a.mark} size={18} />
+          <li key={a.mark} title={a.name} className="grid h-[28px] w-[28px] place-items-center text-ink">
+            <AgentMark mark={a.mark} size={20} />
             <span className="sr-only">{a.name}</span>
           </li>
         ))}

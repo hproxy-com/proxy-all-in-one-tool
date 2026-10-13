@@ -4,14 +4,16 @@
    Nothing in here may be imported by production code paths. */
 
 import { countryName, type CheckResult } from "./checker";
-import { FREE_COUNTRIES, maskLine } from "./connect";
+import { FREE_COUNTRIES } from "./connect";
+import type { Place } from "./places";
 import { hashSeed, mulberry32 } from "./preview";
+import { demoPlaceForRelay, demoSampleGroup } from "./previewPlaces";
 import { DEFAULT_PROBE_URL } from "./settings";
 import {
   isMobile,
-  type ConnectSourceArg,
   type DnsLeak,
   type ConnectStatus,
+  type FreeCountry,
   type FreeExit,
   type FreeTest,
   type RelayHealth,
@@ -25,6 +27,34 @@ import {
    the preview shows the warning too). */
 type Exit = { ip: string; cc: string; country: string; city: string; asn_org: string; ms: number; tz: string; dns?: string };
 
+/** Where the pretend cities are, for the map's dot (latitude, longitude). */
+const CITY_AT: Record<string, readonly [number, number]> = {
+  Ashburn: [39.04, -77.49],
+  Dallas: [32.78, -96.8],
+  "Los Angeles": [34.05, -118.24],
+  "New York": [40.71, -74.01],
+  London: [51.51, -0.13],
+  Manchester: [53.48, -2.24],
+  Frankfurt: [50.11, 8.68],
+  Berlin: [52.52, 13.4],
+  Nuremberg: [49.45, 11.08],
+  Paris: [48.86, 2.35],
+  Roubaix: [50.69, 3.18],
+  Amsterdam: [52.37, 4.9],
+  Rotterdam: [51.92, 4.48],
+  Toronto: [43.65, -79.38],
+  Montreal: [45.5, -73.57],
+  Tokyo: [35.68, 139.69],
+  Osaka: [34.69, 135.5],
+  Singapore: [1.35, 103.82],
+  "São Paulo": [-23.55, -46.63],
+  "Rio de Janeiro": [-22.91, -43.17],
+  Mumbai: [19.08, 72.88],
+  Bangalore: [12.97, 77.59],
+  Sydney: [-33.87, 151.21],
+  Melbourne: [-37.81, 144.96],
+};
+
 // The first exit is the one ?demo=connect lands on, so the store screenshots
 // show it: an address whose pretend fraud score is low (lib/fraud.ts).
 const EXITS: Exit[] = [
@@ -36,19 +66,37 @@ const EXITS: Exit[] = [
 
 type Demo = {
   startedAt: number;
+  place: Place;
   source: SourceInfo;
   systemProxy: boolean;
   exit: number;
   /** A free proxy picked from the Free tab's list, until the first rotation. */
   picked: Exit | null;
+  /** The free country asked for: "New IP" stays in it, like the real pool. */
+  freeCountry: string | null;
   health: RelayHealth;
   rotations: number;
   probes: number;
   probeUrl: string;
+  /** A group's members, without passwords, and the one in use. */
+  lines: string[];
+  member: number;
 };
 
 let demo: Demo | null = null;
 let autoStarted = false;
+
+/* The pretend relay says it started or stopped the way the app does (its
+   "relay-changed" event), so the window reads its places again after a
+   connect here exactly as it does there. */
+const relayListeners = new Set<(connected: boolean) => void>();
+export function onDemoRelayChanged(cb: (connected: boolean) => void): () => void {
+  relayListeners.add(cb);
+  return () => void relayListeners.delete(cb);
+}
+function tellRelayChanged(connected: boolean) {
+  for (const cb of relayListeners) cb(connected);
+}
 
 /** How long the pretend relay takes to start or stop (lib/tauri.ts waits on it). */
 export const pretendWait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
@@ -89,13 +137,26 @@ function healthFor(exit: Exit, now: number, jitter: number, probeUrl: string): R
   const reflects = probeUrl === DEFAULT_PROBE_URL || /\/cdn-cgi\/trace\/?$/.test(probeUrl);
   const base = { ok: true, latency_ms: exit.ms + jitter, checked_at_ms: now, failures_in_a_row: 0, target: hostOf(probeUrl), reflects_exit: reflects };
   if (!reflects) return base;
-  return { ...base, exit_ip: exit.ip, country_code: exit.cc, country: exit.country, city: exit.city, asn_org: exit.asn_org, timezone: exit.tz };
+  const at = CITY_AT[exit.city];
+  return {
+    ...base,
+    exit_ip: exit.ip,
+    country_code: exit.cc,
+    country: exit.country,
+    city: exit.city,
+    asn_org: exit.asn_org,
+    timezone: exit.tz,
+    latitude: at?.[0] ?? null,
+    longitude: at?.[1] ?? null,
+  };
 }
 
 function describeRotation(r: { rule: string; n?: number }): string {
   switch (r.rule) {
     case "every_n":
       return `a different proxy every ${r.n ?? 10} connections`;
+    case "every_minutes":
+      return (r.n ?? 10) === 1 ? "a different proxy every minute" : `a different proxy every ${r.n ?? 10} minutes`;
     case "random":
       return "a random proxy for every connection";
     case "on_failure":
@@ -165,6 +226,26 @@ export async function demoFreeList(country: string | null, socks5: boolean): Pro
   return list;
 }
 
+/** The pool's countries as `/api/vpn/countries` gave them on 2026-09-30. */
+const FREE_POOL_COUNTRIES = `
+  US:1612 ID:1040 CN:306 PH:156 BR:151 RU:148 CO:144 IN:130 MX:118 FR:113 BD:108 DE:102 VN:95 EC:74 SG:72
+  VE:66 AR:65 DO:52 HK:52 TH:50 JP:49 CA:48 TR:40 PE:40 NL:39 PK:37 ZA:37 KH:34 UA:32 KR:30 IR:29 GB:29 CL:28
+  KE:27 AU:26 EG:26 LY:24 PL:23 MY:23 PY:21 ES:21 FI:21 NG:20 BG:19 HN:17 NP:15 IT:13 GT:13 HU:13 TW:13 CH:12
+  IL:11 SY:11 GE:10 UZ:10 AE:9 KZ:9 RO:9 RS:9 SC:9 SE:9 AL:8 CZ:8 BO:8 IQ:8 IE:6 PR:6 EE:6 LV:5 AM:5 PA:5 TZ:4
+  BW:4 AT:4 AF:4 BI:4 MN:4 SI:4 GH:4 KG:3 GQ:3 LB:3 MM:3 MW:3 PS:3 XK:3 SN:3 BE:3 UG:3 GR:3 SA:2 HR:2 AZ:2
+  MZ:2 ME:2 CR:2 MO:2 CM:2 CG:2 SK:2 QA:2 LK:1 MA:1 BA:1 UY:1 GM:1 PG:1 CD:1 LT:1 NZ:1 BY:1 LS:1 YE:1 CY:1
+  YT:1 DK:1 SL:1 JM:1 BJ:1 BF:1`;
+
+export async function demoFreeCountries(): Promise<FreeCountry[]> {
+  await pretendWait(400);
+  return FREE_POOL_COUNTRIES.trim()
+    .split(/\s+/)
+    .map((pair) => {
+      const [code, count] = pair.split(":");
+      return { code, count: Number(count) };
+    });
+}
+
 export async function demoFreeTest(host: string, port: number): Promise<FreeTest> {
   const rng = mulberry32(hashSeed(`test|${host}:${port}`));
   const works = rng() < 0.4;
@@ -230,33 +311,29 @@ export async function demoLeakDns(): Promise<DnsLeak> {
   };
 }
 
-function sourceInfo(src: ConnectSourceArg): SourceInfo {
-  if (src.kind === "fixed") return { kind: "fixed", size: 1, in_use: `http://${maskLine(src.line)}`, can_rotate: false };
-  if (src.kind === "list") {
+/** What the pretend relay says it goes through, from the pretend library's
+    lines for the place (already without passwords). */
+function sourceInfo(place: Place, dialled: { lines: string[]; rule?: string; n?: number }, member: number): SourceInfo {
+  if (place.kind === "proxy") return { kind: "fixed", size: 1, in_use: `http://${dialled.lines[0]}`, can_rotate: false };
+  if (place.kind === "group") {
     return {
       kind: "list",
-      size: src.lines.length,
-      rotation: describeRotation(src.rotation),
-      in_use: `http://${maskLine(src.lines[0] ?? "")}`,
+      size: dialled.lines.length,
+      rotation: describeRotation({ rule: dialled.rule ?? "on_failure", n: dialled.n }),
+      in_use: `http://${dialled.lines[member] ?? ""}`,
       can_rotate: true,
+      member,
     };
   }
-  const picked = src.exit ? pickedExit(src.exit) : null;
-  const scheme = src.socks5 ? "socks5" : "http";
+  const picked = place.exit ? pickedExit(place.exit) : null;
+  const scheme = place.socks5 ? "socks5" : "http";
   return { kind: "pool", ...(picked ? poolLabel(picked.exit, picked.port, scheme) : poolLabel(EXITS[0], 80, scheme)), can_rotate: true };
 }
 
 export function demoConnectStatus(): ConnectStatus {
   if (!demo && !autoStarted && wantsAutoConnect()) {
     autoStarted = true;
-    return demoConnectStart(
-      {
-        kind: "list",
-        lines: ["user:pass@203.0.113.24:8080", "user:pass@198.51.100.24:8080", "user:pass@192.0.2.77:8080"],
-        rotation: { rule: "on_failure" },
-      },
-      true,
-    );
+    return demoConnectStart(demoSampleGroup(), true);
   }
   if (!demo) return idle();
   const now = Date.now();
@@ -280,41 +357,119 @@ export function demoConnectStatus(): ConnectStatus {
       bytes_down: down,
     },
     health: demo.health,
+    place: demo.place,
   };
 }
 
-export function demoConnectStart(source: ConnectSourceArg, systemProxy: boolean, probeUrl?: string): ConnectStatus {
+/** A pretend free exit in `cc` for "Pick one for me": the country's first
+    city, so the card and the map say the place that was asked for. */
+function freeExitIn(cc: string): Exit | null {
+  const code = cc.toUpperCase();
+  const city = FREE_CITIES[code]?.[0];
+  if (!city) return null;
+  return {
+    ip: `${FREE_RANGES[hashSeed(code) % FREE_RANGES.length]}.${20 + (hashSeed(city) % 200)}`,
+    cc: code,
+    country: countryName(code) ?? code,
+    city,
+    asn_org: FREE_NETWORKS[hashSeed(code) % FREE_NETWORKS.length],
+    ms: 120 + (hashSeed(city) % 400),
+    tz: FREE_ZONES[code] ?? "UTC",
+  };
+}
+
+export function demoConnectStart(place: Place, systemProxy: boolean, probeUrl?: string, member?: number): ConnectStatus {
   const now = Date.now();
   const url = probeUrl?.trim() || DEFAULT_PROBE_URL;
-  const picked = source.kind === "free" && source.exit ? (pickedExit(source.exit)?.exit ?? null) : null;
+  const picked =
+    place.kind === "free"
+      ? place.exit
+        ? (pickedExit(place.exit)?.exit ?? null)
+        : place.country
+          ? freeExitIn(place.country)
+          : null
+      : null;
+  // Read before anything changes, like the real one: a place that is gone,
+  // or a member it does not have, must not cost the connection there is.
+  const dialled = demoPlaceForRelay(place);
+  if (!dialled) throw new Error(place.kind === "group" ? "that group is not here any more" : "that proxy is not saved here any more");
+  const first = member ?? 0;
+  if (place.kind === "group" && !(first >= 0 && first < dialled.lines.length)) throw new Error(noMember(first));
+  const source = sourceInfo(place, dialled, first);
   demo = {
     startedAt: now,
-    source: sourceInfo(source),
+    place,
+    source,
     systemProxy,
     exit: 0,
     picked,
+    freeCountry: place.kind === "free" ? place.country.toUpperCase() || null : null,
     health: healthFor(picked ?? EXITS[0], now, 0, url),
     rotations: 0,
     probes: 0,
     probeUrl: url,
+    lines: place.kind === "group" ? dialled.lines : [],
+    member: first,
   };
+  if (place.kind === "group") demo.health = healthFor(EXITS[first % EXITS.length], now, 0, url);
+  tellRelayChanged(true);
   return demoConnectStatus();
+}
+
+const noMember = (i: number) => `proxy ${i + 1} of the group is not in use: it could not be read when connecting`;
+
+/** A group's member `i` in use from now, as the real relay does it. */
+function onMember(i: number): ConnectStatus {
+  if (!demo || demo.source.kind !== "list") throw new Error("only a group has proxies to pick from");
+  if (!(i >= 0 && i < demo.lines.length)) throw new Error(noMember(i));
+  demo.member = i;
+  demo.exit = i % EXITS.length;
+  demo.rotations += 1;
+  demo.picked = null;
+  demo.health = healthFor(EXITS[demo.exit], Date.now(), 0, demo.probeUrl);
+  demo.source = { ...demo.source, in_use: `http://${demo.lines[i]}`, member: i };
+  tellRelayChanged(true);
+  return demoConnectStatus();
+}
+
+export function demoConnectBack(): ConnectStatus {
+  if (!demo) throw new Error("not connected");
+  if (demo.source.kind === "fixed") throw new Error("this is your own proxy, there is nothing to switch to");
+  if (demo.source.kind === "pool") throw new Error("free proxies are found as they are needed, so there is none to go back to");
+  return onMember((demo.member - 1 + demo.lines.length) % demo.lines.length);
+}
+
+export function demoConnectMember(i: number): ConnectStatus {
+  if (!demo) throw new Error("not connected");
+  return onMember(i);
 }
 
 export function demoConnectStop(): ConnectStatus {
   demo = null;
+  tellRelayChanged(false);
   return idle();
+}
+
+/** The next pretend exit in the same free country: its next city. */
+function nextFreeExit(cc: string, rotations: number): Exit | null {
+  const first = freeExitIn(cc);
+  const cities = FREE_CITIES[cc] ?? [];
+  if (!first || !cities.length) return null;
+  const city = cities[rotations % cities.length];
+  return { ...first, city, ip: `${FREE_RANGES[rotations % FREE_RANGES.length]}.${30 + ((hashSeed(city) + rotations * 37) % 200)}` };
 }
 
 export function demoConnectRotate(): ConnectStatus {
   if (!demo) throw new Error("not connected");
+  if (demo.source.kind === "list") return onMember((demo.member + 1) % demo.lines.length);
   demo.exit = (demo.exit + 1) % EXITS.length;
-  demo.picked = null;
   demo.rotations += 1;
-  const e = EXITS[demo.exit];
+  const inCountry = demo.freeCountry ? nextFreeExit(demo.freeCountry, demo.rotations) : null;
+  demo.picked = inCountry;
+  const e = inCountry ?? EXITS[demo.exit];
   demo.health = healthFor(e, Date.now(), 0, demo.probeUrl);
   if (demo.source.kind === "pool") demo.source = { ...demo.source, ...poolLabel(e) };
-  if (demo.source.kind === "list") demo.source = { ...demo.source, in_use: `http://user:••••@${e.ip}:8080` };
+  tellRelayChanged(true);
   return demoConnectStatus();
 }
 
@@ -361,7 +516,10 @@ let demoMatching = false;
 
 export function demoZoneStatus(): ZoneStatus {
   const exitZone = demo?.health?.ok ? (demo.health.timezone ?? null) : null;
-  const matched = demoMatching && !!exitZone;
+  // Like the real one: a clock already on the exit's zone is left as it is,
+  // so there is nothing matched to say.
+  const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const matched = demoMatching && !!exitZone && exitZone !== local;
   return {
     supported: !isMobile(),
     matching: demoMatching,

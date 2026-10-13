@@ -21,7 +21,8 @@
    `className` prop.
    ============================================================ */
 
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
+import { useSlidingPill } from "./slidingPill";
 import { cx } from "./tokens";
 
 export type ButtonVariant = "soft" | "solid" | "text" | "danger";
@@ -76,6 +77,8 @@ export function Button({
    BUTTON GROUP — choosing one of a few: a cut track, the chosen
    one lit in our blue (not a white pill on grey, which is Apple's).
    The order reads as a recommendation, so the default goes first.
+   The blue is one pill that slides to the new choice, as in the
+   title bar (slidingPill.ts).
    ============================================================ */
 
 export type ButtonGroupProps<T extends string> = {
@@ -87,8 +90,12 @@ export type ButtonGroupProps<T extends string> = {
 };
 
 export function ButtonGroup<T extends string>({ options, value, onChange, size = "md" }: ButtonGroupProps<T>) {
+  const row = useRef<HTMLDivElement>(null);
+  const pill = useRef<HTMLElement>(null);
+  useSlidingPill(row, pill, ".ux-seg-btn.is-on", value);
   return (
-    <div className={cx("ux-seg max-w-full", size === "sm" && "ux-seg--sm")} role="group">
+    <div ref={row} className={cx("ux-seg max-w-full", size === "sm" && "ux-seg--sm")} role="group">
+      <i ref={pill} className="ux-pill" aria-hidden="true" />
       {options.map(([v, label]) => (
         <button
           key={v}

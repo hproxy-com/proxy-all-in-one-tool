@@ -7,17 +7,20 @@
    works from here: public proxies come and go by the minute, and many that
    answer read HTTPS (they hand out certificates of their own). Every row gets
    the test Connect itself uses (`free_test` in src-tauri/src/connect.rs, the
-   relay's own test), a few at a time. Only the ones that pass are listed, in
-   the order they passed: the quickest come first, and a row never moves once
-   it is shown.
+   relay's own test), a few at a time. Only the ones that pass are listed:
+   in the order they passed while tests still run, so a row never moves under
+   the pointer, then the fastest first once every test has answered.
 
    One tested list per country and protocol is kept in memory for a few
    minutes. Leaving the tab and coming back shows it again, and tests still
-   running carry on while the tab is closed. */
+   running carry on while the tab is closed.
 
-import { freeCountryName } from "./connect";
+   The country menu offers every country the pool has proxies in, with how
+   many (`free_countries`, 119 countries on 2026-09-30), not a fixed few. */
+
+import { FREE_COUNTRIES, freeCountryName } from "./connect";
 import { countryName } from "./checker";
-import type { FreeExit, FreeTest } from "./tauri";
+import type { FreeCountry, FreeExit, FreeTest } from "./tauri";
 
 /** Tested at once. The relay's own search uses the same number
     (proxy-engine/hproxy-relay/src/pool.rs, SEARCH_PARALLEL). */
@@ -84,9 +87,15 @@ export function withAnswer(rows: FreeRow[], addr: string, answer: FreeTest): Fre
   });
 }
 
-/** The ones that passed, in the order they passed. */
+const byPassed = (a: FreeRow, b: FreeRow) => (a.passed ?? 0) - (b.passed ?? 0);
+
+/** The ones that passed: in the order they passed while tests still run (a
+    row that is shown never moves under the pointer), the fastest first once
+    every test has answered. */
 export function workingRows(rows: FreeRow[]): FreeRow[] {
-  return rows.filter((r) => r.state === "ok").sort((a, b) => (a.passed ?? 0) - (b.passed ?? 0));
+  const ok = rows.filter((r) => r.state === "ok");
+  if (testsLeft(rows) > 0) return ok.sort(byPassed);
+  return ok.sort((a, b) => (a.ms ?? Number.MAX_SAFE_INTEGER) - (b.ms ?? Number.MAX_SAFE_INTEGER) || byPassed(a, b));
 }
 
 export function failedRows(rows: FreeRow[]): FreeRow[] {
@@ -116,8 +125,114 @@ export function runWords(run: FreeRun | undefined, country: string, socks5: bool
 
 /** A row's place and network, for its second line. */
 export function rowPlace(r: FreeRow): string {
-  const place = [r.exit.city, countryName(r.exit.country || undefined)].filter(Boolean).join(", ");
-  return [place, r.exit.network].filter(Boolean).join(" · ");
+  return [rowWhere(r), r.exit.network].filter(Boolean).join(" · ");
+}
+
+/** A row's city and country, as far as the pool knows them. */
+export function rowWhere(r: FreeRow): string {
+  return [r.exit.city, countryName(r.exit.country || undefined)].filter(Boolean).join(", ");
+}
+
+/* ── The country menu ───────────────────────────────────────────────────── */
+
+export type CountryChoice = {
+  /** Two-letter code; empty for Anywhere. */
+  code: string;
+  name: string;
+  /** Free proxies of every protocol in the pool; null when not known. */
+  count: number | null;
+};
+
+/** What the country menu offers: Anywhere first, then the pool's countries
+    with the most proxies first. Without the pool's list (not in yet, or it
+    could not be loaded) the usual few from FREE_COUNTRIES. The country chosen
+    is always there, even when the pool has none in it right now. */
+export function countryChoices(pool: FreeCountry[] | null, chosen: string): CountryChoice[] {
+  const total = pool ? pool.reduce((n, c) => n + c.count, 0) : null;
+  const out: CountryChoice[] = [{ code: "", name: "Anywhere", count: total }];
+  const seen = new Set<string>([""]);
+  const add = (code: string, count: number | null) => {
+    const cc = code.trim().toUpperCase();
+    if (seen.has(cc)) return;
+    seen.add(cc);
+    out.push({ code: cc, name: freeCountryName(cc), count });
+  };
+  if (pool?.length) for (const c of pool) add(c.code, c.count);
+  else for (const [code] of FREE_COUNTRIES) if (code) add(code, null);
+  if (chosen) add(chosen, pool ? 0 : null);
+  return out;
+}
+
+/** The choices that match what was typed, best match first: a code typed in
+    full or a name that starts with it, then a word of a name that starts with
+    it, then a name that holds it anywhere. The pool's order (the most proxies
+    first) inside each. Nothing typed: every choice. */
+export function matchCountries(choices: CountryChoice[], typed: string): CountryChoice[] {
+  const q = typed.trim().toLowerCase();
+  if (!q) return choices;
+  const rank = (c: CountryChoice): number => {
+    const name = c.name.toLowerCase();
+    if (c.code.toLowerCase() === q || name.startsWith(q)) return 0;
+    if (name.split(/[\s,.()&-]+/).some((w) => w.startsWith(q))) return 1;
+    if (name.includes(q)) return 2;
+    return 3;
+  };
+  return choices
+    .map((c, i) => ({ c, i, r: rank(c) }))
+    .filter((x) => x.r < 3)
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.c);
+}
+
+/** How many there are, the way the menu writes it: 1,612. */
+export const countWords = (n: number): string => n.toLocaleString("en-US");
+
+/* ── The pool's countries, kept while the app is open ───────────────────── */
+
+/** How long the pool's country list is used before it is asked again. */
+export const FREE_COUNTRIES_KEEP_MS = 10 * 60_000;
+
+export type CountriesState = {
+  list: FreeCountry[] | null;
+  loading: boolean;
+  /** Why the list could not be loaded, in words. */
+  error: string | null;
+  /** When the list (or the error) came in. */
+  at: number;
+};
+
+let countriesState: CountriesState = { list: null, loading: false, error: null, at: 0 };
+const countryListeners = new Set<() => void>();
+
+/** Call `fn` whenever the country list changes. Returns the way to stop. */
+export function onFreeCountries(fn: () => void): () => void {
+  countryListeners.add(fn);
+  return () => void countryListeners.delete(fn);
+}
+
+/** The country list as it stands. The same object until it changes. */
+export function freeCountriesState(): CountriesState {
+  return countriesState;
+}
+
+function putCountries(next: CountriesState) {
+  countriesState = next;
+  for (const fn of countryListeners) fn();
+}
+
+/** Ask the pool for its countries, unless a list younger than
+    FREE_COUNTRIES_KEEP_MS is kept or one is on its way. A failure keeps the
+    list from before, if there is one, and is asked again after a minute. */
+export function ensureFreeCountries(load: () => Promise<FreeCountry[]>, now: number = Date.now()): void {
+  const s = countriesState;
+  if (s.loading) return;
+  if (s.list && !s.error && now - s.at < FREE_COUNTRIES_KEEP_MS) return;
+  if (s.error && now - s.at < 60_000) return;
+  putCountries({ ...s, loading: true });
+  load().then(
+    (list) => putCountries({ list, loading: false, error: null, at: Date.now() }),
+    (e) => putCountries({ ...countriesState, loading: false, error: words(e), at: Date.now() }),
+  );
 }
 
 /** A sentence from the engine, as a sentence on the screen. */

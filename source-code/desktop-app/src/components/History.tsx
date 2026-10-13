@@ -1,12 +1,15 @@
 import { useState } from "react";
 import { loadRuns, clearRuns, type RunRecord } from "../lib/history";
-import { thisDevice } from "../lib/tauri";
-import { Button, Card, PageHead, cx } from "./ui";
+import { isMobile, thisDevice } from "../lib/tauri";
+import { Button, Card, Icon, InfoTip, PageHead, cx } from "./ui";
 
 /* History, in look D (2026-09-23): one filled panel, one row per run the way
    the checker draws its rows. A bar at the start says how the run went (green
    when most worked, amber when some did, red when almost none did), then the
-   count, how long it took and when. Counts only: the addresses are never kept. */
+   count, how long it took and when. Counts only: the addresses are never kept.
+   Inside the Checker since 2026-10-02: Back returns to the box. On a phone
+   the top bar names the page and holds the way back, so the card starts
+   with the "i" and Clear history. */
 
 const spaced = (n: number) => n.toLocaleString("en-US").replace(/,/g, " ");
 
@@ -14,39 +17,43 @@ function tone(rate: number): string {
   return rate >= 60 ? "tone-ok" : rate >= 25 ? "tone-warn" : "tone-danger";
 }
 
-export default function History() {
+export default function History({ onBack }: { onBack?: () => void }) {
   const [runs, setRuns] = useState<RunRecord[]>(() => loadRuns());
+  const info = `Your last checks on ${thisDevice()}. Counts only: the addresses are never kept.`;
+  const clear =
+    runs.length > 0 ? (
+      <Button
+        variant="text"
+        onClick={() => {
+          clearRuns();
+          setRuns([]);
+        }}
+      >
+        Clear history
+      </Button>
+    ) : undefined;
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-[980px] px-6 pb-8 pt-1.5 max-sm:px-3">
-        <Card pad="roomy">
-          <PageHead
-            title="History"
-            sub={
-              runs.length
-                ? `Your last ${runs.length} ${runs.length === 1 ? "run" : "runs"} on ${thisDevice()}. Counts only, never the addresses.`
-                : "Every list you check shows up here. Counts only, never the addresses."
-            }
-            aside={
-              runs.length > 0 ? (
-                <Button
-                  variant="text"
-                  onClick={() => {
-                    clearRuns();
-                    setRuns([]);
-                  }}
-                >
-                  Clear history
-                </Button>
-              ) : undefined
-            }
-          />
+        <Card tone="flat" pad="roomy">
+          {onBack && (
+            <button type="button" className="ux-link mb-3" onClick={onBack}>
+              <Icon.arrowRight className="h-3.5 w-3.5 rotate-180" /> Checker
+            </button>
+          )}
+          {isMobile() ? (
+            <div className="flex min-h-[34px] items-center justify-between gap-3">
+              <InfoTip label="History">{info}</InfoTip>
+              {clear}
+            </div>
+          ) : (
+            <PageHead title="History" info={info} aside={clear} />
+          )}
 
           {runs.length === 0 ? (
             <div className="mt-6 rounded-[14px] bg-[var(--well)] p-8 text-center">
-              <p className="text-[15px] font-bold text-ink">No runs yet</p>
-              <p className="mt-1 text-[13.5px] font-medium text-ink-mute">Check a list and it shows up here.</p>
+              <p className="text-[15px] font-bold text-ink">No checks yet</p>
             </div>
           ) : (
             <div className="mt-6 overflow-hidden rounded-[14px] bg-[var(--well)]">

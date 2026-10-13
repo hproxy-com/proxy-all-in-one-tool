@@ -1,6 +1,8 @@
 /* Fraud scores: how risky the sites a proxy reaches will take its address to
-   be. FFraud's free lookup, or the person's own API key at another service;
-   they can switch at any time.
+   be. FFraud's free lookup, the person's own API key at other services, or
+   several at once, added or changed whenever they like: every service turned
+   on answers, the highest score is the one shown, and every answer is named
+   beside it.
 
    The lookups run in the app (src-tauri/src/fraud.rs over
    proxy-engine/hproxy-api/src/fraud.rs), from this computer straight to the service
@@ -55,6 +57,14 @@ export const FRAUD_SERVICES: readonly FraudService[] = [
 
 export const DEFAULT_FRAUD_SERVICE: FraudServiceId = "ffraud";
 
+/** The services turned on, as Settings keeps them: known ids only, each once,
+    in the order Settings lists them, and never none (FFraud then). */
+export function fraudServicesOf(v: unknown): FraudServiceId[] {
+  const on = Array.isArray(v) ? v.filter(isFraudService) : [];
+  const ids = FRAUD_SERVICES.map((s) => s.id).filter((id) => on.includes(id));
+  return ids.length ? ids : [DEFAULT_FRAUD_SERVICE];
+}
+
 export function isFraudService(v: unknown): v is FraudServiceId {
   return typeof v === "string" && FRAUD_SERVICES.some((s) => s.id === v);
 }
@@ -76,6 +86,36 @@ export type FraudScore = {
 
 /** One address: its score, or the sentence that says why there is none. */
 export type FraudRow = { ip: string; score: FraudScore | null; error: string | null };
+
+/** Every service's answer for one address, in the order Settings lists the services. */
+export type FraudSet = { ip: string; answers: { service: FraudServiceId; row: FraudRow }[] };
+
+/** One more answer for an address: replaces that service's last one, keeps the order. */
+export function withAnswer(set: FraudSet | undefined, service: FraudServiceId, row: FraudRow): FraudSet {
+  const order = (id: FraudServiceId) => FRAUD_SERVICES.findIndex((s) => s.id === id);
+  const answers = [...(set?.answers ?? []).filter((a) => a.service !== service), { service, row }];
+  answers.sort((a, b) => order(a.service) - order(b.service));
+  return { ip: row.ip, answers };
+}
+
+/** The answer a screen shows for an address: the highest score any service
+    gave, or, when none gave one, the first service's reason. */
+export function headline(set: FraudSet): FraudRow {
+  let best: FraudRow | null = null;
+  for (const { row } of set.answers) {
+    if (row.score && (!best?.score || row.score.score > best.score.score)) best = row;
+  }
+  return best ?? set.answers[0]?.row ?? { ip: set.ip, score: null, error: "No answer" };
+}
+
+/** Each service's answer in a few words, for the "i" and the tooltips:
+    "IPQualityScore 34 · medium", or the reason it has none. */
+export function answerLines(set: FraudSet): string[] {
+  return set.answers.map(({ service, row }) => {
+    const name = fraudService(service).name;
+    return row.score ? `${name} ${fraudLabel(row.score)}` : `${name}: ${row.error ?? "no answer"}`;
+  });
+}
 
 /** What the app is sent for the picked service (FraudService in hproxy-api). */
 export function serviceRequest(id: FraudServiceId, keys: FraudKeys): Record<string, string> {
@@ -154,6 +194,17 @@ export function cachedScore(id: FraudServiceId, ip: string): FraudRow | undefine
   return cache.get(`${id}|${ip}`);
 }
 
+/** An address every one of these services has scored this session, or undefined. */
+export function cachedSet(ids: readonly FraudServiceId[], ip: string): FraudSet | undefined {
+  let set: FraudSet | undefined;
+  for (const id of ids) {
+    const row = cachedScore(id, ip);
+    if (!row) return undefined;
+    set = withAnswer(set, id, row);
+  }
+  return set;
+}
+
 /** Score these addresses with the picked service, batch by batch; `onBatch`
     gets each batch's rows as they arrive. Resolves to every address's row. */
 export async function fraudScores(
@@ -197,19 +248,36 @@ export async function fraudScores(
   return out;
 }
 
+/** Score these addresses with every service turned on, side by side; `onBatch`
+    gets each service's rows as they arrive. Resolves to every address's set. */
+export async function fraudScoresAll(
+  ips: string[],
+  ids: readonly FraudServiceId[],
+  keys: FraudKeys,
+  onBatch?: (service: FraudServiceId, rows: FraudRow[]) => void,
+  lookup: Lookup = defaultLookup,
+): Promise<Map<string, FraudSet>> {
+  const each = await Promise.all(ids.map((id) => fraudScores(ips, id, keys, (rows) => onBatch?.(id, rows), lookup).then((m) => [id, m] as const)));
+  const out = new Map<string, FraudSet>();
+  for (const [id, m] of each) for (const [ip, row] of m) out.set(ip, withAnswer(out.get(ip), id, row));
+  return out;
+}
+
 /** In the app, the real lookup; in the browser preview, a pretend score that
     says it is one (the preview's relay is pretend too). */
-const defaultLookup: Lookup = (ips, service) => (isTauri() ? fraudLookup(ips, service) : pretendLookup(ips));
+const defaultLookup: Lookup = (ips, service) => (isTauri() ? fraudLookup(ips, service) : pretendLookup(ips, service));
 
-async function pretendLookup(ips: string[]): Promise<FraudRow[]> {
+async function pretendLookup(ips: string[], service: Record<string, string>): Promise<FraudRow[]> {
   await new Promise((r) => setTimeout(r, 350));
+  const id = isFraudService(service.service) ? service.service : DEFAULT_FRAUD_SERVICE;
+  const name = fraudService(id).name;
   return ips.map((ip) => {
-    const n = [...ip].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 997, 7);
+    const n = [...`${id}${ip}`].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 997, 7);
     const score = n % 100 < 70 ? n % 24 : n % 100;
     const risk = score >= 75 ? "high" : score >= 25 ? "medium" : "low";
     return {
       ip,
-      score: { ip, score, risk, flags: ["hosting"], reason: "Browser preview: a pretend score. The app asks FFraud for real.", service: "FFraud" },
+      score: { ip, score, risk, flags: ["hosting"], reason: `Browser preview: a pretend score. The app asks ${name} for real.`, service: name },
       error: null,
     };
   });

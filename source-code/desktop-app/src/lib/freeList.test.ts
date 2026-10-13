@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  FREE_COUNTRIES_KEEP_MS,
   FREE_LIST_KEEP_MS,
   FREE_TESTS_AT_ONCE,
+  countWords,
+  countryChoices,
+  ensureFreeCountries,
   ensureFreeRun,
   failedRows,
+  freeCountriesState,
   freeRun,
+  matchCountries,
+  onFreeCountries,
   onFreeRuns,
   rowPlace,
   rowsOf,
@@ -16,7 +23,7 @@ import {
   type FreeDeps,
   type FreeRun,
 } from "./freeList";
-import type { FreeExit, FreeTest } from "./tauri";
+import type { FreeCountry, FreeExit, FreeTest } from "./tauri";
 
 const exit = (host: string, more: Partial<FreeExit> = {}): FreeExit => ({
   host,
@@ -48,7 +55,7 @@ describe("the rows", () => {
     expect(rowsOf([exit("2001:db8::7", { port: 3128 })])[0].addr).toBe("[2001:db8::7]:3128");
   });
 
-  it("numbers the passes in the order they land, and keeps why the others failed", () => {
+  it("lists the passes as they land while tests run, the fastest first once all have answered", () => {
     let rows = rowsOf([exit("203.0.113.1"), exit("203.0.113.2"), exit("203.0.113.3"), exit("203.0.113.4")]);
     rows = withTesting(rows, "203.0.113.3:8080");
     expect(rows[2].state).toBe("testing");
@@ -56,12 +63,17 @@ describe("the rows", () => {
     rows = withAnswer(rows, "203.0.113.3:8080", { ok: true, ms: 310 });
     rows = withAnswer(rows, "203.0.113.1:8080", { ok: false, why: "refused the connection" });
     rows = withAnswer(rows, "203.0.113.2:8080", { ok: true, ms: 95 });
-    rows = withAnswer(rows, "203.0.113.4:8080", { ok: false, why: "  " });
-    // Listed by when they passed, not by speed and not by the pool's order:
-    // a row that is shown never moves.
+    // One test still out: listed by when they passed, not by speed, so a row
+    // that is shown does not move under the pointer.
     expect(workingRows(rows).map((r) => [r.addr, r.ms])).toEqual([
       ["203.0.113.3:8080", 310],
       ["203.0.113.2:8080", 95],
+    ]);
+    rows = withAnswer(rows, "203.0.113.4:8080", { ok: false, why: "  " });
+    // Every test answered: the fastest first.
+    expect(workingRows(rows).map((r) => [r.addr, r.ms])).toEqual([
+      ["203.0.113.2:8080", 95],
+      ["203.0.113.3:8080", 310],
     ]);
     expect(failedRows(rows).map((r) => r.why)).toEqual(["refused the connection", "did not work"]);
     expect(testsLeft(rows)).toBe(0);
@@ -190,5 +202,91 @@ describe("a run", () => {
     expect(r.loading).toBe(false);
     expect(r.error).toBe("the free pool's quota for your network is used up");
     expect(changes).toBe(2);
+  });
+});
+
+describe("the country menu", () => {
+  const pool: FreeCountry[] = [
+    { code: "US", count: 1612 },
+    { code: "ID", count: 1040 },
+    { code: "IN", count: 130 },
+    { code: "DE", count: 102 },
+    { code: "AR", count: 65 },
+    { code: "CN", count: 306 },
+    { code: "KH", count: 34 },
+  ];
+
+  it("offers Anywhere, then every country of the pool the most first, and always the one chosen", () => {
+    const choices = countryChoices(pool, "JP");
+    expect(choices[0]).toEqual({ code: "", name: "Anywhere", count: 3289 });
+    expect(choices.slice(1, 4).map((c) => [c.code, c.name, c.count])).toEqual([
+      ["US", "United States", 1612],
+      ["ID", "Indonesia", 1040],
+      ["IN", "India", 130],
+    ]);
+    // A code the app's own table does not know is named by the browser.
+    expect(choices.find((c) => c.code === "KH")?.name).toBe("Cambodia");
+    // Chosen before, none in the pool right now: still there, with none.
+    expect(choices[choices.length - 1]).toEqual({ code: "JP", name: "Japan", count: 0 });
+    expect(countryChoices(pool, "us").filter((c) => c.code === "US")).toHaveLength(1);
+  });
+
+  it("offers the usual few while the pool's list is not in", () => {
+    const choices = countryChoices(null, "");
+    expect(choices[0]).toEqual({ code: "", name: "Anywhere", count: null });
+    expect(choices.map((c) => c.code)).toContain("GB");
+    expect(choices.every((c) => c.count === null)).toBe(true);
+  });
+
+  it("finds a country by the start of its name, a word of it, its code, or any part", () => {
+    const choices = countryChoices(pool, "");
+    const names = (typed: string) => matchCountries(choices, typed).map((c) => c.name);
+    expect(names("in")).toEqual(["Indonesia", "India", "Argentina", "China"]);
+    expect(names("  States ")).toEqual(["United States"]);
+    expect(names("de")).toEqual(["Germany"]);
+    // The start of a name before a name that only holds it.
+    expect(names("any")).toEqual(["Anywhere", "Germany"]);
+    expect(names("")).toHaveLength(choices.length);
+    expect(names("atlantis")).toEqual([]);
+  });
+
+  it("writes counts the way the menu shows them", () => {
+    expect(countWords(1612)).toBe("1,612");
+    expect(countWords(7)).toBe("7");
+  });
+
+  it("asks the pool once, keeps the list ten minutes, and after a failure waits a minute", async () => {
+    let asked = 0;
+    let fail = true;
+    let changes = 0;
+    const stop = onFreeCountries(() => (changes += 1));
+    const load = async () => {
+      asked += 1;
+      if (fail) throw new Error("could not reach the HProxy pool");
+      return pool;
+    };
+    const t0 = Date.now();
+    ensureFreeCountries(load, t0);
+    ensureFreeCountries(load, t0); // on its way: not asked twice
+    await settle();
+    expect(asked).toBe(1);
+    expect(freeCountriesState()).toMatchObject({ list: null, loading: false, error: "could not reach the HProxy pool" });
+
+    ensureFreeCountries(load, t0 + 30_000);
+    expect(asked).toBe(1);
+    fail = false;
+    ensureFreeCountries(load, t0 + 61_000);
+    await settle();
+    expect(asked).toBe(2);
+    expect(freeCountriesState()).toMatchObject({ list: pool, loading: false, error: null });
+
+    ensureFreeCountries(load, t0 + 120_000);
+    expect(asked).toBe(2);
+    ensureFreeCountries(load, t0 + FREE_COUNTRIES_KEEP_MS + 5_000);
+    await settle();
+    expect(asked).toBe(3);
+    stop();
+    // Loading, failed, loading, loaded, loading, loaded.
+    expect(changes).toBe(6);
   });
 });

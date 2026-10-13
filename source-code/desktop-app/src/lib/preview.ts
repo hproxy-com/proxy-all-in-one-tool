@@ -40,10 +40,8 @@ const SIM_SERVERS = ["Squid", "MikroTik", "Tinyproxy", "HAProxy", undefined] as 
 /* Real, well-known networks rather than a fresh random ASN per row.
  *
  * The previous version minted `AS${13335 + random * 50000}` for every row, so
- * no simulated list ever repeated a network. That makes the per-ASN rollup and
- * the insights panel literally unreviewable in a browser preview: every network
- * has a sample of one, and every claim is correctly suppressed for being too
- * thin. A preview that cannot show the feature is not a preview of the app. */
+ * no simulated list ever repeated a network, and the per-network view could not
+ * be reviewed in a browser preview: every network had a sample of one. */
 const SIM_NETWORKS: { asn: number; org: string }[] = [
   { asn: 14061, org: "DigitalOcean" },
   { asn: 16509, org: "Amazon AWS" },
@@ -76,9 +74,8 @@ export function simulateRow(row: Row, rng: () => number): Row {
 
   /* Dead rows carry their location and network too, because the real engine
      does: the geo lookup runs before the liveness branch, so an address is
-     labelled whether or not the proxy answers. Leaving them bare here would
-     make every network in the insights panel read "100% alive", which is both
-     obviously false and the exact number the panel exists to get right. */
+     labelled whether or not the proxy answers. Bare dead rows would make every
+     network read "100% alive". */
   const labelled = {
     cc: g.cc,
     country: countryName(g.cc),

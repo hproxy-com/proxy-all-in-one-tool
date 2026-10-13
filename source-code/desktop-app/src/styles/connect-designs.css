@@ -1,0 +1,372 @@
+/* ── The Connect page designs (2026-09-29) ───────────────────────────────
+   Five ways to lay out the Connect page, and backgrounds to choose from.
+   The designs are layouts of the same pieces (ConnectionCard.tsx), drawn by
+   ConnectDesigns.tsx under `[data-design]`; Card, the page as it was, has no
+   rules here and looks exactly as before. The backgrounds are crisp: pure
+   white or ink with lines, or HProxy blue at full strength; no light, no
+   tint, nothing see-through (only lines and words use opacity). */
+
+/* A panel's first row sits at its top edge: no line over it. */
+.ux-design .ux-connpanel > :first-child {
+  border-top: 0;
+}
+
+/* 2 · Hero: one column, the state and the big H in the middle. */
+[data-design="hero"] .ux-status {
+  padding: 30px 28px 20px;
+}
+[data-design="hero"] .ux-status .top {
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+[data-design="hero"] .ux-status .top > :first-child {
+  width: 100%;
+}
+/* The big H is the switch here. */
+[data-design="hero"] .ux-status .top > .ux-switch {
+  display: none;
+}
+[data-design="hero"] .ux-city {
+  font-size: 34px;
+}
+[data-design="hero"] .ux-route {
+  margin-top: 26px;
+}
+[data-design="hero"] .ux-hface {
+  --cut-big: 34px;
+  --cut-small: 11px;
+  width: 108px;
+  height: 108px;
+}
+[data-design="hero"] .ux-hface > svg {
+  width: 36px;
+  height: 43px;
+}
+@media (max-width: 480px) {
+  [data-design="hero"] .ux-hface {
+    width: 84px;
+    height: 84px;
+  }
+}
+
+/* 3 · Map: the world across the page. */
+[data-design="map"] .ux-status {
+  padding: 24px 26px 18px;
+}
+[data-design="map"] .ux-city {
+  font-size: 30px;
+}
+[data-design="map"] .ux-map {
+  max-height: 340px;
+  margin-top: 18px;
+}
+
+/* 4 · Bar: everything on one line, wrapping where the window is narrow. A
+   connection that is up gets a solid blue edge on the left. */
+.ux-statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 28px;
+  padding: 14px 16px 14px 22px;
+  border-radius: 18px 7px 18px 7px;
+  background: var(--card);
+  box-shadow: var(--card-edge);
+  transition: box-shadow 400ms ease;
+}
+.ux-statusbar[data-phase="on"]:not([data-failing]) {
+  box-shadow:
+    var(--card-edge),
+    inset 5px 0 0 var(--digi);
+}
+.ux-statusbar .state {
+  flex: 1 1 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ux-statusbar .where {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  font-size: 20px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.ux-statusbar .where b {
+  overflow: hidden;
+  font-weight: inherit;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ux-statusbar:not([data-phase="on"]) .where {
+  color: var(--ink-mute);
+}
+.ux-statusbar .sub {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-mute);
+  overflow-wrap: anywhere;
+}
+.ux-statusbar .numbers {
+  display: flex;
+  gap: 26px;
+  margin: 0;
+}
+.ux-statusbar .numbers dt {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--accent-ink);
+}
+.ux-statusbar .numbers dd {
+  margin: 2px 0 0;
+  font-size: 16px;
+  font-weight: 750;
+  color: var(--ink);
+}
+.ux-statusbar .actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.ux-statusbar .actions .ux-switch {
+  margin-left: 6px;
+}
+@media (max-width: 720px) {
+  .ux-statusbar .actions {
+    margin-left: 0;
+  }
+}
+
+/* 5 · Split: the connection on solid HProxy blue, connected or not. Words
+   and lines on it are white (lines and words may use opacity); every fill
+   on it is solid: the blue, and white for the H and the buttons. */
+[data-design="split"] .ux-bluepanel {
+  --card: #0158ff;
+  --ink: #ffffff;
+  --ink-mute: rgba(255, 255, 255, 0.86);
+  --ink-soft: rgba(255, 255, 255, 0.72);
+  --accent-ink: #ffffff;
+  --ok: #ffffff;
+  --warn: #ffd166;
+  --danger: #ffc2b8;
+  --route-dot: #ffffff;
+  --hairline: rgba(255, 255, 255, 0.24);
+  --divider: rgba(255, 255, 255, 0.24);
+  --raised: #ffffff;
+  background: #0158ff;
+  box-shadow: 0 18px 40px -24px rgba(10, 16, 32, 0.45);
+}
+html[data-theme="midnight"] [data-design="split"] .ux-bluepanel {
+  --card: #1542b8;
+  background: #1542b8;
+}
+[data-design="split"] .ux-bluepanel .ux-status {
+  padding: 26px 24px 20px;
+}
+[data-design="split"] .ux-bluepanel .ux-city {
+  font-size: 32px;
+}
+/* Off, the H button is white with a blue H; connected it keeps that face
+   (the Blue card look's, globals.css) and its rings turn white. */
+[data-design="split"] .ux-bluepanel .ux-hface {
+  color: #0158ff;
+}
+[data-design="split"] .ux-bluepanel .ux-btn {
+  color: #0158ff;
+  background: #ffffff;
+}
+
+/* ── The crisp backgrounds ───────────────────────────────────────────────
+   On the pure white surface (lib/look.ts lookAttributes: `clean`), each
+   draws its art into --page-bg, so the page and the picker's thumbnails
+   (BackgroundPicker.tsx, .bg-preview) wear the same pixels. The art is lines and dots in solid colours on the solid page;
+   the gaps between them are the page itself. */
+html[data-surface="clean"][data-bg] .bg-canvas,
+html[data-surface="clean"][data-bg] .ux-stick {
+  background: var(--page-bg);
+  background-attachment: fixed;
+}
+.bg-preview:is([data-bg="blueprint"], [data-bg="band"], [data-bg="rings"], [data-bg="diagonal"], [data-bg="dotgrid"]) {
+  --canvas: #ffffff;
+}
+[data-theme="midnight"] .bg-preview:is([data-bg="blueprint"], [data-bg="band"], [data-bg="rings"], [data-bg="diagonal"], [data-bg="dotgrid"]) {
+  --canvas: #0c0c0f;
+}
+html[data-surface="clean"][data-bg],
+.bg-preview[data-bg] {
+  --crisp-line: #e9ebf0;
+  --crisp-dot: #cfd2da;
+  --crisp-band: #0158ff;
+}
+html[data-surface="clean"][data-bg][data-theme="midnight"],
+[data-theme="midnight"] .bg-preview[data-bg] {
+  --crisp-line: #1d1d23;
+  --crisp-dot: #2c2c34;
+  --crisp-band: #1542b8;
+}
+
+/* Blueprint: a fine square grid of hairlines. */
+html[data-surface="clean"][data-bg="blueprint"],
+.bg-preview[data-bg="blueprint"] {
+  --page-bg:
+    linear-gradient(var(--crisp-line) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(90deg, var(--crisp-line) 1px, transparent 1px) 0 0 / 32px 32px,
+    var(--canvas);
+}
+
+/* Blue band: HProxy blue at full strength across the top, under the title
+   bar; the cards sit half on it. */
+html[data-surface="clean"][data-bg="band"],
+.bg-preview[data-bg="band"] {
+  --page-bg: linear-gradient(to bottom, var(--canvas) 0 50px, var(--crisp-band) 50px 250px, var(--canvas) 250px);
+}
+
+/* Rings: hairline circles going out from the top right corner. */
+html[data-surface="clean"][data-bg="rings"],
+.bg-preview[data-bg="rings"] {
+  --page-bg:
+    repeating-radial-gradient(circle at 100% 0, var(--crisp-line) 0 1px, transparent 1px 46px),
+    var(--canvas);
+}
+
+/* Diagonal: thin lines at 45 degrees. */
+html[data-surface="clean"][data-bg="diagonal"],
+.bg-preview[data-bg="diagonal"] {
+  --page-bg:
+    repeating-linear-gradient(135deg, var(--crisp-line) 0 1px, transparent 1px 22px),
+    var(--canvas);
+}
+
+/* Dot grid: even dots over the whole page, no light and no fade. */
+html[data-surface="clean"][data-bg="dotgrid"],
+.bg-preview[data-bg="dotgrid"] {
+  --page-bg:
+    radial-gradient(var(--crisp-dot) 1.2px, transparent 1.6px) 0 0 / 22px 22px,
+    var(--canvas);
+}
+
+/* ── The design picker (browser preview only, DesignPicker.tsx) ─────────── */
+.ux-designpicker {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  z-index: 60;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100vw - 24px);
+  padding: 7px 8px 7px 12px;
+  translate: -50% 0;
+  border-radius: 14px 5px 14px 5px;
+  background: var(--card-solid, var(--surface));
+  box-shadow:
+    0 0 0 1px var(--hairline),
+    0 14px 34px -18px rgba(15, 17, 26, 0.45);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink-mute);
+}
+.ux-designpicker .label {
+  margin: 0 4px 0 6px;
+}
+.ux-designpicker .label:first-child {
+  margin-left: 0;
+}
+.ux-designpicker button {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  cursor: pointer;
+  border-radius: 9px 3px 9px 3px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--raised);
+}
+.ux-designpicker button[aria-pressed="true"] {
+  color: #ffffff;
+  background: #0158ff;
+}
+.ux-designpicker select {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px 3px 9px 3px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+}
+
+/* ── The map (DotMap.tsx) ───────────────────────────────────────────────────
+   A canvas the component redraws while the view flies; the city dot and a
+   small country's ring are elements over it, placed by the same frames. */
+.ux-map {
+  position: relative;
+}
+.ux-map > canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.ux-map-pin,
+.ux-map-city {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  transition: opacity 400ms ease;
+}
+.ux-map-pin[data-show="1"],
+.ux-map-city[data-show="1"] {
+  opacity: 1;
+}
+.ux-map-city[data-show="1"] {
+  transition-delay: 500ms;
+}
+.ux-map-pin .dot,
+.ux-map-city .dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: var(--digi);
+}
+.ux-map-pin .ring,
+.ux-map-city .ring {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border: 1.5px solid var(--digi);
+  border-radius: 50%;
+}
+.ux-map-city .ring {
+  animation: ux-city-ping 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) 1.2s infinite;
+}
+@keyframes ux-city-ping {
+  0% {
+    scale: 0.5;
+    opacity: 1;
+  }
+  100% {
+    scale: 2.4;
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ux-map-city .ring {
+    animation: none;
+  }
+}

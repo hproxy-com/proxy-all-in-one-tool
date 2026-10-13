@@ -1,13 +1,14 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type JSX, type ReactNode } from "react";
 import { copyText, toolCommand } from "../lib/tauri";
 import { AgentMark, WorksWith, type MarkName } from "./AgentMarks";
-import { BlockTitle, Button, Card, Chip, Icon, PageHead } from "./ui";
+import { BlockTitle, Button, Card, Chip, Icon, InfoTip, PageHead } from "./ui";
 
 /* Use with AI: its own tab, not hidden in Settings, and as easy as it gets:
    it works with every kind of AI agent and shows their logos instead of
    listing names (AgentMarks.tsx, 2026-09-24), and instead of a
-   releases page it hands over one text to paste into the agent and one to
-   add to the agent's memory.
+   releases page it hands over one text to paste into the agent, which first
+   puts HProxy in the agent's memory and then adds it to its settings (one
+   step since 2026-10-12; the memory note was a second card).
 
    Nothing to download: this app is the tool. Started with \`mcp\` it serves
    the tools and opens no window (src-tauri/src/main.rs), and it knows where it
@@ -25,6 +26,15 @@ import { BlockTitle, Button, Card, Chip, Icon, PageHead } from "./ui";
    PATH (src-tauri/src/tool.rs); only where that failed, or the person took it
    off, does the program's full path stand in.
 
+   Since 2026-10-02: still its own tab, since assistants are how many people
+   work now, with the paragraphs behind an "i" beside each step rather than
+   long sentences on the screen.
+
+   Since 2026-10-10: the two
+   texts were two walls of text, 300 px of the first before its button. They
+   are two short cards side by side now, each with its first four lines, its
+   Copy button and "Show the full text", which unfolds it in place.
+
    Keep this page, the README's "For AI assistants" and command-line-tool/src/mcp.rs saying
    the same thing. */
 
@@ -32,6 +42,7 @@ const MEMORY = `HProxy (the MCP server "hproxy") handles everything about proxie
 - proxy_check tests proxy lines in any format and returns the working ones, fastest first.
 - proxy_list gives free public proxies; verify=true tests them here first.
 - ip_lookup says where an address is.
+- proxy_places lists the proxies and groups I saved in the HProxy app; proxy_connect {place: "name"} uses one of them by name.
 - proxy_connect starts a local proxy on 127.0.0.1 that forwards through a proxy with its login added; use the http_proxy it returns with curl, a browser or Playwright.
 - proxy_status, proxy_new_ip and proxy_disconnect show, change and stop that connection.
 - app_open opens the HProxy app for me, or wakes it in the tray (background=true).
@@ -40,10 +51,18 @@ Never ask for or repeat proxy passwords. If a call fails, the answer names the r
 /** The command line in a shell: quoted when the path has spaces. */
 const shellArg = (s: string) => (/\s/.test(s) ? `"${s}"` : s);
 
+/* One text does it all, memory first (2026-10-12): saving the note to the
+   assistant's memory is its first step, never a second copy. The note used
+   to close the text as "Then remember this", and a second card offered it on
+   its own. */
 function setupPrompt(cmd: string): string {
-  return `Please add HProxy to your tools. It is a local MCP server (stdio) on this computer that checks proxies and connects through them.
+  return `Please set up HProxy for me. It is a local MCP server (stdio) on this computer that checks proxies and connects through them.
 
-Add this MCP server to your own settings:
+1. First, save this note to your permanent memory (your memory, your rules, CLAUDE.md or AGENTS.md), so you know HProxy in every chat from now on:
+
+${MEMORY}
+
+2. Then add this MCP server to your own settings:
   name: hproxy
   command: ${cmd}
   args: mcp
@@ -51,9 +70,7 @@ Add this MCP server to your own settings:
 As JSON, for most apps: {"mcpServers": {"hproxy": {"command": ${JSON.stringify(cmd)}, "args": ["mcp"]}}}
 VS Code calls the list "servers" and needs "type": "stdio". Codex takes [mcp_servers.hproxy] in ~/.codex/config.toml. Claude Code: claude mcp add hproxy -- ${shellArg(cmd)} mcp
 
-Tell me if you need a restart to see it. Then remember this:
-
-${MEMORY}`;
+3. Tell me if you need a restart to see it.`;
 }
 
 type Setup = { name: string; mark: MarkName; where: ReactNode; snippet: (cmd: string) => string };
@@ -144,15 +161,19 @@ const SETUPS: Setup[] = [
   },
 ];
 
-const TOOLS: { name: string; what: string }[] = [
-  { name: "Check proxies", what: "Tests a list from this computer: works or not, protocols, anonymity, latency, the exit and its country. Working ones fastest first." },
-  { name: "Free proxies", what: "Free public proxies from hproxy.com's live pool, tested here first when asked." },
-  { name: "IP lookup", what: "Country, city, time zone and network of any address." },
-  { name: "Connect through a proxy", what: "Starts a password-free proxy on 127.0.0.1 that adds the login on the way out, for curl, Playwright or a browser." },
-  { name: "Connection status", what: "What is running, through which proxy (password masked), and the traffic." },
-  { name: "New IP", what: "Moves to the next proxy of a list or a fresh free exit." },
-  { name: "Disconnect", what: "Stops the local proxy." },
-  { name: "Open HProxy", what: "Opens this app's window for you, or wakes it in the tray, when your agent has something to show you." },
+/* What the agent can do: every tool command-line-tool/src/mcp.rs serves but
+   its own help, in the order a job goes, each with its mark (2026-10-12,
+   after a plain list of names and lines). Saved proxies was missing. */
+const TOOLS: { name: string; what: string; tool: string; icon: (p: { className?: string }) => JSX.Element }[] = [
+  { name: "Check proxies", what: "Tests a list here, the working ones fastest first", tool: "proxy_check", icon: Icon.listCheck },
+  { name: "Your proxies", what: "The proxies and groups saved in this app, by name", tool: "proxy_places", icon: Icon.layers },
+  { name: "Free proxies", what: "Free public proxies, tested here first", tool: "proxy_list", icon: Icon.globe },
+  { name: "Connect through a proxy", what: "A local proxy that adds the login for you", tool: "proxy_connect", icon: Icon.connect },
+  { name: "New IP", what: "The next proxy of a group, or a fresh free one", tool: "proxy_new_ip", icon: Icon.refresh },
+  { name: "Connection status", what: "What runs, through which proxy, the traffic", tool: "proxy_status", icon: Icon.pulse },
+  { name: "IP lookup", what: "Country, city and network of any address", tool: "ip_lookup", icon: Icon.search },
+  { name: "Disconnect", what: "Stops the local proxy", tool: "proxy_disconnect", icon: Icon.power },
+  { name: "Open HProxy", what: "Opens this app, or wakes it in the tray", tool: "app_open", icon: Icon.laptop },
 ];
 
 const ASKS = [
@@ -162,28 +183,78 @@ const ASKS = [
   "Give me a new IP and tell me where it is.",
 ];
 
-function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+function Step({ n, title, info, children }: { n: number; title: string; info?: ReactNode; children: ReactNode }) {
   return (
     <div className="flex gap-4">
       <span className="num w-6 shrink-0 pt-0.5 text-[22px] font-extrabold leading-none text-accent-ink">{n}</span>
       <div className="min-w-0 flex-1">
-        <p className="text-[15.5px] font-bold text-ink">{title}</p>
+        <p className="flex items-center gap-1.5 text-[15.5px] font-bold text-ink">
+          {title}
+          {info && <InfoTip label={title}>{info}</InfoTip>}
+        </p>
         <div className="mt-2">{children}</div>
       </div>
     </div>
   );
 }
 
-function Block({ text, id, copied, onCopy, big = false }: { text: string; id: string; copied: string | null; onCopy: (id: string, t: string) => void; big?: boolean }) {
+/** The text for the agent as a card: its step, Copy, and the text itself on request. */
+function CopyCard({
+  n,
+  title,
+  info,
+  text,
+  id,
+  copied,
+  onCopy,
+}: {
+  n: number;
+  title: string;
+  info: string;
+  text: string;
+  id: string;
+  copied: string | null;
+  onCopy: (id: string, t: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const lines = text.split("\n").length;
+  return (
+    <div className="ux-copycard">
+      <p className="head">
+        <span className="n num">{n}</span>
+        {title}
+        <InfoTip label={title}>{info}</InfoTip>
+      </p>
+      {/* The text itself only on request: the button copies it whole (2026-10-12: less text on the page). */}
+      {open && (
+        <pre className="num text" data-open>
+          {text}
+        </pre>
+      )}
+      <div className="actions">
+        <Button variant="solid" onClick={() => onCopy(id, text)}>
+          <Icon.copy className="h-4 w-4" />
+          {copied === id ? "Copied" : "Copy for my AI agent"}
+        </Button>
+        <button type="button" className="ux-link" onClick={() => setOpen((v) => !v)}>
+          {open ? "Hide the text" : `See the text, ${lines} lines`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** A setup by hand: the snippet and its Copy. */
+function Block({ text, id, copied, onCopy }: { text: string; id: string; copied: string | null; onCopy: (id: string, t: string) => void }) {
   return (
     <div className="flex flex-col gap-2.5">
       <Card tone="sunken" pad="tight">
-        <pre className={`num max-h-[300px] overflow-auto whitespace-pre-wrap leading-relaxed text-ink ${big ? "text-[13.5px] font-medium" : "text-[13px] font-semibold"}`}>{text}</pre>
+        <pre className="num max-h-[300px] overflow-auto whitespace-pre-wrap text-[13px] font-semibold leading-relaxed text-ink">{text}</pre>
       </Card>
       <div>
-        <Button variant={big ? "solid" : "soft"} size={big ? "lg" : "sm"} onClick={() => onCopy(id, text)}>
-          <Icon.copy className={big ? "h-[18px] w-[18px]" : "h-4 w-4"} />
-          {copied === id ? "Copied" : big ? "Copy for my AI agent" : "Copy"}
+        <Button variant="soft" size="sm" onClick={() => onCopy(id, text)}>
+          <Icon.copy className="h-4 w-4" />
+          {copied === id ? "Copied" : "Copy"}
         </Button>
       </div>
     </div>
@@ -209,29 +280,27 @@ export default function UseWithAi() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-[1100px] flex-col gap-3 px-6 pb-8 pt-1.5 max-sm:px-3">
-        <Card pad="roomy">
+        <Card tone="flat" pad="roomy">
           <PageHead
             title="Use with AI"
-            sub="Your AI agent checks proxies and connects through them, and never sees a password."
+            info="Your AI agent checks proxies and connects through them, and never sees a password."
             aside={<WorksWith label="Works with every MCP agent" />}
           />
 
-          <div className="mt-7 flex flex-col gap-8">
-            <Step n={1} title="Copy this into your AI agent">
-              <p className="mb-3 max-w-[76ch] text-[14px] font-medium leading-relaxed text-ink-mute">
-                Paste it into the chat. Your agent adds HProxy to its own settings and remembers how to use it. Some apps need a restart to see it.
-              </p>
-              <Block id="prompt" text={setupPrompt(cmd)} copied={copied} onCopy={copy} big />
-            </Step>
+          <div className="mt-7">
+            <CopyCard
+              n={1}
+              title="Copy this into your AI agent"
+              info="Paste it into the chat. Your agent first saves HProxy to its memory, so it knows it in every chat, then adds it to its own settings. Some apps need a restart to see it."
+              id="prompt"
+              text={setupPrompt(cmd)}
+              copied={copied}
+              onCopy={copy}
+            />
+          </div>
 
-            <Step n={2} title="Add this to its memory">
-              <p className="mb-3 max-w-[76ch] text-[14px] font-medium leading-relaxed text-ink-mute">
-                Already in the text above. On its own, for agents that keep notes between chats (CLAUDE.md, AGENTS.md, rules, memory).
-              </p>
-              <Block id="memory" text={MEMORY} copied={copied} onCopy={copy} />
-            </Step>
-
-            <Step n={3} title="Or set it up yourself">
+          <div className="mt-8 flex flex-col gap-8">
+            <Step n={2} title="Or set it up yourself">
               <div className="flex flex-wrap gap-1.5">
                 {SETUPS.map((s) => (
                   <Chip key={s.name} on={pick === s.name} onClick={() => setPick(pick === s.name ? null : s.name)}>
@@ -248,34 +317,45 @@ export default function UseWithAi() {
               )}
             </Step>
 
-            <Step n={4} title="Then just ask">
-              <div className="grid gap-2 md:grid-cols-2">
+            <Step n={3} title="Then just ask">
+              {/* Quotes, not boxes: a line in our blue beside each. */}
+              <div className="grid gap-x-6 gap-y-3 md:grid-cols-2">
                 {ASKS.map((q) => (
-                  <Card key={q} tone="sunken" pad="tight">
-                    <p className="text-[14px] font-semibold leading-relaxed text-ink">“{q}”</p>
-                  </Card>
+                  <p key={q} className="border-l-2 border-[var(--digi)] pl-3 text-[14px] font-medium leading-relaxed text-ink">
+                    “{q}”
+                  </p>
                 ))}
               </div>
             </Step>
           </div>
         </Card>
 
-        <Card pad="roomy">
-          <BlockTitle name="What your agent can do" value={`${TOOLS.length} tools`} />
-          <div className="mt-3 flex flex-col">
+        <Card tone="flat" pad="roomy">
+          <BlockTitle
+            name="What your agent can do"
+            info={
+              <>
+                <p>
+                  A mistake is answered with the way out: a wrong tool or argument gets the closest real one and every choice, so even a simple agent
+                  finds its way.
+                </p>
+                <p>
+                  A connection your agent opens is never hidden: <b className="num">{shellArg(cmd)} status</b> shows it and{" "}
+                  <b className="num">{shellArg(cmd)} stop</b> ends it.
+                </p>
+              </>
+            }
+          />
+          {/* A grid of marks, not a table: each tool's mark in our blue, its name, one line. */}
+          <div className="ux-toolgrid mt-5">
             {TOOLS.map((t) => (
-              <div key={t.name} className="flex flex-wrap items-baseline gap-x-6 gap-y-1 border-t border-[var(--divider)] py-3 first:border-t-0">
-                <span className="w-56 shrink-0 text-[14.5px] font-bold text-ink">{t.name}</span>
-                {/* min-w-[12rem], not min-w-0: with no floor the text stayed beside the name on a phone, one word per line. */}
-                <span className="min-w-[12rem] flex-1 text-[14px] font-medium leading-relaxed text-ink-mute">{t.what}</span>
+              <div key={t.name} className="tool" title={`The tool ${t.tool}`}>
+                <t.icon className="mark" />
+                <p className="name">{t.name}</p>
+                <p className="what">{t.what}</p>
               </div>
             ))}
           </div>
-          <p className="mt-3 max-w-[80ch] text-[13.5px] font-medium leading-relaxed text-ink-mute">
-            A mistake is answered with the way out: a wrong tool or argument gets the closest real one and every choice, so even a simple agent finds
-            its way. A connection your agent opens is never hidden: it shows under <span className="num font-semibold text-ink">{shellArg(cmd)} status</span>{" "}
-            and <span className="num font-semibold text-ink">{shellArg(cmd)} stop</span> ends it.
-          </p>
         </Card>
       </div>
     </div>

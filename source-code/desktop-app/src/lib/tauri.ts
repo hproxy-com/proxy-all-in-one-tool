@@ -3,6 +3,8 @@
    runs its seeded simulation instead of invoking the engine. */
 
 import type { CheckResult } from "./checker";
+import type { GroupInput, LibraryView, MemberView, Place, PlacesStart, ProxyView } from "./places";
+import type { WindowStorage } from "./windowStorage";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -33,6 +35,45 @@ export function isStoreInstall(): Promise<boolean> {
 export function thisDevice(capital = false): string {
   const words = isMobile() ? "this device" : "this computer";
   return capital ? `T${words.slice(1)}` : words;
+}
+
+/* The phone's own controls (src-tauri/src/phone.rs; on Android
+   PhonePlugin.kt). Each one does nothing in a browser or on a computer, so a
+   screen never has to ask where it runs. */
+
+/** A short buzz under the finger: `tick` for a tab or a choice, `press` for
+    the big button, `confirm` when a connection comes up, `reject` when it
+    fails. The phone's own touch feedback setting decides whether it is felt. */
+export type Buzz = "tick" | "press" | "confirm" | "reject";
+
+/** The room the phone's own bars take over the page, in CSS pixels. */
+export type Insets = { top: number; right: number; bottom: number; left: number };
+
+async function phoneCall<T>(command: string, args?: Record<string, unknown>): Promise<T | null> {
+  if (!isTauri() || !isMobile()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(command, args);
+}
+
+/** The status bar's icons, light on a dark page and dark on a white one, and
+    the page's colour, which the phone shows behind the page before it draws
+    at the next start. */
+export async function phoneColors(dark: boolean, canvas: string): Promise<void> {
+  await phoneCall("phone_colors", { dark, canvas });
+}
+
+export async function phoneBuzz(kind: Buzz): Promise<void> {
+  await phoneCall("phone_buzz", { kind });
+}
+
+/** The app to the background, still running, the way Home does it. */
+export async function phoneToBackground(): Promise<void> {
+  await phoneCall("phone_to_background");
+}
+
+/** What the system bars cover, as the phone measures it. Null off a phone. */
+export function phoneInsets(): Promise<Insets | null> {
+  return phoneCall<Insets>("phone_insets");
 }
 
 export type CheckArgs = {
@@ -191,15 +232,6 @@ export type SystemProxySupport =
   | { kind: "automatic"; how: string }
   | { kind: "manual"; why: string; steps: string };
 
-/** What to connect through. Mirrors `ConnectSource` on the Rust side. A free
-    source with `exit` (host:port, picked from the Free tab's list) starts on
-    that proxy; without it the relay tests the pool and takes the first that
-    works. Either way another free proxy takes over when the one in use dies. */
-export type ConnectSourceArg =
-  | { kind: "fixed"; line: string }
-  | { kind: "list"; lines: string[]; rotation: { rule: RotationRule; n?: number } }
-  | { kind: "free"; country?: string | null; socks5: boolean; exit?: string };
-
 /** One free proxy from the pool, not tested yet. Mirrors `FreeExit` in
     src-tauri/src/connect.rs. */
 export type FreeExit = {
@@ -217,7 +249,13 @@ export type FreeExit = {
 /** One free proxy tested from this computer. Mirrors `FreeTest`. */
 export type FreeTest = { ok: boolean; ms?: number | null; why?: string | null };
 
-export type RotationRule = "every_connection" | "every_n" | "random" | "on_failure";
+/** One country of the free pool. Mirrors `FreeCountry` in src-tauri/src/connect.rs. */
+export type FreeCountry = {
+  /** Two-letter code, upper case. */
+  code: string;
+  /** Free proxies of every protocol in the pool, untested. */
+  count: number;
+};
 
 /** The relay's live counters. */
 export type RelayStats = {
@@ -241,6 +279,10 @@ export type RelayHealth = {
   asn_org?: string | null;
   /** The exit's IANA time zone, e.g. "Europe/Berlin", when known. */
   timezone?: string | null;
+  /** Where the exit is: its city when known, else the middle of its country
+      (the Connect map zooms there, DotMap.tsx). */
+  latitude?: number | null;
+  longitude?: number | null;
   error?: string | null;
   checked_at_ms: number;
   failures_in_a_row: number;
@@ -261,6 +303,9 @@ export type SourceInfo = {
   /** The pool's description of the exit: place and latency. */
   detail?: string | null;
   can_rotate: boolean;
+  /** For a group, the member in use: its place in the group (from 0), as
+      placesGroupMembers numbers it. */
+  member?: number | null;
 };
 
 export type ConnectStatus = {
@@ -274,7 +319,89 @@ export type ConnectStatus = {
   started_at_ms?: number | null;
   stats?: RelayStats | null;
   health?: RelayHealth | null;
+  /** The place connected through, whoever started it (the window or the tray). */
+  place?: Place | null;
 };
+
+/** What a proxy line's username targets. Mirrors `Targeting` in
+    proxy-engine/hproxy-places/src/targeting.rs; empty fields were not in it. */
+export type Targeting = {
+  /** Two-letter code, upper case. */
+  country?: string | null;
+  /** A state or region, as the provider spells it. */
+  region?: string | null;
+  city?: string | null;
+  asn?: string | null;
+  /** The session the line holds: the same exit while it lasts. */
+  session?: string | null;
+  /** How long the session holds, in minutes. */
+  minutes?: number | null;
+};
+
+/** What each line targets, in the order given (src-tauri/src/places.rs):
+    null for a line that targets nothing or cannot be read. The browser
+    preview reads nothing. For lines not saved yet (a paste being reviewed);
+    saved proxies carry it in their view. */
+export async function describeLines(lines: string[]): Promise<(Targeting | null)[]> {
+  if (!isTauri() || lines.length === 0) return lines.map(() => null);
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<(Targeting | null)[]>("describe_lines", { lines });
+}
+
+/* ── Places: the person's proxies, groups and pick, kept by the app ────────
+   (src-tauri/src/places.rs). The window holds a view without passwords and
+   asks for every change by id; each change answers with the view after it.
+   In a browser, lib/previewPlaces.ts keeps a pretend library for the page's
+   life. */
+
+/** Lines saved, with the id of each one saved now, in the order given. */
+export type PlacesAdded = { view: LibraryView; ids: string[] };
+
+async function placesCall<T>(command: string, args: Record<string, unknown>, preview: (p: typeof import("./previewPlaces")) => T | Promise<T>): Promise<T> {
+  if (!isTauri()) return preview(await import("./previewPlaces"));
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(command, args);
+}
+
+/** The library as it is, and whether the window's old storage moved in yet. */
+export const placesGet = () => placesCall<PlacesStart>("places_get", {}, (p) => p.demoPlacesGet());
+
+/** The window's old storage, once (later calls change nothing). */
+export const placesMoveFromWindow = (old: WindowStorage) =>
+  placesCall<LibraryView>("places_move_from_window", { old }, (p) => p.demoPlacesMove(old));
+
+/** Save lines as proxies: new ones on top, unreadable ones left out. */
+export const placesAdd = (lines: string[]) => placesCall<PlacesAdded>("places_add", { lines }, (p) => p.demoPlacesAdd(lines));
+
+/** Name a saved proxy; an empty name takes the name away. */
+export const placesRename = (id: string, name: string) =>
+  placesCall<LibraryView>("places_rename", { id, name }, (p) => p.demoPlacesRename(id, name));
+
+export const placesForget = (id: string) => placesCall<LibraryView>("places_forget", { id }, (p) => p.demoPlacesForget(id));
+
+/** Pick the place the switch connects to (null: nothing). Rejects for a proxy or group that is gone. */
+export const placesPick = (place: Place | null) => placesCall<LibraryView>("places_pick", { place }, (p) => p.demoPlacesPick(place));
+
+/** Save a group (a new one has no id). Rejects when no line can be read. */
+export const placesGroupSave = (group: GroupInput) =>
+  placesCall<PlacesAdded>("places_group_save", { group }, (p) => p.demoPlacesGroupSave(group));
+
+export const placesGroupForget = (id: string) =>
+  placesCall<LibraryView>("places_group_forget", { id }, (p) => p.demoPlacesGroupForget(id));
+
+/** A group's lines, passwords included: for its editor and for the Checker,
+    both asked for by the person, never for showing. */
+export const placesGroupLines = (id: string) => placesCall<string[]>("places_group_lines", { id }, (p) => p.demoPlacesGroupLines(id));
+
+/** Some of a group's members, without passwords: from `from`, at most `count` (1000 a call). */
+export const placesGroupMembers = (id: string, from: number, count: number) =>
+  placesCall<MemberView[]>("places_group_members", { id, from, count }, (p) => p.demoPlacesGroupMembers(id, from, count));
+
+/** A saved proxy's line, password included, when the person asks to copy it. */
+export const placesProxyLine = (id: string) => placesCall<string>("places_proxy_line", { id }, (p) => p.demoPlacesProxyLine(id));
+
+/** Check a saved proxy again, by id; what it finds is kept with it. */
+export const placesCheck = (id: string) => placesCall<ProxyView>("places_check", { id }, (p) => p.demoPlacesCheck(id));
 
 /** Read one line the way the engine will. Rejects with the engine's sentence. */
 export async function parseLine(line: string): Promise<ParsedLine> {
@@ -290,7 +417,11 @@ export async function parseLine(line: string): Promise<ParsedLine> {
 /** Check one proxy for real, with its location: the look before connecting.
     A dead proxy resolves with `alive: false`; only an unreadable line rejects. */
 export async function checkLine(line: string): Promise<CheckResult> {
-  if (!isTauri()) return (await import("./previewConnect")).demoCheckLine(line);
+  if (!isTauri()) {
+    const r = await (await import("./previewConnect")).demoCheckLine(line);
+    (await import("./previewPlaces")).demoChecked(line, r);
+    return r;
+  }
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<CheckResult>("check_line", { line });
 }
@@ -298,21 +429,20 @@ export async function checkLine(line: string): Promise<CheckResult> {
 /* In a browser there is no relay. The preview module plays one, so the screen
    can be looked at in every state; the app itself never loads it. */
 
-export async function connectStart(
-  source: ConnectSourceArg,
-  systemProxy: boolean,
-  listen?: string,
-  probeUrl?: string,
-): Promise<ConnectStatus> {
+/** Connect to a place, or switch to it while connected (the relay keeps its
+    port and the system proxy stays as it is). The app reads the place's lines
+    itself, counts the use and remembers it as the pick. A group starts on
+    `member` when one is given (its place in the group, from 0). */
+export async function connectStart(place: Place, systemProxy: boolean, listen?: string, probeUrl?: string, member?: number): Promise<ConnectStatus> {
   if (!isTauri()) {
     // The real relay takes a moment to start and pass its first check; the
     // preview waits about as long, so the connecting state can be seen.
     const pretend = await import("./previewConnect");
     await pretend.pretendWait(1500);
-    return pretend.demoConnectStart(source, systemProxy, probeUrl);
+    return pretend.demoConnectStart(place, systemProxy, probeUrl, member);
   }
   const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<ConnectStatus>("connect_start", { source, listen: listen ?? null, systemProxy, probeUrl: probeUrl ?? null });
+  return invoke<ConnectStatus>("connect_start", { place, listen: listen ?? null, systemProxy, probeUrl: probeUrl ?? null, member: member ?? null });
 }
 
 /** Point the running probe at another server (Settings, "Connect check").
@@ -337,6 +467,13 @@ export async function connectStatus(): Promise<ConnectStatus> {
   if (!isTauri()) return (await import("./previewConnect")).demoConnectStatus();
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<ConnectStatus>("connect_status");
+}
+
+/** Every country the free pool has proxies in, the most first. */
+export async function freeCountries(): Promise<FreeCountry[]> {
+  if (!isTauri()) return (await import("./previewConnect")).demoFreeCountries();
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<FreeCountry[]>("free_countries");
 }
 
 /** The free proxies of a country (empty or null: anywhere), best first, not
@@ -431,6 +568,20 @@ export async function connectRotate(): Promise<ConnectStatus> {
   return invoke<ConnectStatus>("connect_rotate");
 }
 
+/** Back to the member of the connected group before the one in use. */
+export async function connectBack(): Promise<ConnectStatus> {
+  if (!isTauri()) return (await import("./previewConnect")).demoConnectBack();
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<ConnectStatus>("connect_back");
+}
+
+/** One member of the connected group, by its place in it (from 0), in use from now. */
+export async function connectMember(member: number): Promise<ConnectStatus> {
+  if (!isTauri()) return (await import("./previewConnect")).demoConnectMember(member);
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<ConnectStatus>("connect_member", { member });
+}
+
 /** One probe through the relay right now. */
 export async function connectProbe(): Promise<ConnectStatus> {
   if (!isTauri()) return (await import("./previewConnect")).demoConnectProbe();
@@ -458,16 +609,11 @@ export async function setKeepRunning(enabled: boolean): Promise<void> {
   await invoke("set_keep_running", { enabled });
 }
 
-/** The tray's "Connect": the window connects to the place picked last. */
-export async function onTrayConnect(cb: () => void): Promise<() => void> {
-  if (!isTauri()) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen("tray-connect", () => cb());
-}
-
-/** The relay started or stopped, from the window or from the tray. */
+/** The relay started or stopped, from the window or from the tray. The tray
+    connects by itself (src-tauri/src/tray.rs reads the places), so this is
+    also the word that a place was used: the window reads its places again. */
 export async function onRelayChanged(cb: (connected: boolean) => void): Promise<() => void> {
-  if (!isTauri()) return () => {};
+  if (!isTauri()) return (await import("./previewConnect")).onDemoRelayChanged(cb);
   const { listen } = await import("@tauri-apps/api/event");
   return listen<boolean>("relay-changed", (e) => cb(!!e.payload));
 }

@@ -15,27 +15,32 @@ beforeEach(() => {
   } as Storage;
 });
 
-describe("white by default (2026-09-23)", () => {
-  it("opens white on a fresh install", () => {
-    expect(loadSettings().theme).toBe("electric");
-    expect(DEFAULT_SETTINGS.theme).toBe("electric");
+describe("dark by default (2026-10-05)", () => {
+  it("opens dark on a fresh install", () => {
+    expect(loadSettings().theme).toBe("midnight");
+    expect(DEFAULT_SETTINGS.theme).toBe("midnight");
   });
 
-  /* The app saved its defaults on first run, so a stored "midnight" from
-     before look D is the old default, not anyone's choice: it moves to white
-     once. Everything else the person set stays. */
-  it("moves settings saved before look D to white once, keeping the rest", () => {
-    store.set("hproxy-checker-settings", JSON.stringify({ theme: "midnight", concurrency: 300, protocols: { socks4: false } }));
+  /* The app saved its defaults on first run, so a stored "electric" from the
+     white days (look d-2026-09-23) is mostly that default, not anyone's
+     choice: it moves to dark once. Everything else the person set stays. */
+  it("moves settings saved in the white days to dark once, keeping the rest", () => {
+    store.set("hproxy-checker-settings", JSON.stringify({ theme: "electric", look: "d-2026-09-23", concurrency: 300, protocols: { socks4: false } }));
     const s = loadSettings();
-    expect(s.theme).toBe("electric");
+    expect(s.theme).toBe("midnight");
     expect(s.concurrency).toBe(300);
     expect(s.protocols).toEqual({ http: true, https: true, socks4: false, socks5: true });
   });
 
-  it("keeps dark once it was picked in look D", () => {
-    saveSettings({ ...DEFAULT_SETTINGS, theme: "midnight" });
+  it("moves settings older than that to dark too", () => {
+    store.set("hproxy-checker-settings", JSON.stringify({ theme: "electric" }));
     expect(loadSettings().theme).toBe("midnight");
-    expect(JSON.parse(store.get("hproxy-checker-settings") ?? "{}").look).toBe("d-2026-09-23");
+  });
+
+  it("keeps white once it was picked after the move", () => {
+    saveSettings({ ...DEFAULT_SETTINGS, theme: "electric" });
+    expect(loadSettings().theme).toBe("electric");
+    expect(JSON.parse(store.get("hproxy-checker-settings") ?? "{}").look).toBe("dark-2026-10-05");
   });
 
   it("reads corrupt storage as the defaults", () => {

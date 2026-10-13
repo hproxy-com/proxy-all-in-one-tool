@@ -1,0 +1,669 @@
+/* ── Proxies and the IP pill (2026-09-30) ───────────────────────────────────
+   The Proxies page's own parts (ProxiesPage.tsx) and the address you appear as
+   in the title bar (IpPill.tsx); Recent on Connect uses the place rows below.
+   Nothing see-through: everything is the page's own solid colours and lines. */
+
+/* The Proxies page's parts, since 2026-10-12 (until then a second track of
+   pills like the title bar's). The
+   title bar's hanging tabs are the pages; a page's parts are its words on a
+   hairline: the current one in ink with the H's crossbar under it, which
+   slides to the next (ProxiesPage.tsx useCrossbar), a count in a hairline tag. */
+.ux-pagetabs {
+  position: relative;
+  display: flex;
+  gap: 30px;
+  border-bottom: 1px solid var(--hairline);
+}
+.ux-pagetabs > button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 9px;
+  height: 48px;
+  padding: 0 2px;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 750;
+  letter-spacing: -0.012em;
+  color: var(--ink-mute);
+  background: transparent;
+  transition: color 160ms ease;
+}
+.ux-pagetabs > button:hover,
+.ux-pagetabs > button[aria-current="page"] {
+  color: var(--ink);
+}
+.ux-pagetabs > button:focus-visible {
+  outline: 2px solid var(--digi);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.ux-pagetabs .count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px 3px 8px 3px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink-mute);
+}
+.ux-pagetabs > button[aria-current="page"] .count {
+  border-color: var(--bar);
+  color: var(--ink);
+}
+.ux-pagetabs-bar {
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--digi);
+  transition:
+    transform 420ms var(--glide),
+    width 420ms var(--glide);
+}
+.ux-pagetabs-bar[data-still] {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ux-pagetabs-bar {
+    transition: none;
+  }
+}
+@media (max-width: 640px) {
+  .ux-pagetabs {
+    gap: 22px;
+    overflow-x: auto;
+  }
+  .ux-pagetabs > button {
+    font-size: 16px;
+  }
+}
+
+/* The address you appear as, in the title bar. */
+.ux-ippill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  max-width: 320px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  cursor: pointer;
+  border-radius: 11px 4px 11px 4px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  color: var(--ink-mute);
+  background: var(--card);
+}
+.ux-ippill:hover {
+  color: var(--ink);
+}
+.ux-ippill .dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ink-soft);
+}
+/* What the pill says: a new state rises in from below, inside the pill. */
+.ux-ippill .said {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  animation: ux-said-rise 420ms var(--glide) both;
+}
+@keyframes ux-said-rise {
+  from {
+    transform: translateY(26px);
+  }
+}
+/* Something is happening: the dot beats. */
+.ux-ippill[data-busy] .dot {
+  animation: ux-dot-beat 900ms ease-in-out infinite;
+}
+@keyframes ux-dot-beat {
+  50% {
+    scale: 1.5;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ux-ippill .said,
+  .ux-ippill[data-busy] .dot {
+    animation: none;
+  }
+}
+.ux-ippill[data-tone="ok"] .dot {
+  background: var(--ok);
+}
+.ux-ippill[data-tone="warn"] .dot {
+  background: var(--warn);
+}
+.ux-ippill[data-tone="ok"] {
+  color: var(--ink);
+}
+.ux-ippill .ip {
+  flex: none;
+  font-weight: 700;
+}
+/* Short of room (a narrow window, a long city, the window's own buttons),
+   the city shortens first; the flag and the address stay whole. */
+.ux-ippill {
+  min-width: 0;
+}
+.ux-ippill .said {
+  overflow: hidden;
+}
+.ux-ippill .said > .ux-flag {
+  flex: none;
+}
+.ux-ippill .where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-mute);
+}
+/* The title bar's right side (TitleBar.tsx) holds the pill, an update when one
+   is ready, and the window's buttons. There the pill never shrinks: when the
+   whole of it does not fit, the city is set aside, and when the address alone
+   does not fit either, the pill is (Connect shows it). Never cut ("Fr…",
+   "203.0.1…"), never squeezing the tabs. Set aside rather than display: none,
+   so its width stays known (useAddressFit). */
+.ux-titleright .ux-ippill {
+  flex: none;
+  max-width: none;
+}
+.ux-titleright:is([data-address="short"], [data-address="none"]) .ux-ippill .where,
+.ux-titleright[data-address="none"] .ux-ippill {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* A small icon button with no fill: Test now beside the round trip. */
+.ux-iconlink {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  border-radius: 8px 3px 8px 3px;
+  vertical-align: middle;
+  color: var(--ink-mute);
+  background: none;
+  transition: color 160ms ease;
+}
+.ux-iconlink:hover {
+  color: var(--ink);
+}
+.ux-iconlink:disabled {
+  cursor: default;
+  opacity: 0.5; /* see-through: allowed, an icon with no fill behind it */
+}
+.ux-iconlink > svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* ── Place rows (PlaceRow.tsx, 2026-09-30) ──────────────────────────────────
+   Every list of places: a click connects. Hover: a hairline and the word for
+   the click. Connected: the chosen white, its edge, and a bar of HProxy blue
+   on the left. Nothing see-through. */
+.ux-places {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ux-place {
+  --cut-big: 12px;
+  --cut-small: 4px;
+  position: relative;
+  border-radius: var(--cut-big) var(--cut-small) var(--cut-big) var(--cut-small);
+  transition: box-shadow 160ms ease;
+}
+.ux-place:not(.is-on):hover {
+  box-shadow: inset 0 0 0 1px var(--bar);
+}
+.ux-place.is-on {
+  background: var(--chosen);
+  box-shadow: var(--chosen-edge);
+}
+.ux-place.is-on::before {
+  content: "";
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: 0;
+  width: 4px;
+  border-radius: 0 3px 3px 0;
+  background: var(--digi);
+}
+/* Asking before something goes: the chosen white, and a red bar. */
+.ux-place.is-confirm {
+  background: var(--chosen);
+  box-shadow: var(--chosen-edge);
+}
+.ux-place.is-confirm::before {
+  content: "";
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: 0;
+  width: 4px;
+  border-radius: 0 3px 3px 0;
+  background: var(--danger);
+}
+.ux-place.is-confirm .lead {
+  color: var(--danger);
+}
+/* A free proxy that failed its test: the mark in red. */
+.ux-place.is-bad .lead {
+  color: var(--danger);
+}
+.ux-place[data-press="down"] {
+  scale: 0.99;
+  transition: scale 90ms ease-out;
+}
+.ux-place[data-press="up"] {
+  animation: ux-press-row 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.ux-place .line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 54px;
+  padding-right: 6px;
+}
+.ux-place .main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  align-self: stretch;
+  padding: 6px 8px 6px 14px;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+}
+.ux-place .main[aria-disabled="true"] {
+  cursor: default;
+}
+.ux-place .lead {
+  display: grid;
+  width: 28px;
+  flex: none;
+  place-items: center;
+  color: var(--accent-ink);
+}
+.ux-place .lead > svg {
+  width: 18px;
+  height: 18px;
+}
+.ux-place .text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.ux-place .name {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink);
+}
+.ux-place .sub {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink-mute);
+}
+.ux-place .sub.is-bad {
+  font-weight: 650;
+  white-space: normal;
+  color: var(--danger);
+}
+/* The word for the click: shown while the pointer or the keyboard is on the row. */
+.ux-place .word {
+  flex: none;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-ink);
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+.ux-place .main:hover .word,
+.ux-place .main:focus-visible .word,
+.ux-place .word.is-busy {
+  opacity: 1;
+}
+.ux-place .word.is-busy {
+  color: var(--ink-mute);
+}
+.ux-place .state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ok);
+}
+.ux-place .state i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.ux-place .speed {
+  display: inline-flex;
+  min-width: 86px;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.ux-place .speed.is-checking {
+  font-weight: 600;
+  color: var(--ink-mute);
+}
+.ux-place .aside {
+  flex: none;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+  color: var(--ink-mute);
+}
+.ux-place .expand svg {
+  width: 16px;
+  height: 16px;
+  transition: transform 160ms ease;
+}
+.ux-place .expand[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+/* What a row opens to (a free country's tested proxies), under its name. */
+.ux-place .more {
+  padding: 2px 8px 14px 54px;
+}
+@media (hover: none) {
+  .ux-place .word:not(.is-busy) {
+    display: none;
+  }
+}
+@media (max-width: 639px) {
+  .ux-place .word:not(.is-busy) {
+    display: none;
+  }
+  .ux-place .speed {
+    min-width: 0;
+  }
+  .ux-place .more {
+    padding-left: 12px;
+  }
+}
+
+/* The ⋯ menu of a row. Hover: the words change colour and a hairline shows. */
+.ux-rowmenu {
+  display: flex;
+  min-width: 200px;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px;
+}
+.ux-rowmenu .item {
+  padding: 9px 12px;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 9px 3px 9px 3px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  color: var(--ink);
+  background: none;
+}
+.ux-rowmenu .item:hover,
+.ux-rowmenu .item:focus-visible {
+  color: var(--accent-ink);
+  box-shadow: inset 0 0 0 1px var(--bar);
+}
+.ux-rowmenu .item.is-danger {
+  color: var(--danger);
+}
+
+/* The bar above a list: search, order, test all, add. */
+.ux-listbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ux-listbar > .grow {
+  min-width: 200px;
+  flex: 1;
+}
+
+/* Adding proxies: the paste field and what it says, in a solid well. */
+.ux-addbox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px 5px 14px 5px;
+  background: var(--well);
+}
+
+/* Naming a saved proxy (NameField in Destinations.tsx): the field takes the
+   name's place in the row at about the name's height, so the row does not
+   jump when it opens. */
+.ux-place .text .ux-namefield {
+  height: 30px;
+  max-width: 420px;
+  padding: 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* ── The Free tab (2026-09-30) ──────────────────────────────────────────────
+   The one-line note above the countries (FreeWarning in Destinations.tsx);
+   the rows themselves are place rows, above. Solid fills only. */
+
+/* What free proxies are, in one line; the rest behind "Why". */
+.ux-freenote {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 13px 4px 13px 4px;
+  background: var(--well);
+}
+.ux-freenote .line {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--ink-mute);
+}
+.ux-freenote .line b {
+  font-weight: 700;
+  color: var(--ink);
+}
+.ux-freenote .mark {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin-top: 1px;
+  color: var(--warn);
+}
+.ux-freenote .line > span {
+  min-width: 0;
+  flex: 1;
+}
+.ux-freenote .line > .ux-info {
+  margin-top: 0;
+}
+
+/* Three bars for how fast a proxy answered (lib/connect.ts, speedOf; PlaceRow.tsx). */
+.ux-speed {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+}
+.ux-speed i {
+  display: block;
+  width: 3px;
+  border-radius: 1.5px;
+  background: var(--bar);
+}
+.ux-speed i:nth-child(1) {
+  height: 5px;
+}
+.ux-speed i:nth-child(2) {
+  height: 8px;
+}
+.ux-speed i:nth-child(3) {
+  height: 12px;
+}
+.ux-speed[data-bars="3"] i,
+.ux-speed[data-bars="2"] i:nth-child(-n + 2) {
+  background: var(--ok);
+}
+.ux-speed[data-bars="1"] i:nth-child(1) {
+  background: var(--warn);
+}
+
+/* Use with AI's two texts (UseWithAi.tsx CopyCard): the step and its title,
+   Copy, and "See the text", which shows it in place (it moves in, nothing
+   fades). Since 2026-10-12 no card: a hairline above each, the page around it
+   (fewer boxes, less text). */
+.ux-copycard {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--hairline);
+}
+.ux-copycard .head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.ux-copycard .head .n {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--accent-ink);
+}
+.ux-copycard .text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  white-space: pre-wrap;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--ink-mute);
+}
+.ux-copycard .text[data-open] {
+  display: block;
+  max-height: 420px;
+  overflow-y: auto;
+  -webkit-line-clamp: none;
+  color: var(--ink);
+  animation: ux-unfold 320ms var(--glide) both;
+}
+@keyframes ux-unfold {
+  from {
+    transform: translateY(-6px);
+  }
+}
+.ux-copycard .actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+/* What the agent can do (UseWithAi.tsx): a grid of marks, three across, each
+   tool's mark in our blue (pure, no tile), its name and one line. It was a
+   list of names and lines (2026-10-12: "weirdly shown"). */
+.ux-toolgrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 28px 36px;
+}
+.ux-toolgrid .tool {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+.ux-toolgrid .mark {
+  width: 24px;
+  height: 24px;
+  margin-bottom: 6px;
+  color: var(--accent-ink);
+}
+.ux-toolgrid .name {
+  font-size: 15px;
+  font-weight: 750;
+  color: var(--ink);
+}
+.ux-toolgrid .what {
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--ink-mute);
+}
+@media (max-width: 860px) {
+  .ux-toolgrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 480px) {
+  .ux-toolgrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ux-copycard .text[data-open] {
+    animation: none;
+  }
+}

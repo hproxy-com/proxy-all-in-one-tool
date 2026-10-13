@@ -1,20 +1,29 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import ErrorBoundary from "./components/ErrorBoundary";
 import StartGate from "./components/StartGate";
 import TitleBar, { type View } from "./components/TitleBar";
-import CheckerConsole from "./components/checker/CheckerConsole";
 import ConnectPanel from "./components/connect/ConnectPanel";
+import { ConnectionProvider } from "./components/connect/connection";
+import ProxiesPage from "./components/ProxiesPage";
+import CheckerPage from "./components/CheckerPage";
 import Settings from "./components/Settings";
-import History from "./components/History";
 import UseWithAi from "./components/UseWithAi";
+import PhoneShell from "./components/phone/PhoneShell";
 import { loadSettings, saveSettings, type Settings as SettingsType } from "./lib/settings";
-import { freeListName, loadLists, makeList, saveLists, upsertList } from "./lib/saved";
-import { applyLook, loadPicture, previewConnectLook, previewHubStyle } from "./lib/look";
-import { connectRemembered } from "./lib/connectControl";
-import { isTauri, onTrayConnect, setKeepRunning, zoneSetMatching } from "./lib/tauri";
+import { applyLook, loadPicture, previewConnectDesign, previewConnectLook, previewHubStyle } from "./lib/look";
+import { slideIn } from "./lib/motion";
+import { hexOf, movePage } from "./lib/phone";
+import { isMobile, isTauri, phoneColors, setKeepRunning, zoneSetMatching } from "./lib/tauri";
 
-/** Connect is the main page. The browser preview's `?demo` opens Check and
-    runs the sample; `?demo=connect` opens Connect, connected. */
+/** A phone gets its own frame around the same pages (lib/phone.ts). */
+const PHONE = isMobile();
+
+/** Left to right, as the tabs stand (Use with AI is a computer's page). */
+const VIEW_ORDER: Record<View, number> = { connect: 0, proxies: 1, checker: 2, ai: 3, settings: 4 };
+
+/** Connect is the main page. The browser preview's `?demo` opens the Checker
+    and runs the sample; `?demo=connect` opens Connect, connected. */
 function initialView(): View {
   if (typeof window === "undefined") return "connect";
   const demo = new URLSearchParams(window.location.search).get("demo");
@@ -23,31 +32,31 @@ function initialView(): View {
 
 export default function App() {
   const [view, setView] = useState<View>(initialView);
+  // A page the app opens by itself ("All proxies", a proxy connected from a
+  // list, a list pasted on Connect) slides on a phone the way a tab tap does.
+  const viewNow = useRef(view);
+  useEffect(() => {
+    viewNow.current = view;
+  }, [view]);
+  const openView = useCallback((v: View) => {
+    if (!PHONE || v === viewNow.current) {
+      setView(v);
+      return;
+    }
+    movePage(VIEW_ORDER[v] > VIEW_ORDER[viewNow.current] ? "next" : "prev", () => flushSync(() => setView(v)));
+  }, []);
+  // A computer: every page change (a tab, or a page the app opens by itself) slides in
+  // from its tab's side (lib/motion.ts).
+  const pageRef = useRef<HTMLDivElement>(null);
+  const shown = useRef(view);
+  useLayoutEffect(() => {
+    const from = shown.current;
+    shown.current = view;
+    if (PHONE || from === view) return;
+    slideIn(pageRef.current, VIEW_ORDER[view] > VIEW_ORDER[from] ? "right" : "left");
+  }, [view]);
   const [settings, setSettings] = useState<SettingsType>(() => loadSettings());
-  // A proxy line handed over from the checker's results ("Connect through
-  // this one"), consumed by the Connect screen the moment it opens.
-  const [connectLine, setConnectLine] = useState<string | undefined>(undefined);
-  // A list the checker saved from its working rows, picked on Connect.
-  const [connectListId, setConnectListId] = useState<string | undefined>(undefined);
-  // Lines handed from Connect to the checker ("Check this list").
-  const [checkSeed, setCheckSeed] = useState<{ text: string; at: number } | null>(null);
-
-  const connectThrough = (raw: string) => {
-    setConnectLine(raw);
-    setView("connect");
-  };
-  const saveAsList = (lines: string[]) => {
-    const lists = loadLists();
-    const day = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-    const list = makeList(freeListName(lists, `Working ${day}`), lines, "every_connection", undefined);
-    saveLists(upsertList(lists, list));
-    setConnectListId(list.id);
-    setView("connect");
-  };
-  const checkLines = (lines: string[]) => {
-    setCheckSeed({ text: lines.join("\n"), at: Date.now() });
-    setView("checker");
-  };
+  const onSettings = (patch: Partial<SettingsType>) => setSettings((s) => ({ ...s, ...patch }));
 
   useEffect(() => {
     saveSettings(settings);
@@ -63,6 +72,13 @@ export default function App() {
     applyLook(settings.background, loadPicture());
   }, [settings.background]);
 
+  // A phone draws its status bar over the page: its icons follow the page,
+  // and the page's colour is kept for the first frame of the next start.
+  useEffect(() => {
+    if (!PHONE) return;
+    void phoneColors(settings.theme === "midnight", hexOf(getComputedStyle(document.body).backgroundColor)).catch(() => {});
+  }, [settings.theme, settings.background]);
+
   // Closing the window hides it to the tray while this is on.
   useEffect(() => {
     void setKeepRunning(settings.keepRunning).catch(() => {});
@@ -74,70 +90,75 @@ export default function App() {
     void zoneSetMatching(settings.matchTimeZone).catch(() => {});
   }, [settings.matchTimeZone]);
 
-  // The tray icon's "Connect": the place picked last, even with the window hidden.
-  const probeUrl = settings.connectProbeUrl;
-  useEffect(() => {
-    let off: (() => void) | undefined;
-    void onTrayConnect(() => {
-      void connectRemembered(probeUrl).then((problem) => {
-        if (problem) setView("connect");
-      });
-    }).then((u) => (off = u));
-    return () => off?.();
-  }, [probeUrl]);
+  // The tray icon connects by itself, from the places the app keeps
+  // (src-tauri/src/tray.rs): nothing here, and it works with the window closed.
 
   const toggleTheme = () =>
     setSettings((s) => ({ ...s, theme: s.theme === "midnight" ? "electric" : "midnight" }));
 
-  // `?look=` and `?hub=` in the browser preview show a connected look and an H without saving them.
+  // `?look=`, `?hub=` and `?design=` in the browser preview show a connected
+  // look, an H and a Connect page design without saving them.
   const [lookOverride] = useState(() => (isTauri() || typeof window === "undefined" ? null : previewConnectLook(window.location.search)));
   const [hubOverride] = useState(() => (isTauri() || typeof window === "undefined" ? null : previewHubStyle(window.location.search)));
+  const [designOverride] = useState(() => (isTauri() || typeof window === "undefined" ? null : previewConnectDesign(window.location.search)));
   const connectSettings = useMemo(
-    () => ({ ...settings, ...(lookOverride ? { connectLook: lookOverride } : {}), ...(hubOverride ? { hubStyle: hubOverride } : {}) }),
-    [settings, lookOverride, hubOverride],
+    () => ({
+      ...settings,
+      ...(lookOverride ? { connectLook: lookOverride } : {}),
+      ...(hubOverride ? { hubStyle: hubOverride } : {}),
+      ...(designOverride ? { connectDesign: designOverride } : {}),
+    }),
+    [settings, lookOverride, hubOverride, designOverride],
+  );
+
+  // A newer version first, then the screens (lib/startGate.ts). Outside the
+  // ErrorBoundary's views, so a crash in a view never hides it. Each view
+  // scrolls itself, because the checker's list virtualises against its own
+  // scroll container.
+  const pages = (
+    <StartGate>
+      <ErrorBoundary>
+        {/* Proxies and the Checker stay alive behind the other pages: a
+            check keeps running and its results are still there when you come
+            back. The other pages start fresh each time. */}
+        <div className={view === "proxies" ? "h-full" : "hidden"}>
+          <ProxiesPage active={view === "proxies"} />
+        </div>
+        <div className={view === "checker" ? "h-full" : "hidden"}>
+          <CheckerPage settings={settings} active={view === "checker"} />
+        </div>
+        {view === "connect" && <ConnectPanel settings={connectSettings} onSettings={onSettings} />}
+        {view === "ai" && <UseWithAi />}
+        {view === "settings" && <Settings settings={settings} setSettings={setSettings} />}
+      </ErrorBoundary>
+    </StartGate>
   );
 
   return (
-    <div className="flex h-svh flex-col overflow-hidden bg-canvas text-ink">
-      <TitleBar view={view} setView={setView} theme={settings.theme} toggleTheme={toggleTheme} />
-      {/* Wraps the views, not the title bar: a crash in a view must still leave
-          the window controls usable, or the only way out is Task Manager.
-          Each view scrolls itself, because the checker's list virtualises
-          against its own scroll container. */}
-      <div className="min-h-0 flex-1">
-        {/* A newer version first, then the screens (lib/startGate.ts). Outside
-            the ErrorBoundary's views, so a crash in a view never hides it. */}
-        <StartGate>
-        <ErrorBoundary>
-          {/* The checker stays alive behind the other tabs: a run keeps going
-              and its results are still there when you come back from Connect
-              or History. The other screens start fresh each time. */}
-          <div className={view === "checker" ? "h-full" : "hidden"}>
-            <CheckerConsole
-              active={view === "checker"}
-              settings={settings}
-              onConnect={connectThrough}
-              onSaveList={saveAsList}
-              seed={checkSeed}
-            />
+    // The connection sits above every page and the title bar (its IP pill):
+    // Connect and Proxies show the same one, and no page change touches it.
+    <ConnectionProvider
+      settings={connectSettings}
+      onSettings={onSettings}
+      active={view === "connect" || view === "proxies"}
+      onConnectPage={view === "connect"}
+      setView={openView}
+    >
+      {PHONE ? (
+        <PhoneShell view={view} setView={setView} theme={settings.theme} toggleTheme={toggleTheme}>
+          {pages}
+        </PhoneShell>
+      ) : (
+        <div className="flex h-svh flex-col overflow-hidden bg-canvas text-ink">
+          <TitleBar view={view} setView={setView} />
+          {/* Wraps the views, not the title bar: a crash in a view must still
+              leave the window controls usable, or the only way out is Task
+              Manager. */}
+          <div ref={pageRef} className="min-h-0 flex-1">
+            {pages}
           </div>
-          {view === "connect" && (
-            <ConnectPanel
-              initialLine={connectLine}
-              onLineConsumed={() => setConnectLine(undefined)}
-              initialListId={connectListId}
-              onListConsumed={() => setConnectListId(undefined)}
-              onCheckLines={checkLines}
-              settings={connectSettings}
-              onSettings={(patch) => setSettings((s) => ({ ...s, ...patch }))}
-            />
-          )}
-          {view === "history" && <History />}
-          {view === "ai" && <UseWithAi />}
-          {view === "settings" && <Settings settings={settings} setSettings={setSettings} />}
-        </ErrorBoundary>
-        </StartGate>
-      </div>
-    </div>
+        </div>
+      )}
+    </ConnectionProvider>
   );
 }

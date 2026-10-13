@@ -1,0 +1,670 @@
+/* ── The phone (2026-10-05) ─────────────────────────────────────────────────
+   components/phone/PhoneShell.tsx, BottomNav.tsx, PhoneSheet.tsx; why a
+   phone gets its own frame: lib/phone.ts. Everything here reads
+   html[data-phone] (main.tsx sets it on a phone) or a phone-only class, so
+   the computer's look stays exactly as it is.
+
+     · The page draws under the phone's status bar and gesture bar
+       (MainActivity.kt) and leaves them their room: the larger of the
+       browser's env(safe-area-inset-*) and the phone's own measure
+       (--inset-*, lib/phone.ts followInsets).
+     · The page's name and the address you appear as along the top, the four
+       tabs along the bottom. The tab you are on sits in a solid blue piece
+       with the H's corners, which glides to the next one.
+     · Pages slide: to a tab on the right the new page comes in from the
+       right, a step deeper slides over from the right, Back slides it away
+       (lib/phone.ts movePage, the browser's view transitions).
+     · Menus come up from the bottom, the page dimmed behind them: the one
+       see-through thing the house allows.
+     · Nothing else is see-through: every bar and sheet is solid.
+     · With "remove animations" on, everything lands where it ends. */
+
+html[data-phone] {
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--inset-top, 0px));
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--inset-right, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--inset-bottom, 0px));
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--inset-left, 0px));
+  /* Android paints a see-through grey over whatever a finger touches; the
+     controls press in their own way (lib/press.ts). */
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+.ux-phone {
+  display: flex;
+  height: 100dvh;
+  flex-direction: column;
+  overflow: hidden;
+  padding-right: var(--safe-right);
+  padding-left: var(--safe-left);
+}
+
+/* ── The top bar ──────────────────────────────────────────────────────── */
+
+.ux-phonebar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-height: calc(var(--safe-top) + 58px);
+  padding: var(--safe-top) 8px 0 16px;
+  background: var(--canvas);
+  user-select: none;
+  -webkit-user-select: none;
+  transition: box-shadow 200ms ease;
+}
+/* Once the page scrolls under it, a line says where the bar ends. */
+.ux-phonebar[data-scrolled] {
+  box-shadow: 0 1px 0 var(--hairline);
+}
+.ux-phonemark {
+  width: 20px;
+  height: 24px;
+  flex: none;
+}
+.ux-phoneback {
+  margin-left: -9px;
+}
+.ux-phonebar .title {
+  flex: none;
+  margin: 0 auto 0 2px;
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  color: var(--ink);
+  animation: ux-title-in 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes ux-title-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+/* The address you appear as: always there on a phone, the city left out. */
+html[data-phone] .ux-phonebar .ux-ippill {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  height: 34px;
+  overflow: hidden;
+}
+html[data-phone] .ux-phonebar .ux-ippill .where {
+  display: none;
+}
+html[data-phone] .ux-phonebar .ux-ippill .ip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ux-phonebar .ux-iconbtn {
+  width: 40px;
+  height: 40px;
+}
+
+/* ── The page ─────────────────────────────────────────────────────────── */
+
+/* Solid: while two pages slide, neither shows through the other. */
+.ux-phonepage {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  background: var(--canvas);
+  view-transition-name: page;
+}
+html[data-bg="picture"] .ux-phonepage {
+  background: var(--bg-picture) center / cover no-repeat fixed, var(--canvas);
+}
+
+/* A roomy card is too roomy on a phone. */
+html[data-phone] .ux-panel.p-7 {
+  padding: 18px 16px;
+}
+
+/* ── The tabs ─────────────────────────────────────────────────────────── */
+
+.ux-tabbar {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  flex: none;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 7px 6px calc(7px + var(--safe-bottom));
+  background: var(--card-solid);
+  box-shadow: 0 -1px 0 var(--hairline);
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* The piece under the tab you are on: a quarter of the bar wide, moved by
+   whole quarters, so it glides from tab to tab; a new piece on each move
+   lands with a small give. */
+.ux-tabbar .glide {
+  position: absolute;
+  top: 7px;
+  left: 6px;
+  display: grid;
+  width: calc((100% - 12px) / 4);
+  height: 34px;
+  place-items: center;
+  pointer-events: none;
+  transform: translateX(calc(var(--at, 0) * 100%));
+  transition: transform 460ms cubic-bezier(0.3, 1.22, 0.45, 1);
+}
+.ux-tabbar .glide > i {
+  width: 62px;
+  height: 34px;
+  border-radius: 14px 5px 14px 5px;
+  background: var(--digi);
+  animation: ux-glide-land 520ms cubic-bezier(0.3, 1.3, 0.45, 1);
+}
+@keyframes ux-glide-land {
+  from {
+    scale: 0.72 0.9;
+  }
+  45% {
+    scale: 1.1 0.95;
+  }
+  to {
+    scale: 1;
+  }
+}
+.ux-tabbar-tab {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 0 0 1px;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--ink-mute);
+  background: none;
+}
+.ux-tabbar-tab .icon {
+  display: grid;
+  width: 62px;
+  height: 34px;
+  place-items: center;
+  transition: color 180ms ease;
+}
+.ux-tabbar-tab .icon svg {
+  width: 22px;
+  height: 22px;
+}
+.ux-tabbar-tab .label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ux-tabbar-tab[aria-current="page"] {
+  font-weight: 800;
+  color: var(--ink);
+}
+/* White once the blue has arrived under it. */
+.ux-tabbar-tab[aria-current="page"] .icon {
+  color: #ffffff;
+  transition-delay: 90ms;
+}
+/* A check running while another tab is open: a live dot on the Checker. */
+.ux-tabbar-tab .icon {
+  position: relative;
+}
+.ux-tabbar-tab .live {
+  position: absolute;
+  top: 3px;
+  right: 13px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 2px var(--card-solid);
+  animation: ux-live-dot 1.2s ease-in-out infinite alternate;
+}
+@keyframes ux-live-dot {
+  from {
+    scale: 0.7;
+  }
+  to {
+    scale: 1.05;
+  }
+}
+.ux-tabbar-tab[data-press="down"] .icon {
+  scale: 0.86;
+  transition: scale 90ms ease-out;
+}
+.ux-tabbar-tab[data-press="up"] .icon {
+  animation: ux-tab-spring 480ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes ux-tab-spring {
+  from {
+    scale: 0.86;
+  }
+  55% {
+    scale: 1.06;
+  }
+  to {
+    scale: 1;
+  }
+}
+
+/* ── Pages moving ─────────────────────────────────────────────────────────
+   The bars stay put: the picture of the whole window is not animated, only
+   the page between the bars. The old picture goes quickly, the new page
+   comes in on the house curve. */
+
+::view-transition-old(root) {
+  animation: none;
+  opacity: 0;
+}
+::view-transition-new(root) {
+  animation: none;
+}
+::view-transition-group(page) {
+  animation: none;
+}
+html[data-move="next"]::view-transition-old(page) {
+  animation: ux-page-out-left 170ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+html[data-move="next"]::view-transition-new(page) {
+  animation: ux-page-in-right 320ms cubic-bezier(0.22, 1, 0.36, 1) 40ms both;
+}
+html[data-move="prev"]::view-transition-old(page) {
+  animation: ux-page-out-right 170ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+html[data-move="prev"]::view-transition-new(page) {
+  animation: ux-page-in-left 320ms cubic-bezier(0.22, 1, 0.36, 1) 40ms both;
+}
+/* A step deeper slides over the page, which steps back a little. */
+html[data-move="push"]::view-transition-old(page) {
+  animation: ux-page-under 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+html[data-move="push"]::view-transition-new(page) {
+  animation: ux-page-over 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+/* Back out of it: it slides away on top, the page comes forward again. */
+html[data-move="pop"]::view-transition-old(page) {
+  z-index: 1;
+  animation: ux-page-off 280ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+html[data-move="pop"]::view-transition-new(page) {
+  animation: ux-page-back 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes ux-page-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(36px);
+  }
+}
+@keyframes ux-page-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-36px);
+  }
+}
+@keyframes ux-page-out-left {
+  to {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+}
+@keyframes ux-page-out-right {
+  to {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+@keyframes ux-page-over {
+  from {
+    transform: translateX(100%);
+  }
+}
+@keyframes ux-page-under {
+  to {
+    opacity: 0.4;
+    transform: translateX(-26%);
+  }
+}
+@keyframes ux-page-off {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes ux-page-back {
+  from {
+    opacity: 0.4;
+    transform: translateX(-26%);
+  }
+}
+
+/* A page's rows rise in one after another as it opens, the first ten only,
+   so a long list is never kept waiting (PhoneShell's data-fresh lasts
+   under a second: a list sorting itself later does not replay it). */
+html[data-phone] .ux-phonepage[data-fresh] :is(.ux-places, .ux-setlist) > * {
+  animation: ux-row-rise 440ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+html[data-phone] .ux-phonepage[data-fresh] :is(.ux-places, .ux-setlist) > :nth-child(2) {
+  animation-delay: 30ms;
+}
+html[data-phone] .ux-phonepage[data-fresh] :is(.ux-places, .ux-setlist) > :nth-child(3) {
+  animation-delay: 60ms;
+}
+html[data-phone] .ux-phonepage[data-fresh] :is(.ux-places, .ux-setlist) > :nth-child(4) {
+  animation-delay: 90ms;
+}
+html[data-phone] .ux-phonepage[data-fresh] :is(.ux-places, .ux-setlist) > :nth-child(5) {
+  animation-delay: 120ms;
+}
+html[data-phone] .ux-phonepage[data-fresh] :is(.ux-places, .ux-setlist) > :nth-child(6) {
+  animation-delay: 150ms;
+}
+html[data-phone] .ux-phonepage[data-fresh] :is(.ux-places, .ux-setlist) > :nth-child(7) {
+  animation-delay: 180ms;
+}
+html[data-phone] .ux-phonepage[data-fresh] :is(.ux-places, .ux-setlist) > :nth-child(8) {
+  animation-delay: 210ms;
+}
+html[data-phone] .ux-phonepage[data-fresh] :is(.ux-places, .ux-setlist) > :nth-child(9) {
+  animation-delay: 240ms;
+}
+html[data-phone] .ux-phonepage[data-fresh] :is(.ux-places, .ux-setlist) > :nth-child(n + 10) {
+  animation-delay: 270ms;
+}
+@keyframes ux-row-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+/* ── Connect on a phone ───────────────────────────────────────────────── */
+
+/* The card's last line: how programs reach the connection on a line of its
+   own, the live speed and the round trip under it. Side by side they broke
+   into three short lines. */
+html[data-phone] .ux-status .foot {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+html[data-phone] .ux-status .foot .text {
+  flex: 1 1 calc(100% - 30px);
+}
+html[data-phone] .ux-status .foot .speed {
+  margin-left: 24px;
+}
+/* What you go through, its Back, New IP and Change on a line under it. */
+html[data-phone] .ux-target {
+  flex-wrap: wrap;
+  row-gap: 6px;
+  padding: 12px 16px 14px 14px;
+}
+html[data-phone] .ux-target .acts {
+  flex-basis: 100%;
+  justify-content: flex-start;
+  padding-left: 48px;
+}
+
+/* ── Counts ─────────────────────────────────────────────────────────────
+   The Checker's counts roll on the phone as on the computer (ui/Roll.tsx,
+   "Rolling digits" in globals.css). */
+
+/* ── Proxies on a phone: its three kinds of place, side by side ───────────
+   The computer's words on a hairline with the sliding crossbar (pages.css,
+   .ux-pagetabs), each a third of the width. */
+
+html[data-phone] .ux-pagetabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  overflow: visible;
+}
+html[data-phone] .ux-pagetabs > button {
+  min-width: 0;
+  justify-content: center;
+  height: 44px;
+  padding: 0 4px;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+/* ── Settings on a phone: the sections as a list ──────────────────────── */
+
+.ux-setlist {
+  display: flex;
+  flex-direction: column;
+  margin: -8px -8px;
+}
+.ux-setlink {
+  position: relative;
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px;
+  border: 0;
+  cursor: pointer;
+  border-radius: 14px 5px 14px 5px;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  text-align: left;
+  color: var(--ink);
+  background: none;
+  transition: background-color 160ms ease;
+}
+/* A line between two sections, from under the words to the edge. */
+.ux-setlink + .ux-setlink::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 12px;
+  left: 50px;
+  height: 1px;
+  background: var(--hairline);
+}
+.ux-setlink .icon {
+  display: grid;
+  width: 24px;
+  place-items: center;
+  color: var(--ink-mute);
+}
+.ux-setlink .icon svg {
+  width: 21px;
+  height: 21px;
+}
+.ux-setlink .go {
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  color: var(--ink-soft);
+}
+.ux-setlink[data-press="down"] {
+  background: var(--raised);
+}
+html[data-phone] .ux-settings {
+  margin-top: 0;
+}
+
+/* The background choices, two across: one column of small pictures left
+   half the screen empty. Each picture is the page drawn at 1120 px and
+   scaled to its box. */
+html[data-phone] .bg-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+html[data-phone] .bg-thumb {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 8 / 5;
+  container-type: inline-size;
+}
+html[data-phone] .bg-preview {
+  transform: scale(calc(100cqw / 1120px));
+}
+
+/* ── Menus from the bottom ────────────────────────────────────────────── */
+
+.ux-sheetlayer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.ux-scrim {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  cursor: default;
+  background: rgba(4, 6, 12, 0.56); /* see-through: allowed, the dimmed page behind an open sheet (data-scrim) */
+  animation: ux-scrim-in 220ms ease both;
+}
+.ux-sheetlayer.is-leaving .ux-scrim {
+  animation: ux-scrim-out 200ms ease both;
+}
+.ux-phonesheet {
+  position: relative;
+  display: flex;
+  max-height: 86dvh;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0 10px calc(14px + var(--safe-bottom));
+  outline: none;
+  border-radius: 24px 24px 0 0;
+  background: var(--card-solid);
+  box-shadow:
+    0 -1px 0 var(--hairline),
+    0 -18px 48px -22px rgba(0, 0, 0, 0.5);
+  /* Backwards only: once in, a finger's pull moves it freely. */
+  animation: ux-sheet-in 360ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* The top edge: pulled down, it takes the sheet with it. */
+.ux-phonesheet .pull {
+  flex: none;
+  padding-top: 8px;
+  touch-action: none;
+}
+/* Below it the content, scrolling on its own when it is long. */
+.ux-phonesheet .body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.ux-sheetlayer.is-leaving .ux-phonesheet {
+  animation: ux-sheet-out 200ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+.ux-phonesheet .grip {
+  display: block;
+  width: 40px;
+  height: 4px;
+  margin: 2px auto 12px;
+  border-radius: 2px;
+  background: var(--bar);
+}
+/* A checked proxy's details in a sheet (checker/ResultsTable.tsx). */
+.ux-rowsheet {
+  padding: 2px 8px 6px;
+}
+.ux-phonesheet .head {
+  overflow: hidden;
+  padding: 0 12px 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-mute);
+}
+.ux-sheetitem {
+  display: flex;
+  width: 100%;
+  min-height: 52px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 0;
+  cursor: pointer;
+  border-radius: 14px 5px 14px 5px;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 650;
+  text-align: left;
+  color: var(--ink);
+  background: none;
+}
+.ux-sheetitem .note {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-mute);
+}
+.ux-sheetitem.is-danger {
+  color: var(--danger);
+}
+.ux-sheetitem[data-press="down"] {
+  background: var(--raised);
+}
+@keyframes ux-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes ux-sheet-out {
+  to {
+    transform: translateY(100%);
+  }
+}
+@keyframes ux-scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes ux-scrim-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* ── Fingers ──────────────────────────────────────────────────────────── */
+
+/* The "i" is drawn small and pressed by a finger: its target grows, its
+   drawing does not. */
+@media (pointer: coarse) {
+  .ux-info {
+    width: 32px;
+    height: 32px;
+    margin: -8px -6px;
+  }
+}
+
+/* ── Less motion ──────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-tabbar .glide,
+  .ux-tabbar-tab .icon,
+  .ux-phonebar,
+  .ux-phonesheet {
+    transition: none;
+  }
+  .ux-tabbar .glide > i,
+  .ux-phonebar .title,
+  .ux-phonesheet,
+  .ux-sheetlayer.is-leaving .ux-phonesheet,
+  .ux-scrim,
+  .ux-roll > span,
+  .ux-tabbar-tab .live,
+  .ux-tabbar-tab[data-press] .icon,
+  html[data-phone] .ux-phonepage[data-fresh] :is(.ux-places, .ux-setlist) > * {
+    animation: none !important;
+  }
+}

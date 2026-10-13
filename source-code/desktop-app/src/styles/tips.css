@@ -1,0 +1,98 @@
+/* ── The "i" and its bubble (2026-10-02) ────────────────────────────────────
+   components/ui/Tip.tsx. The "i" is a plain mark with no fill behind it: grey,
+   blue while pointed at or open. The bubble is a solid card with a hairline
+   and a soft shadow, the words one size under the page's, never see-through
+   and never glass. It is something you read, so its corners are even. */
+
+.ux-info {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  margin: -2px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  cursor: help;
+  color: var(--ink-soft);
+  background: none;
+  vertical-align: middle;
+  transition: color 140ms ease;
+}
+.ux-info svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: square;
+}
+.ux-info svg .dot {
+  fill: currentColor;
+  stroke: none;
+}
+.ux-info:hover,
+.ux-info[aria-expanded="true"] {
+  color: var(--accent-ink);
+}
+.ux-info:focus-visible {
+  outline: 2px solid var(--digi);
+  outline-offset: 1px;
+}
+
+.ux-tip {
+  position: fixed;
+  z-index: 90;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 20px));
+  padding: 11px 13px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0;
+  text-align: left;
+  white-space: normal;
+  color: var(--ink-mute);
+  background: var(--card-solid);
+  box-shadow:
+    0 0 0 1px var(--bar),
+    0 14px 34px -14px rgba(10, 16, 32, 0.32);
+  animation: ux-tip-in 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-theme="midnight"] .ux-tip {
+  box-shadow:
+    0 0 0 1px var(--bar),
+    0 16px 40px -14px rgba(0, 0, 0, 0.7);
+}
+.ux-tip b {
+  font-weight: 700;
+  color: var(--ink);
+}
+.ux-tip p + p {
+  margin-top: 6px;
+}
+/* A few terms and what each means: the checker's grades, the protocols. */
+.ux-tip dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 12px;
+}
+.ux-tip dt {
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.ux-tip p + dl,
+.ux-tip dl + p {
+  margin-top: 8px;
+}
+@keyframes ux-tip-in {
+  from {
+    translate: 0 3px;
+  }
+  to {
+    translate: 0 0;
+  }
+}

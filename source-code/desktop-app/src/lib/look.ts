@@ -1,36 +1,38 @@
 /* The app's background: a setting, so people can make the app their own.
 
-   Aura is the default: the warm paper page with a light in the corners, the
-   dot grid and frosted cards. The others are the studies made the same
-   night, plus plain paper, plain white, and
-   a picture of the person's own. The picture is scaled down and kept on this
-   computer only, beside the settings, never sent anywhere.
+   Every one is solid (rebuilt 2026-10-02): Soft, the default, a calm grey page with white cards; plain
+   white; warm paper; five crisp ones that draw lines or a blue band in solid
+   colours; and a picture of the person's own. Aura (a blue and violet haze
+   in the corners) and its studies are gone: a haze is a see-through tint,
+   which the house rule never allows. A setting saved with one of them opens
+   on Soft. The picture is scaled down and kept on this computer only,
+   beside the settings, never sent anywhere.
 
    How it reaches the screen: two attributes on <html> that globals.css reads,
-   `data-surface` (the cards and greys: aura, paper or clean) and `data-bg`
-   (which background Aura wears), and for a picture the CSS variable
+   `data-surface` (the cards and greys: soft, paper or clean) and `data-bg`
+   (the art drawn on the page), and for a picture the CSS variable
    `--bg-picture`. `applyLook` sets them; main.tsx calls it before the first
    frame so the app never flashes the old look. */
 
 import { thisDevice } from "./tauri";
 
-export type Background = "aura" | "glow" | "mesh" | "grain" | "contours" | "watermark" | "ribbon" | "paper" | "white" | "picture";
+export type Background = "soft" | "white" | "paper" | "band" | "blueprint" | "dotgrid" | "rings" | "diagonal" | "picture";
 
-/** In the order the picker shows them, the default first. */
+/** In the order the picker shows them, the default first. The crisp ones
+    (2026-09-29) are pure white with lines, or brand blue at full strength. */
 export const BACKGROUNDS: readonly (readonly [Background, string])[] = [
-  ["aura", "Aura"],
-  ["glow", "Glow"],
-  ["mesh", "Mesh"],
-  ["grain", "Grain"],
-  ["contours", "Contours"],
-  ["watermark", "H watermark"],
-  ["ribbon", "Ribbon"],
-  ["paper", "Paper"],
+  ["soft", "Soft"],
   ["white", "White"],
+  ["paper", "Paper"],
+  ["band", "Blue band"],
+  ["blueprint", "Blueprint"],
+  ["dotgrid", "Dot grid"],
+  ["rings", "Rings"],
+  ["diagonal", "Diagonal"],
   ["picture", "Your picture"],
 ];
 
-export const DEFAULT_BACKGROUND: Background = "aura";
+export const DEFAULT_BACKGROUND: Background = "soft";
 
 export function isBackground(v: unknown): v is Background {
   return typeof v === "string" && BACKGROUNDS.some(([b]) => b === v);
@@ -82,9 +84,9 @@ export type HubStyle = "button" | "switch" | "small";
 
 /** In the order Settings shows them, the default first: `[style, name, what it does]`. */
 export const HUB_STYLES: readonly (readonly [HubStyle, string, string])[] = [
-  ["button", "H button", "The H in the middle is a big button: press it to connect."],
-  ["switch", "H switch", "The line is a switch: the H slides from this computer to the exit."],
-  ["small", "Small H", "The H as it was: a small sign in the middle that lights up."],
+  ["button", "Button", "A big button in the middle: press it to connect."],
+  ["switch", "Switch", "The line is a switch: the H slides from this computer to the exit."],
+  ["small", "Small", "A small sign that lights up; the switch sits in the corner."],
 ];
 
 export const DEFAULT_HUB_STYLE: HubStyle = "button";
@@ -99,12 +101,46 @@ export function previewHubStyle(search: string): HubStyle | null {
   return isHubStyle(h) ? h : null;
 }
 
-/** The two attributes for a background: the card surface and Aura's art. */
-export function lookAttributes(bg: Background): { surface: "aura" | "paper" | "clean"; art?: string } {
+/** The crisp backgrounds: drawn on the pure white surface (styles/connect-designs.css). */
+const CRISP: readonly Background[] = ["blueprint", "band", "rings", "diagonal", "dotgrid"];
+
+/** The two attributes for a background: the card surface and the art drawn on the page. */
+export function lookAttributes(bg: Background): { surface: "soft" | "paper" | "clean"; art?: string } {
   if (bg === "white") return { surface: "clean" };
   if (bg === "paper") return { surface: "paper" };
-  if (bg === "aura") return { surface: "aura" };
-  return { surface: "aura", art: bg };
+  if (CRISP.includes(bg)) return { surface: "clean", art: bg };
+  if (bg === "picture") return { surface: "soft", art: "picture" };
+  return { surface: "soft" };
+}
+
+/* The Connect page as a whole: the same pieces (ConnectionCard.tsx) laid out
+   six ways, chosen in Settings, "Connect page"; Mix (the phone app's look,
+   components/connect/mix/) is the first.
+   Card is the page as it was, kept exactly; the others are new beside it.
+   ConnectPanel.tsx picks the layout, ConnectDesigns.tsx draws the new ones,
+   styles/connect-designs.css styles them. */
+export type ConnectDesign = "mix" | "card" | "hero" | "map" | "bar" | "split";
+
+/** In the order Settings shows them: `[design, name, what it is]`. */
+export const CONNECT_DESIGNS: readonly (readonly [ConnectDesign, string, string])[] = [
+  ["mix", "Mix", "The phone app's look: the map over the page, the switch in the middle."],
+  ["card", "Card", "The connection on the left, where to go on the right."],
+  ["hero", "Hero", "One column, like a VPN app: the big H in the middle."],
+  ["map", "Map", "A world map across the top with your exit lit."],
+  ["bar", "Bar", "One line on top; your proxies get the most room."],
+  ["split", "Split", "A blue panel on the left carries the connection."],
+];
+
+export const DEFAULT_CONNECT_DESIGN: ConnectDesign = "mix";
+
+export function isConnectDesign(v: unknown): v is ConnectDesign {
+  return typeof v === "string" && CONNECT_DESIGNS.some(([d]) => d === v);
+}
+
+/** The browser preview shows a design without saving it: `?design=mix|card|hero|map|bar|split`. */
+export function previewConnectDesign(search: string): ConnectDesign | null {
+  const d = new URLSearchParams(search).get("design");
+  return isConnectDesign(d) ? d : null;
 }
 
 const PICTURE_KEY = "hproxy-checker-background-picture";
@@ -137,7 +173,7 @@ export function clearPicture(): void {
 }
 
 /** Set the look on <html>. A picture background with no picture saved falls
-    back to Aura, so the page is never left bare. */
+    back to Soft, so the page is never left bare. */
 export function applyLook(bg: Background, picture: string | null, root: HTMLElement = document.documentElement): void {
   const use = bg === "picture" && !picture ? DEFAULT_BACKGROUND : bg;
   const { surface, art } = lookAttributes(use);

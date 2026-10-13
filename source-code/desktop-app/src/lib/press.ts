@@ -17,7 +17,8 @@
    attributes it did not render alone.
    ============================================================ */
 
-const PRESSABLE = ".ux-btn, .ux-seg-btn, .ux-iconbtn, .ux-tab, .ux-chip, .ux-menuitem, .ux-check, .ux-row, .ux-switch, .ux-dest, .bg-choice, .ux-hface, .ux-hswitch";
+const PRESSABLE =
+  ".ux-btn, .ux-seg-btn, .ux-iconbtn, .ux-tab, .ux-subnav > button, .ux-setnav > button, .ux-chip, .ux-menuitem, .ux-check, .ux-row, .ux-switch, .ux-dest, .ux-place, .bg-choice, .ux-hface, .ux-hswitch, .ux-tabbar-tab, .ux-sheetitem, .ux-setlink";
 
 let started = false;
 

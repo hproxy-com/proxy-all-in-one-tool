@@ -123,6 +123,23 @@ export type CheckResult = {
   tls_intercepted?: boolean | null;
   judge?: string | null;
   source?: string | null;
+  /** What the row means for connecting, from the engine
+      (proxy-engine/hproxy-probe/src/usable.rs). Absent on rows the API checked. */
+  usable?: Usable | null;
+};
+
+/** The engine's answer to "will a connection through it carry my traffic?". */
+export type Usable = {
+  /** It carries tunnels: https sites and apps. */
+  carries: boolean;
+  tone: "good" | "warn" | "bad";
+  /** How to speak to it, as the check proved. */
+  way?: "http" | "socks5";
+  /** A few words for a row: "Working · 180 ms", "Can't open https sites". */
+  says: string;
+  /** One plain sentence when it is not simply working. */
+  why?: string;
+  notes?: { kind: string }[];
 };
 
 export const SAMPLE = `203.0.113.20:8080
@@ -148,11 +165,36 @@ const COUNTRY_NAMES: Record<string, string> = {
   kr: "South Korea", za: "South Africa", ar: "Argentina", th: "Thailand",
   vn: "Vietnam", ro: "Romania", cz: "Czechia", fi: "Finland", no: "Norway",
   ie: "Ireland", at: "Austria", be: "Belgium", pt: "Portugal", dk: "Denmark",
+  // Shorter than the names Intl gives these ("Macao SAR China", "Congo - Kinshasa").
+  mo: "Macao", cd: "DR Congo", cg: "Republic of the Congo", mm: "Myanmar",
 };
+
+/** Every other code's name from the browser itself: the free pool alone has
+    proxies in over a hundred countries (2026-09-30: 119). Undefined where the
+    webview has no Intl.DisplayNames; the code is shown then. */
+const REGION_NAMES = (() => {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "region", fallback: "none" });
+  } catch {
+    return undefined;
+  }
+})();
 
 export function countryName(cc?: string): string | undefined {
   if (!cc) return undefined;
-  return COUNTRY_NAMES[cc.toLowerCase()] ?? cc.toUpperCase();
+  const known = COUNTRY_NAMES[cc.toLowerCase()];
+  if (known) return known;
+  const code = cc.toUpperCase();
+  // ZZ is Intl's "Unknown Region": a code, not a place.
+  if (/^[A-Z]{2}$/.test(code) && code !== "ZZ") {
+    try {
+      const name = REGION_NAMES?.of(code);
+      if (name && name !== code) return name;
+    } catch {
+      /* not a region Intl knows */
+    }
+  }
+  return code;
 }
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();

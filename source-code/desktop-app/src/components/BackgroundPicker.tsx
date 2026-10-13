@@ -5,7 +5,7 @@ import { cx } from "./ui";
 
 /* The background picker (Settings, Look), so people can make the app their
    own. Each choice is a miniature of the real page: the same CSS rules
-   at 15 % of the window, with frosted cards where the app's cards sit, so
+   at 15 % of the window, with solid cards where the app's cards sit, so
    what you pick is what you get. The last one is a picture of your own,
    scaled down and kept on this computer only. */
 
@@ -35,7 +35,7 @@ export default function BackgroundPicker({ value, onChange }: { value: Backgroun
   const remove = () => {
     clearPicture();
     setPicture(null);
-    if (value === "picture") onChange("aura");
+    if (value === "picture") onChange("soft");
   };
 
   return (
@@ -85,22 +85,21 @@ export default function BackgroundPicker({ value, onChange }: { value: Backgroun
           if (f) void choose(f);
         }}
       />
-      <div className="flex flex-wrap items-center gap-4 text-[13px] font-medium text-ink-mute">
-        {picture ? (
-          <>
-            <button type="button" className="ux-link" onClick={() => fileRef.current?.click()}>
-              Change the picture
-            </button>
-            <button type="button" className="ux-link" onClick={remove}>
-              Remove it
-            </button>
-            <span>Kept on {thisDevice()} only, never sent anywhere.</span>
-          </>
-        ) : (
-          <span>Aura is the default. Your own picture stays on {thisDevice()} and is never sent anywhere.</span>
-        )}
-        {error && <span className="font-semibold text-danger">{error}</span>}
-      </div>
+      {(picture || error) && (
+        <div className="flex flex-wrap items-center gap-4 text-[13px] font-medium text-ink-mute">
+          {picture && (
+            <>
+              <button type="button" className="ux-link" onClick={() => fileRef.current?.click()}>
+                Change the picture
+              </button>
+              <button type="button" className="ux-link" onClick={remove}>
+                Remove it
+              </button>
+            </>
+          )}
+          {error && <span className="font-semibold text-danger">{error}</span>}
+        </div>
+      )}
     </div>
   );
 }

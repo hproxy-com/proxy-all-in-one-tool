@@ -1,12 +1,12 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
-import { formatAgo, formatBytes, formatDuration, placeOf } from "../../lib/connect";
-import type { FraudRow } from "../../lib/fraud";
+import { formatAgo, formatBytes, formatDuration, formatRate, placeOf } from "../../lib/connect";
+import type { FraudSet } from "../../lib/fraud";
 import type { LeakAction, LeakRow } from "../../lib/leaks";
 import type { ConnectLook, HubStyle } from "../../lib/look";
 import { isMobile, thisDevice, type ConnectStatus } from "../../lib/tauri";
 import { FraudChip } from "../FraudScore";
 import HLetter from "../HLetter";
-import { Button, Check, Flag, Icon, Input, Switch, Tile, cx } from "../ui";
+import { Button, Check, Flag, Icon, InfoTip, Input, Switch, Tile, cx, useTip } from "../ui";
 import DotMap from "./DotMap";
 
 /* The left half of Connect: the connection itself, like a VPN's main card.
@@ -19,15 +19,24 @@ import DotMap from "./DotMap";
    ("Going through"), and while connected the numbers and the three things you
    do with a connection.
 
-   The H in the middle is a setting too (lib/look.ts, HUB_STYLES): a big button,
-   the route as a switch, or the small sign. Button and switch connect like the
-   switch at the top, which stays as it is. */
+   The H in the middle is a setting too (lib/look.ts, HUB_STYLES): a big button
+   with its word under it, the route as a switch, or the small sign. A card has
+   one control: the switch at the top shows only with the small sign. */
 
-export type Phase = "off" | "connecting" | "on" | "rotating" | "leaving";
+/** "rotating" is Next IP and "switching" is another place picked while
+    connected: in both the connection stays up and only what is behind it
+    changes, so both read as connected (`changing`). */
+export type Phase = "off" | "connecting" | "on" | "rotating" | "switching" | "leaving";
+
+/** Connected, with the place or the exit being changed. */
+export const changing = (phase: Phase): boolean => phase === "rotating" || phase === "switching";
+
+/** Something is under way that the H shows as busy. */
+export const busyPhase = (phase: Phase): boolean => phase === "connecting" || phase === "leaving" || changing(phase);
 
 /** What the switch connects to, as the card shows it. */
 export type TargetView = {
-  kind: "fixed" | "list" | "free";
+  kind: "proxy" | "group" | "free";
   name: string;
   sub?: string;
   /** Lowercase code, for a flag where one is known. */
@@ -40,14 +49,16 @@ export type ConnectionCardProps = {
   look: ConnectLook;
   /** The H in the middle of the route: a button, a switch, or the small sign. */
   hub: HubStyle;
-  /** The fraud score of the address you appear as, when looked up. */
-  fraud?: FraudRow | null;
+  /** The fraud scores of the address you appear as, when looked up. */
+  fraud?: FraudSet | null;
   /** The leak check's lines while connected (lib/leaks.ts). */
   leaks?: LeakRow[] | null;
   /** A button on a leak check line was pressed. */
   onLeakAction: (a: LeakAction) => void;
   failing: boolean;
   status: ConnectStatus | null;
+  /** Bytes a second through the relay, up and down, while connected. */
+  rate?: { up: number; down: number } | null;
   view: TargetView | null;
   now: number;
   busy: boolean;
@@ -55,6 +66,8 @@ export type ConnectionCardProps = {
   canConnect: boolean;
   onChangeTarget: () => void;
   onRotate: () => void;
+  /** Back to the group's proxy before: only while connected through a group. */
+  onBack?: () => void;
   onProbe: () => void;
   onCopy: () => void;
   copied: boolean;
@@ -73,17 +86,20 @@ export type ConnectionCardProps = {
   setListen: (v: string) => void;
 };
 
-function TargetIcon({ view }: { view: TargetView }) {
+export function TargetIcon({ view }: { view: TargetView }) {
   if (view.cc) return <Flag cc={view.cc} />;
-  if (view.kind === "list") return <Icon.layers />;
+  if (view.kind === "group") return <Icon.layers />;
   return <Icon.globe />;
 }
 
-export default function ConnectionCard(p: ConnectionCardProps) {
+/** What the connection says, the same words in every Connect design
+    (Settings, "Connect page"; ./ConnectDesigns.tsx): the state, the place,
+    the route's two ends and the live numbers. */
+export function connectionWords(p: ConnectionCardProps) {
   const { phase, failing, status, view } = p;
   const on = phase === "on";
-  // A phone has no system proxy an app may switch: the relay's address goes
-  // into the Wi-Fi settings by hand, and the card says so.
+  // A phone has no system proxy an app may switch: a VPN carries every app
+  // to the relay instead (src-tauri/src/vpn.rs).
   const phone = isMobile();
   const health = status?.health ?? null;
   const stats = status?.stats ?? null;
@@ -96,30 +112,32 @@ export default function ConnectionCard(p: ConnectionCardProps) {
       ? "Not connected"
       : phase === "connecting"
         ? "Connecting"
-        : phase === "rotating"
-          ? "Changing the exit"
-          : phase === "leaving"
-            ? "Disconnecting"
-            : failing
-              ? "Connected, not answering"
-              : "Connected";
+        : phase === "switching"
+          ? "Switching"
+          : phase === "rotating"
+            ? "Changing the exit"
+            : phase === "leaving"
+              ? "Disconnecting"
+              : failing
+                ? "Connected, not answering"
+                : "Connected";
 
   const headline =
     phase === "off" || phase === "leaving"
       ? "Your own address"
-      : phase === "connecting"
+      : phase === "connecting" || phase === "switching"
         ? (view?.name ?? "Connecting")
         : (place ?? view?.name ?? "Connected");
 
   const sub: ReactNode =
     phase === "off"
-      ? "Sites see where you really are"
+      ? ""
       : phase === "leaving"
-        ? "Putting everything back as it was"
-        : phase === "connecting"
+        ? "Putting things back…"
+        : phase === "connecting" || phase === "switching"
           ? view?.kind === "free"
             ? "Finding a free exit that works…"
-            : "Starting the relay and checking it…"
+            : "Checking it works…"
           : phase === "rotating"
             ? "Getting a new IP…"
             : failing
@@ -130,31 +148,59 @@ export default function ConnectionCard(p: ConnectionCardProps) {
                   ? "Finding out which address sites see…"
                   : health.reflects_exit
                     ? "The exit did not say its address"
-                    : `${health.target} cannot name the address; the HProxy judge can (Settings)`;
+                    : "Address unknown with this check (Settings)";
 
+  // The foot line is for a connection that is up: how programs reach it, and
+  // the live speed beside the round trip. Nothing while it is off.
   const foot =
-    phase === "off"
-      ? `Nothing on ${thisDevice()} changes until you connect`
-      : phase === "connecting"
-        ? "Setting it up and checking it carries traffic…"
-        : phase === "leaving"
-          ? status?.system_proxy
-            ? "Putting the system setting back…"
-            : "Stopping the relay…"
-          : phase === "rotating"
-            ? "New connections move to the next exit"
-            : status?.system_proxy
-              ? "System proxy on: browsers and most programs go through it"
-              : `Running on ${status?.listen ?? "127.0.0.1"}: ${phone ? "set it as the Wi-Fi proxy" : "point your program at it"}`;
+    on || changing(phase)
+      ? status?.system_proxy
+        ? phone
+          ? "Every app (VPN)"
+          : "System proxy"
+        : `${status?.listen ?? "127.0.0.1"}${phone ? " in the Wi-Fi settings" : ""}`
+      : "";
+  const speed = on && p.rate ? `↓ ${formatRate(p.rate.down)}  ↑ ${formatRate(p.rate.up)}` : "";
 
   // The exit end of the route: where traffic comes out once connected,
   // otherwise where the switch will take it.
   const exitName = on && place ? (health?.city ?? place) : (view?.name ?? "Pick a place");
   const exitFlag = on && exitCc ? exitCc : view?.cc;
   const uptime = status?.started_at_ms ? formatDuration(p.now - status.started_at_ms) : "0:00";
-  // The Map look's country: where you appear once connected, before that the
-  // place the switch goes to when it is a country.
+  // The Map look's country: where you appear once connected, before that (and
+  // while switching) the place the switch goes to when it is a country.
   const mapCc = on || phase === "rotating" ? (exitCc ?? view?.cc) : view?.cc;
+
+  const toggleTitle = phase === "off" ? (p.canConnect ? "Connect" : "Pick a place to connect to first") : "Disconnect";
+  const lit = phase !== "off" && phase !== "leaving";
+  // The word under the H button: what pressing it does now.
+  // Grey while nothing is picked yet (the route names "Pick a place").
+  const caption =
+    phase === "off"
+      ? "Connect"
+      : phase === "connecting"
+        ? "Connecting"
+        : phase === "switching"
+          ? "Switching"
+          : phase === "rotating"
+            ? "New IP"
+            : phase === "leaving"
+              ? "Disconnecting"
+              : "Disconnect";
+
+  return { on, phone, health, stats, source, place, exitCc, label, headline, sub, foot, speed, exitName, exitFlag, uptime, mapCc, toggleTitle, caption, lit };
+}
+
+export type ConnectionWords = ReturnType<typeof connectionWords>;
+
+/** A piece of the connection: the card's props and its words. */
+export type ConnPart = { p: ConnectionCardProps; w: ConnectionWords };
+
+/** The top of the card: the state in words, the switch, the route from this
+    computer through the H to the exit, and the foot line. */
+export function ConnStatus({ p, w }: ConnPart) {
+  const { phase, failing, view } = p;
+  const { on, phone, health, label, headline, sub, foot, speed, exitName, exitFlag, mapCc, toggleTitle, caption, lit } = w;
 
   // The blue card spreads from the H, wherever the H is: its middle, measured
   // into --hub-x/--hub-y (for the switch, the end the H slides to).
@@ -176,239 +222,364 @@ export default function ConnectionCard(p: ConnectionCardProps) {
     return () => seen.disconnect();
   }, [p.hub, p.look, phase]);
 
-  const toggleTitle = phase === "off" ? (p.canConnect ? "Connect" : "Pick a place to connect to first") : "Disconnect";
-  const lit = phase !== "off" && phase !== "leaving";
-
   return (
-    // One piece: the status on top and its rows under it, split by hairlines,
-    // never a stack of separate boxes (they read as a generated page).
-    <div className="ux-connpanel">
-      <section className="ux-conn" data-phase={phase} data-look={p.look} data-hub={p.hub} data-failing={failing || undefined}>
-        <div ref={statusRef} className="ux-status">
-          <div className="top">
-            <div className="min-w-0 flex-1">
-              <span className="ux-live">
-                <i /> {label}
-              </span>
-              <div key={`h-${phase}-${headline}`} className="ux-city">
-                {headline}
-              </div>
+    <section className="ux-conn" data-phase={phase} data-look={p.look} data-hub={p.hub} data-failing={failing || undefined}>
+      <div ref={statusRef} className="ux-status">
+        <div className="top">
+          <div className="min-w-0 flex-1">
+            <span className="ux-live">
+              <i /> {label}
+            </span>
+            <div key={`h-${phase}-${headline}`} className="ux-city">
+              {headline}
+            </div>
+            {sub !== "" && (
               <div key={`s-${phase}-${typeof sub === "string" ? sub : ""}`} className="ux-ip num">
                 {sub}
               </div>
-              {on && !failing && p.fraud && <FraudChip row={p.fraud} />}
-            </div>
+            )}
+            {on && !failing && p.fraud && <FraudChip set={p.fraud} />}
+          </div>
+          {p.hub === "small" && (
             <Switch
               on={lit}
-              busy={phase === "connecting" || phase === "rotating" || phase === "leaving"}
+              busy={busyPhase(phase)}
               disabled={p.busy || (phase === "off" && !p.canConnect)}
               onChange={p.onToggle}
               label="Connection"
               title={toggleTitle}
             />
-          </div>
+          )}
+        </div>
 
-          {p.look === "map" && <DotMap cc={mapCc} />}
+        {p.look === "map" && <DotMap cc={mapCc} phase={failing ? "off" : phase} zoom={on && !failing} lat={health?.latitude} lon={health?.longitude} />}
 
-          <div className="ux-route">
-            <span className="end">
-              {phone ? <Icon.phone /> : <Icon.laptop />}
-              <span className="name">{thisDevice(true)}</span>
-            </span>
-            {p.hub === "switch" ? (
-              <HSwitch on={lit} disabled={p.busy} onToggle={p.onToggle} title={toggleTitle} />
-            ) : (
-              <>
-                <span className="ux-wire left">
-                  <i />
-                  <b />
+        <div className="ux-route">
+          <span className="end">
+            {phone ? <Icon.phone /> : <Icon.laptop />}
+            <span className="name">{thisDevice(true)}</span>
+          </span>
+          {p.hub === "switch" ? (
+            <HSwitch on={lit} disabled={p.busy} onToggle={p.onToggle} title={toggleTitle} />
+          ) : (
+            <>
+              <span className="ux-wire left">
+                <i />
+                <b />
+              </span>
+              {p.hub === "button" ? (
+                <span className="ux-hbutton" data-hub-origin>
+                  <button type="button" className="ux-hface" aria-pressed={lit} aria-label={caption} title={toggleTitle} disabled={p.busy} onClick={p.onToggle}>
+                    <HFaceParts />
+                  </button>
+                  <button type="button" className="ux-hcaption" data-ready={p.canConnect || undefined} tabIndex={-1} aria-hidden="true" disabled={p.busy} onClick={p.onToggle}>
+                    {caption}
+                  </button>
                 </span>
-                {p.hub === "button" ? (
-                  <span className="ux-hbutton" data-hub-origin>
-                    <button type="button" className="ux-hface" aria-pressed={lit} aria-label="Connection" title={toggleTitle} disabled={p.busy} onClick={p.onToggle}>
-                      <HFaceParts />
-                    </button>
-                  </span>
-                ) : (
-                  <span className="ux-hub" data-hub-origin>
-                    <HLetter />
-                  </span>
-                )}
-                <span className="ux-wire right">
-                  <i />
-                  <b />
-                </span>
-              </>
-            )}
-            <span className="end exit" title={exitName}>
-              {exitFlag ? (
-                <span key={`${on}-${health?.exit_ip ?? ""}-${exitFlag}`} className={cx("ux-exit-flag", on && "arrived")}>
-                  <Flag cc={exitFlag} />
-                </span>
-              ) : view?.kind === "list" ? (
-                <Icon.layers />
               ) : (
-                <Icon.globe />
+                <span className="ux-hub" data-hub-origin>
+                  <HLetter />
+                </span>
               )}
-              <span className="name">{exitName}</span>
-            </span>
-          </div>
+              <span className="ux-wire right">
+                <i />
+                <b />
+              </span>
+            </>
+          )}
+          <button
+            type="button"
+            className="end exit"
+            title={phase === "off" ? "Pick the place to connect through" : exitName}
+            disabled={phase !== "off" || p.busy}
+            onClick={p.onChangeTarget}
+          >
+            {exitFlag ? (
+              <span key={`${on}-${health?.exit_ip ?? ""}-${exitFlag}`} className={cx("ux-exit-flag", on && "arrived")}>
+                <Flag cc={exitFlag} />
+              </span>
+            ) : view?.kind === "group" ? (
+              <Icon.layers />
+            ) : (
+              <Icon.globe />
+            )}
+            <span className="name">{exitName}</span>
+          </button>
+        </div>
 
+        {foot !== "" && (
           <div className="foot">
             <Icon.shield />
-            <span key={`f-${phase}-${foot}`} className="text">
+            <span key={`f-${phase}-${foot}`} className="text num">
               {foot}
             </span>
+            {speed && <span className="speed num">{speed}</span>}
             <span className="ms num">{on && health?.ok && health.latency_ms != null ? `${health.latency_ms} ms` : "—"}</span>
+          {/* Test now: one check through the relay, beside the number it renews. */}
+          {on && (
+            <button type="button" className="ux-iconlink" disabled={p.busy} onClick={p.onProbe} title="Test the connection now" aria-label="Test the connection now">
+              <Icon.refresh />
+            </button>
+          )}
           </div>
-        </div>
-      </section>
-
-      {/* Where the switch goes, and the way to change it. */}
-      <div className="ux-target">
-        {view && (
-          <span className="icon">
-            <TargetIcon view={view} />
-          </span>
         )}
-        <div className="what">
-          <div className="label">{on || phase === "rotating" ? "Connected through" : "Going through"}</div>
-          <div className="name">{view?.name ?? "Nothing picked yet"}</div>
+      </div>
+    </section>
+  );
+}
+
+/** What you are connected through, New IP and Change. With `routeShown`, the
+    route above already names the place while off (press it to change), so the
+    row waits until the connection is up. */
+export function TargetRow({ p, w, routeShown = true }: ConnPart & { routeShown?: boolean }) {
+  const { phase, view } = p;
+  const { on, source } = w;
+  if (routeShown && !on && !changing(phase)) return null;
+  return (
+    <div className="ux-target">
+      {view && (
+        <span className="icon">
+          <TargetIcon view={view} />
+        </span>
+      )}
+      <div className="what">
+        <div className="label">{on || phase === "rotating" ? "Connected through" : "Going through"}</div>
+        <div className="name">{view?.name ?? "Nothing picked yet"}</div>
+        {(view?.sub || (on && source)) && (
           <div className="sub num">
-            {view?.sub ??
-              (on && source
-                ? source.kind === "pool"
-                  ? (source.detail ?? "a free exit")
-                  : source.in_use
-                : "Pick one of your proxies, a list, or a free country")}
+            {view?.sub ?? (source?.kind === "pool" ? (source.detail ?? "a free exit") : source?.in_use)}
           </div>
-        </div>
+        )}
+      </div>
+      <div className="acts flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
+        {/* New IP belongs with the place: the next proxy of the group, or a
+            fresh free exit; a group can go back to the one before too. */}
+        {on && p.onBack && (
+          <button type="button" className="ux-link" disabled={p.busy} onClick={p.onBack} title="Back to the proxy before this one in the group">
+            <Icon.arrowLeft className="h-3.5 w-3.5" /> Back
+          </button>
+        )}
+        {on && source?.can_rotate && (
+          <button type="button" className="ux-link" disabled={p.busy} onClick={p.onRotate} title="Move to the next proxy in the group, or a fresh free exit">
+            <Icon.refresh className="h-3.5 w-3.5" /> New IP
+          </button>
+        )}
         <button type="button" className="ux-link" onClick={p.onChangeTarget}>
           Change <Icon.arrowRight className="h-3.5 w-3.5" />
         </button>
-      </div>
-
-      {(on || phase === "rotating") && status && (
-        <>
-          <div className="ux-connrow ux-tiles">
-            <Tile
-              label="Round trip"
-              value={health ? (health.ok ? `${health.latency_ms ?? "?"} ms` : "No answer") : "…"}
-              tone={failing ? "danger" : undefined}
-              sub={
-                health
-                  ? health.ok
-                    ? `to ${health.target}, ${formatAgo(p.now - health.checked_at_ms)}`
-                    : health.failures_in_a_row > 1
-                      ? `${health.failures_in_a_row} checks in a row`
-                      : "the last check failed"
-                  : "first check running"
-              }
-            />
-            <Tile label="Connected for" value={uptime} sub={`on ${status.listen ?? ""}`} />
-            <Tile
-              label="Traffic"
-              value={formatBytes(stats?.bytes_down ?? 0)}
-              sub={`${formatBytes(stats?.bytes_up ?? 0)} up · ${stats?.connections ?? 0} connections${stats?.rotations ? ` · ${stats.rotations} switches` : ""}`}
-            />
-          </div>
-          {on && p.leaks && <LeakCheck rows={p.leaks} onAction={p.onLeakAction} />}
-          <div className="ux-connrow flex flex-wrap items-center gap-2">
-            {source?.can_rotate && (
-              <Button disabled={p.busy} onClick={p.onRotate} title="Move to the next proxy in the list, or a fresh free exit">
-                <Icon.refresh className="h-4 w-4" />
-                New IP
-              </Button>
-            )}
-            <Button disabled={p.busy} onClick={p.onProbe} title="One check through the relay, right now">
-              <Icon.shield className="h-4 w-4" />
-              Test now
-            </Button>
-            <Button onClick={p.onCopy} title="The relay's address, for a program's proxy settings">
-              <Icon.copy className="h-4 w-4" />
-              {p.copied ? "Copied" : "Copy address"}
-            </Button>
-          </div>
-        </>
-      )}
-
-      {p.error && <p className="ux-connrow text-[13.5px] font-semibold text-danger">{p.error}</p>}
-      {status?.notice && <p className="ux-connrow text-[13.5px] font-medium text-ink-mute">{status.notice}</p>}
-
-      {/* A program with its own proxy settings needs the address typed in; on
-          a phone, the Wi-Fi settings do. */}
-      {on && status && !status.system_proxy && <ProgramSettings listen={status.listen ?? ""} phone={phone} steps={p.manualSteps} />}
-
-      <div className="ux-connrow flex flex-col gap-2">
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          {/* A phone has no system proxy an app may switch, so the box could
-              never be ticked there. */}
-          {!phone && (
-            <Check
-              on={p.canAutomate ? p.useSystem : false}
-              onChange={(v) => p.canAutomate && p.setUseSystem(v)}
-              label="Set it as the system proxy"
-              disabled={!p.canAutomate || on}
-            />
-          )}
-          {!p.advanced && (
-            <button type="button" className="ux-link" onClick={() => p.setAdvanced(true)} title="Pick the port the relay listens on">
-              Choose the port <Icon.arrowRight className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
-        <p className="text-[13px] font-medium leading-relaxed text-ink-mute">
-          {phone
-            ? "A phone does not let an app switch its proxy. Once connected, the address goes into the Wi-Fi settings, and apps that follow them go through HProxy while it is open."
-            : !p.canAutomate && p.manualWhy
-              ? `Not automatic here: ${p.manualWhy}. You get the address to type in instead.`
-              : on
-                ? "Changes the next time you connect. Put back exactly as found when you disconnect."
-                : "Browsers and most programs follow the system proxy. It is put back exactly as found when you disconnect."}
-        </p>
-        {p.advanced && (
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-[13px] font-semibold text-ink-mute">Listen on</span>
-            <Input value={p.listen} onChange={p.setListen} placeholder="127.0.0.1:8080" width="short" mono label="Listen address" />
-            <span className="text-[12.5px] font-medium text-ink-mute">Empty is 127.0.0.1:8080, or the next free port.</span>
-          </div>
-        )}
       </div>
     </div>
   );
 }
 
-/* The leak check: one line for each way a site could still learn about you
-   through the proxy (lib/leaks.ts), the mark coloured by the verdict, never a
-   filled pill. A line that passes stays one line; a warning says what it
-   means, with the fix where there is one: the extension for WebRTC, the time
-   zone matched to the exit. */
-function LeakCheck({ rows, onAction }: { rows: LeakRow[]; onAction: (a: LeakAction) => void }) {
+/** The live numbers: the round trip, the time connected, the traffic. Not
+    shown since 2026-09-29: the round trip stays at the end of the status's
+    foot line. Kept for a stats view. */
+export function LiveTiles({ p, w }: ConnPart) {
+  const { failing, status } = p;
+  const { health, stats, uptime } = w;
+  if (!status) return null;
   return (
-    <div className="ux-connrow">
-      <div className="ux-leaks-title">Leak check</div>
-      <ul className="ux-leaks">
-        {rows.map((r) => (
-          <li key={r.id} data-tone={r.tone} title={r.tone === "warn" ? undefined : r.detail}>
-            {r.tone === "ok" ? <Icon.check /> : r.tone === "warn" ? <Icon.warning /> : <Icon.clock />}
-            <span className="label">{r.label}</span>
-            <span className="what">
-              <span className="headline">{r.headline}</span>
-              {r.tone === "warn" && r.detail && <span className="detail">{r.detail}</span>}
-              {r.actions && (
-                <span className="actions">
-                  {r.actions.map((a) => (
-                    <button key={a.id} type="button" className="ux-link" onClick={() => onAction(a.id)}>
-                      {a.label} <Icon.arrowRight className="h-3.5 w-3.5" />
-                    </button>
-                  ))}
-                </span>
-              )}
-            </span>
-          </li>
-        ))}
-      </ul>
+    <div className="ux-connrow ux-tiles">
+      <Tile
+        label="Round trip"
+        value={health ? (health.ok ? `${health.latency_ms ?? "?"} ms` : "No answer") : "…"}
+        tone={failing ? "danger" : undefined}
+        sub={
+          health
+            ? health.ok
+              ? `to ${health.target}, ${formatAgo(p.now - health.checked_at_ms)}`
+              : health.failures_in_a_row > 1
+                ? `${health.failures_in_a_row} checks in a row`
+                : "the last check failed"
+            : "first check running"
+        }
+      />
+      <Tile label="Connected for" value={uptime} sub={`on ${status.listen ?? ""}`} />
+      <Tile
+        label="Traffic"
+        value={formatBytes(stats?.bytes_down ?? 0)}
+        sub={`${formatBytes(stats?.bytes_up ?? 0)} up · ${stats?.connections ?? 0} connections${stats?.rotations ? ` · ${stats.rotations} switches` : ""}`}
+      />
     </div>
+  );
+}
+
+/** New IP, Test now, Copy address as a row of buttons. Not shown since
+    2026-09-30, because a row of them in the middle of the connection read as
+    unrelated: New IP sits by Change, Test now by the round trip, Copy by the
+    system proxy. */
+export function ConnActions({ p, w }: ConnPart) {
+  const { source } = w;
+  return (
+    <div className="ux-connrow flex flex-wrap items-center gap-2">
+      {source?.can_rotate && (
+        <Button disabled={p.busy} onClick={p.onRotate} title="Move to the next proxy in the group, or a fresh free exit">
+          <Icon.refresh className="h-4 w-4" />
+          New IP
+        </Button>
+      )}
+      <Button disabled={p.busy} onClick={p.onProbe} title="Check the connection now">
+        <Icon.shield className="h-4 w-4" />
+        Test now
+      </Button>
+      <Button onClick={p.onCopy} title="The local address, for a program's proxy settings">
+        <Icon.copy className="h-4 w-4" />
+        {p.copied ? "Copied" : "Copy address"}
+      </Button>
+    </div>
+  );
+}
+
+/** What the last action said: an error, or a notice from the relay. */
+export function ConnMessages({ p }: { p: ConnectionCardProps }) {
+  const { status } = p;
+  return (
+    <>
+      {p.error && <p className="ux-connrow text-[13.5px] font-semibold text-danger">{p.error}</p>}
+      {status?.notice && <p className="ux-connrow text-[13.5px] font-medium text-ink-mute">{status.notice}</p>}
+    </>
+  );
+}
+
+/** Set it as the system proxy, the port, and what either does. */
+export function SystemProxyRow({ p, w }: ConnPart) {
+  const { on, phone } = w;
+  return (
+    <div className="ux-connrow flex flex-col gap-2">
+      {/* A phone always connects every app, through the VPN: no box to tick,
+          and no port to choose either (its apps reach the relay through the
+          VPN, and a taken port is swapped for a free one, connect.rs). */}
+      {!phone && (
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <span className="flex items-center gap-1.5">
+            <Check
+              on={p.canAutomate ? p.useSystem : false}
+              onChange={(v) => p.canAutomate && p.setUseSystem(v)}
+              label="Use for the whole computer"
+              disabled={!p.canAutomate || on}
+              title={on ? "Changes the next time you connect" : undefined}
+            />
+            <InfoTip label="using it for the whole computer">
+              <p>Browsers and most programs go through the proxy while you are connected. Your settings are put back as they were when you disconnect.</p>
+              <p>Off: only the programs you point at the local address use it.</p>
+            </InfoTip>
+          </span>
+          {!p.advanced && (
+            <button type="button" className="ux-link" onClick={() => p.setAdvanced(true)} title="Pick the local port">
+              Choose the port <Icon.arrowRight className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      )}
+      {/* Only what you act on: where the address goes when it cannot be set from here. */}
+      {(phone || (!p.canAutomate && p.manualWhy)) && (
+        <p className="text-[13px] font-medium leading-relaxed text-ink-mute">
+          {phone
+            ? "Every app on this phone goes through the proxy. The first time, Android asks you to allow HProxy's VPN."
+            : `Not automatic here: ${p.manualWhy}.`}
+        </p>
+      )}
+      {/* The relay's own address, for a program with proxy settings of its own.
+          On a phone every app already goes through the VPN. */}
+      {on && p.status?.listen && !phone && (
+        <p className="flex flex-wrap items-center gap-x-2 text-[13px] font-medium text-ink-mute">
+          Local address <b className="num font-bold text-ink">{p.status.listen}</b>
+          <button type="button" className="ux-link" onClick={p.onCopy} title="The local address, for a program's proxy settings">
+            <Icon.copy className="h-3.5 w-3.5" /> {p.copied ? "Copied" : "Copy"}
+          </button>
+        </p>
+      )}
+      {p.advanced && !phone && (
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-[13px] font-semibold text-ink-mute">Listen on</span>
+          <Input value={p.listen} onChange={p.setListen} placeholder="127.0.0.1:8080" width="short" mono label="Listen address" />
+          <span className="text-[12.5px] font-medium text-ink-mute">Empty: 127.0.0.1:8080</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function ConnectionCard(p: ConnectionCardProps) {
+  const w = connectionWords(p);
+  const { phase, status } = p;
+  const { on, phone } = w;
+  return (
+    // One piece: the status on top and its rows under it, split by hairlines,
+    // never a stack of separate boxes (they read as a generated page).
+    <div className="ux-connpanel">
+      <ConnStatus p={p} w={w} />
+      <TargetRow p={p} w={w} />
+      {(on || changing(phase)) && status && (
+        <>
+          {on && p.leaks && <LeakCheck rows={p.leaks} onAction={p.onLeakAction} />}
+        </>
+      )}
+
+      <ConnMessages p={p} />
+
+      {/* A program with its own proxy settings needs the address typed in; on
+          a phone, the Wi-Fi settings do. */}
+      {on && status && !status.system_proxy && <ProgramSettings listen={status.listen ?? ""} phone={phone} steps={p.manualSteps} />}
+
+      <SystemProxyRow p={p} w={w} />
+    </div>
+  );
+}
+
+/* The privacy check, as compact as it can be: one line, a mark per way a
+   site could still learn about you through the proxy
+   (lib/leaks.ts), coloured by the verdict, never a filled pill. Each mark's
+   bubble says what was found and what it means. Only a warning adds a line,
+   with its fix where there is one: the extension for WebRTC, the time zone
+   matched to the exit. All clear, the check is that one line. */
+export function LeakCheck({ rows, onAction }: { rows: LeakRow[]; onAction: (a: LeakAction) => void }) {
+  const warnings = rows.filter((r) => r.tone === "warn");
+  return (
+    <div className="ux-connrow ux-privacy">
+      <div className="marks">
+        <span className="title">
+          Privacy
+          <InfoTip label="the privacy check">What a site can still learn about you through the proxy, checked while you are connected.</InfoTip>
+        </span>
+        {rows.map((r) => (
+          <LeakMark key={r.id} row={r} />
+        ))}
+      </div>
+      {warnings.map((r) => (
+        <p key={r.id} className="warning">
+          <Icon.warning />
+          <span className="headline">{r.headline}</span>
+          {r.actions?.map((a) => (
+            <button key={a.id} type="button" className="ux-link" onClick={() => onAction(a.id)}>
+              {a.label} <Icon.arrowRight className="h-3.5 w-3.5" />
+            </button>
+          ))}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/** One way of the privacy check: its mark and name; what was found in its bubble. */
+function LeakMark({ row }: { row: LeakRow }) {
+  const tip = useTip(
+    <>
+      <p>
+        <b>{row.label}:</b> {row.headline}
+      </p>
+      {row.detail && <p>{row.detail}</p>}
+    </>,
+  );
+  return (
+    <>
+      <button type="button" className="mark" data-tone={row.tone} aria-label={`${row.label}: ${row.headline}`} {...tip.trigger}>
+        {row.tone === "ok" ? <Icon.check /> : row.tone === "warn" ? <Icon.warning /> : <Icon.clock />}
+        {row.label}
+      </button>
+      {tip.bubble}
+    </>
   );
 }
 
@@ -416,7 +587,7 @@ function LeakCheck({ rows, onAction }: { rows: LeakRow[]; onAction: (a: LeakActi
     blue that fills it from the middle, its edge (dashed when off, a light
     running round it while connecting), the ring that leaves it once connected,
     the slow ping after, and the H. */
-function HFaceParts() {
+export function HFaceParts() {
   return (
     <>
       <span className="fill" />
@@ -432,7 +603,7 @@ function HFaceParts() {
    computer to the exit, and the line fills blue behind it. Where the H stands
    is one number, --hpos in globals.css (0 at this computer, 1 at the exit),
    so the knob and the blue line can never drift apart. */
-function HSwitch({ on, disabled, onToggle, title }: { on: boolean; disabled: boolean; onToggle: () => void; title: string }) {
+export function HSwitch({ on, disabled, onToggle, title }: { on: boolean; disabled: boolean; onToggle: () => void; title: string }) {
   return (
     <button type="button" role="switch" aria-checked={on} aria-label="Connection" title={title} disabled={disabled} onClick={onToggle} className="ux-hswitch">
       <span className="rail">
@@ -460,7 +631,7 @@ function splitAddr(addr: string): [string, string] {
    Wi-Fi settings use (Android: Proxy, Proxy hostname, Proxy port), which take
    an HTTP proxy with no login. The steps are the engine's own words for this
    system (hproxy-system, Support::Manual). */
-function ProgramSettings({ listen, phone, steps }: { listen: string; phone: boolean; steps?: string }) {
+export function ProgramSettings({ listen, phone, steps }: { listen: string; phone: boolean; steps?: string }) {
   const [host, port] = splitAddr(listen);
   return (
     <div className="ux-connrow">

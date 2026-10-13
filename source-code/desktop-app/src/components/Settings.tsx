@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type JSX, type ReactNode } from "react";
 import {
   GENTLE_CONCURRENCY_CEILING,
   MAX_CONCURRENCY,
@@ -6,8 +6,8 @@ import {
   type Protocols,
   type Settings as SettingsType,
 } from "../lib/settings";
-import { FRAUD_SERVICES, fraudService, testFraudService, type FraudKeys } from "../lib/fraud";
-import { CONNECT_LOOKS, HUB_STYLES } from "../lib/look";
+import { FRAUD_SERVICES, fraudServicesOf, missingKey, testFraudService, type FraudKeys, type FraudService } from "../lib/fraud";
+import { CONNECT_DESIGNS, CONNECT_LOOKS, HUB_STYLES } from "../lib/look";
 import {
   installChannel,
   isMobile,
@@ -31,13 +31,24 @@ import {
   openStorePage,
 } from "../lib/updater";
 import { updatesItself } from "../lib/versions";
+import { slideIn } from "../lib/motion";
 import BackgroundPicker from "./BackgroundPicker";
-import { Block, Button, ButtonGroup, Card, Check, Input, PageHead, Range } from "./ui";
+import { pushPage, usePhoneSub } from "./phone/PhoneShell";
+import { Button, ButtonGroup, Card, Check, Icon, InfoTip, Input, PageHead, Range, Tag, cx, useSlidingPill } from "./ui";
 
-/* Settings, in look D (2026-09-23): a grid of named blocks with plain titles
-   in our blue, sliders with their reading on the right, our tick boxes, cut
-   choice tracks, a divider under each block. Its own tab at the top;
-   "Use with AI" moved out to a tab of its own. */
+/* Settings: four sections in a nav of their own (2026-09-30), one shown at a
+   time, each setting one line: its name, the "i", the control.
+
+   Since 2026-10-02 the screen holds no long sentences, everything on it
+   explains itself, and every explanation, the privacy statements included,
+   sits behind an "i" beside the name instead of in a line under it, word for word where it states what leaves this computer.
+   Stated where the choice is made, never in a help page; just not as a wall
+   of text. A line under a name is left only for what is happening now (a
+   warning, an update downloading).
+
+   On a phone the four sections are a list, the way a phone's own settings
+   are: a section opens a step deeper, sliding in, with its name and the way
+   back in the top bar (phone/PhoneShell.tsx), and Back returns to the list. */
 
 /* The privacy policy, reachable from inside the app: Google Play asks for it here as well as on
    the store page (2026-09-28). hproxy.com/privacy has the section "The HProxy app and browser
@@ -50,6 +61,58 @@ const PROTOCOL_LABEL: Record<keyof Protocols, string> = {
   socks4: "SOCKS4",
   socks5: "SOCKS5",
 };
+
+type SectionId = "checking" | "connect" | "look" | "app";
+const SECTIONS: readonly { id: SectionId; name: string; icon: (p: { className?: string }) => JSX.Element }[] = [
+  { id: "checking", name: "Checking", icon: Icon.listCheck },
+  { id: "connect", name: "Connect", icon: Icon.connect },
+  { id: "look", name: "Look", icon: Icon.sun },
+  { id: "app", name: "App", icon: Icon.settings },
+];
+const SECTION_KEY = "hproxy-settings-section";
+
+function loadSection(): SectionId {
+  try {
+    const s = localStorage.getItem(SECTION_KEY);
+    if (SECTIONS.some((x) => x.id === s)) return s as SectionId;
+  } catch {
+    /* a private window: the first section */
+  }
+  return "checking";
+}
+
+/** One setting: its name, the "i" with the explanation, a reading, and the
+    control on the right (under it with `stacked`). `note` is one short line
+    for what is happening now, never an explanation. */
+function Row({
+  name,
+  info,
+  value,
+  note,
+  stacked = false,
+  children,
+}: {
+  name: string;
+  info?: ReactNode;
+  value?: ReactNode;
+  note?: ReactNode;
+  stacked?: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <div className={cx("ux-setrow", stacked && "is-stacked")}>
+      <div className="text">
+        <div className="name">
+          {name}
+          {info && <InfoTip label={name}>{info}</InfoTip>}
+          {value != null && <span className="value num">{value}</span>}
+        </div>
+        {note && <p className="note">{note}</p>}
+      </div>
+      {children != null && <div className="control">{children}</div>}
+    </div>
+  );
+}
 
 /* The copy installed from the Microsoft Store (lib/tauri isStoreInstall): the
    Store updates it, and it does not start with the computer. */
@@ -73,8 +136,8 @@ function useChannel(): Channel | null {
 
 /* Version + a manual update check. Two things every app owes its users: knowing which build
    you are running, and being able to ask for an update yourself rather than waiting to be told.
-   Each kind of copy says who keeps it current, and that a new version comes first at start. */
-function AboutBlock() {
+   Each kind of copy says who keeps it current. */
+function UpdatesRow() {
   const channel = useChannel();
   const [version, setVersion] = useState("…");
   const [state, setState] = useState<"idle" | "checking" | "current" | "found">("idle");
@@ -104,78 +167,72 @@ function AboutBlock() {
     return hrs < 24 ? `${hrs} h ago` : `${Math.round(hrs / 24)} d ago`;
   };
 
-  const line =
+  const note =
     state === "checking"
       ? "Checking…"
       : state === "current"
-        ? "You are on the latest version."
+        ? "Up to date"
         : state === "found"
-          ? `Version ${found} is downloading in the background. The title bar will offer a restart when it is ready.`
+          ? `Version ${found} is downloading. The title bar offers the restart.`
           : checkedAt
-            ? `Last checked ${ago(checkedAt)}.`
-            : "Updates are checked automatically.";
+            ? `Checked ${ago(checkedAt)}`
+            : undefined;
 
   if (channel === "google-play") {
     return (
-      <Block
-        name="Version"
-        value={`HProxy ${version}`}
-        divider={false}
-        hint="Installed from Google Play, which keeps HProxy up to date. When a new version is out, Google Play installs it before HProxy opens."
-      >
+      <Row name="Version" value={`HProxy ${version}`} info="Google Play keeps HProxy up to date, and installs a new version before HProxy opens.">
         <Button variant="text" onClick={() => void openStorePage(GOOGLE_PLAY_URL)}>
           Google Play
         </Button>
-      </Block>
+      </Row>
     );
   }
 
   if (channel === "microsoft-store") {
     return (
-      <Block
-        name="Version"
-        value={`HProxy ${version}`}
-        divider={false}
-        hint="Installed from the Microsoft Store, which keeps HProxy up to date. When a new version is out, HProxy asks the Store for it before it opens."
-      >
+      <Row name="Version" value={`HProxy ${version}`} info="The Microsoft Store keeps HProxy up to date. HProxy asks it for a new version before it opens.">
         <Button variant="text" onClick={() => void openStorePage(MICROSOFT_STORE_URL)}>
           Microsoft Store
         </Button>
-      </Block>
+      </Row>
     );
   }
 
   if (channel === "apk" || channel === "linux-deb" || channel === "linux-rpm") {
     return (
-      <Block
+      <Row
         name="Version"
         value={`HProxy ${version}`}
-        divider={false}
-        hint={`Installed from a downloaded ${channel === "apk" ? "file" : "package"}. When a new version is out, HProxy says so when it opens, with the download: it installs over this one and keeps your saved proxies.`}
+        info={`A new version is offered when HProxy opens. The download installs over this ${channel === "apk" ? "one" : "package"} and keeps your saved proxies.`}
       >
         <Button variant="text" onClick={() => void openManualDownload()}>
           Download
         </Button>
-      </Block>
+      </Row>
     );
   }
 
   if (channel && !updatesItself(channel)) {
-    return (
-      <Block name="Version" value={`HProxy ${version}`} divider={false} hint="Installed from the App Store, which keeps HProxy up to date.">
-        {null}
-      </Block>
-    );
+    return <Row name="Version" value={`HProxy ${version}`} info="The App Store keeps HProxy up to date." />;
   }
 
   return (
-    <Block
+    <Row
       name="Updates"
       value={`HProxy ${version}`}
-      divider={false}
-      hint={`${line} Updates come from hproxy.com, and the app installs one only when it carries HProxy's signature and is newer than yours. When HProxy starts, it takes a new version first. While you use it, it waits for your click; while nobody does (the window in the tray, nothing connected, no check running), it installs by itself and the app comes back in the tray. An AI agent using HProxy keeps working through it.`}
+      note={note}
+      info={
+        <>
+          <p>Updates come from hproxy.com. One installs only when it carries HProxy&rsquo;s signature and is newer than yours.</p>
+          <p>
+            A new version installs when HProxy starts. While you use it, it waits for your click; while nobody does (in the tray, nothing
+            connected, no check running), it installs by itself and HProxy comes back in the tray. An AI agent using HProxy keeps working
+            through it.
+          </p>
+        </>
+      }
     >
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <Button disabled={state === "checking"} onClick={check}>
           Check for updates
         </Button>
@@ -183,69 +240,115 @@ function AboutBlock() {
           Download
         </Button>
       </div>
-    </Block>
+    </Row>
   );
 }
 
-/* Fraud scores: FFraud's free lookup, or the person's own API key at another
-   service, switchable at any time. FFraud needs no key; the others take the person's own, kept on
-   this computer. The test asks once, past the session's saved scores, so a
-   new key is really tried. */
-function FraudBlock({ settings, update }: { settings: SettingsType; update: (patch: Partial<SettingsType>) => void }) {
-  const service = fraudService(settings.fraudService);
+/* Fraud scores, from one service or several at once, changed any time: every
+   service is a tick box, several can be on, and one always is. A service that needs a key shows its field once it
+   is on; its test asks once, past the session's saved scores, so a new key is
+   really tried. Keys stay on this computer. */
+function FraudRow({ settings, update }: { settings: SettingsType; update: (patch: Partial<SettingsType>) => void }) {
+  const on = settings.fraudServices;
+  const turn = (id: FraudService["id"], v: boolean) =>
+    update({ fraudServices: fraudServicesOf(v ? [...on, id] : on.filter((x) => x !== id)) });
+  return (
+    <Row
+      name="Fraud score"
+      stacked
+      info={
+        <>
+          <p>
+            How risky sites may think an address is, from 0 to 100. <b>Lower is better.</b>
+          </p>
+          <p>
+            Asked from {thisDevice()} straight to each service you tick: only the address being scored goes there, nothing goes through
+            HProxy, and your keys stay on {thisDevice()}. In the Checker, the scores come when you ask for them; on Connect, for the address
+            you appear as.
+          </p>
+          <p>With several ticked, the highest score shows, and its &ldquo;i&rdquo; names what each one said.</p>
+        </>
+      }
+    >
+      <div className="ux-services">
+        {FRAUD_SERVICES.map((s) => (
+          <ServiceLine
+            key={s.id}
+            service={s}
+            on={on.includes(s.id)}
+            last={on.length === 1 && on[0] === s.id}
+            keys={settings.fraudKeys}
+            onTurn={(v) => turn(s.id, v)}
+            onKey={(k) => update({ fraudKeys: { ...settings.fraudKeys, [s.id]: k } })}
+          />
+        ))}
+      </div>
+      <div className="mt-4">
+        <Check on={settings.fraudOnConnect} onChange={(fraudOnConnect) => update({ fraudOnConnect })} label="Show it while connected" />
+      </div>
+    </Row>
+  );
+}
+
+/** One fraud-score service: its tick, its key once it is on, its test. */
+function ServiceLine({
+  service,
+  on,
+  last,
+  keys,
+  onTurn,
+  onKey,
+}: {
+  service: FraudService;
+  on: boolean;
+  last: boolean;
+  keys: FraudKeys;
+  onTurn: (on: boolean) => void;
+  onKey: (key: string) => void;
+}) {
   const [test, setTest] = useState<{ busy: boolean; ok: boolean; text: string } | null>(null);
-  useEffect(() => setTest(null), [settings.fraudService]);
-  const keyId = service.id as keyof FraudKeys;
-  const key = service.key ? (settings.fraudKeys[keyId] ?? "") : "";
+  const key = service.key ? (keys[service.id as keyof FraudKeys] ?? "") : "";
+  useEffect(() => setTest(null), [on, key]);
   const runTest = () => {
+    if (missingKey(service.id, keys)) {
+      setTest({ busy: false, ok: false, text: "Add your key first" });
+      return;
+    }
     setTest({ busy: true, ok: false, text: "" });
-    void testFraudService(settings.fraudService, settings.fraudKeys).then((r) => setTest({ busy: false, ...r }));
+    void testFraudService(service.id, keys).then((r) => setTest({ busy: false, ok: r.ok, text: r.ok ? "Works" : r.text }));
   };
   return (
-    <Block
-      name="Fraud score"
-      hint={`How risky sites will take a proxy's address to be. Asked from ${thisDevice()} straight to the service picked here: only the address being scored goes there, nothing goes through HProxy, and keys stay on ${thisDevice()}. In Check, the scores come when you ask for them; in Connect, for the address you appear as.`}
-    >
-      <div className="flex flex-col gap-3">
-        <ButtonGroup
-          size="sm"
-          value={settings.fraudService}
-          onChange={(fraudService) => update({ fraudService })}
-          options={FRAUD_SERVICES.map((s) => [s.id, s.id === "ffraud" ? "FFraud (free)" : s.name] as const)}
-        />
-        <p className="text-[13px] font-medium text-ink-mute">{service.about}</p>
-        {service.key && (
-          <Input
-            type="password"
-            value={key}
-            onChange={(v) => update({ fraudKeys: { ...settings.fraudKeys, [keyId]: v } })}
-            placeholder={service.key.placeholder}
-            mono
-            label={`${service.name} ${service.key.label}`}
-          />
-        )}
-        <div className="flex flex-wrap items-center gap-3">
-          <Button size="sm" onClick={runTest} disabled={test?.busy}>
-            {test?.busy ? "Asking…" : `Test ${service.name}`}
+    <div className="ux-service" data-on={on || undefined}>
+      <span className="pick">
+        <Check on={on} onChange={onTurn} label={service.name} disabled={last} title={last ? "One service stays on" : undefined} />
+        {!service.key && <Tag tone="ok">Free</Tag>}
+        {service.key?.optional && !on && <Tag>Key optional</Tag>}
+      </span>
+      {on && (
+        <span className="setup">
+          {service.key && (
+            <span className="key">
+              <Input type="password" value={key} onChange={onKey} placeholder={service.key.placeholder} mono label={`${service.name} ${service.key.label}`} />
+            </span>
+          )}
+          <Button size="sm" variant="text" onClick={runTest} disabled={test?.busy}>
+            {test?.busy ? "Asking…" : "Test"}
           </Button>
           {test && !test.busy && (
-            <span className={`text-[13px] font-semibold ${test.ok ? "text-ok" : "text-danger"}`}>{test.text}</span>
+            <span className={cx("result", test.ok ? "text-ok" : "text-danger")} title={test.text}>
+              {test.text}
+            </span>
           )}
-        </div>
-        <Check
-          on={settings.fraudOnConnect}
-          onChange={(fraudOnConnect) => update({ fraudOnConnect })}
-          label="Show the score of the address you appear as while connected"
-        />
-      </div>
-    </Block>
+        </span>
+      )}
+    </div>
   );
 }
 
 /* The computer's time zone matched to the exit while connected
-   (src-tauri/src/timezone.rs). Windows only: elsewhere there is no block, and
-   the leak check on Connect advises instead. */
-function TimeZoneBlock({ on, setOn }: { on: boolean; setOn: (v: boolean) => void }) {
+   (src-tauri/src/timezone.rs). Windows only: elsewhere there is no row, and
+   the privacy check on Connect advises instead. */
+function TimeZoneRow({ on, setOn }: { on: boolean; setOn: (v: boolean) => void }) {
   const [zone, setZone] = useState<ZoneStatus | null>(null);
   useEffect(() => {
     void zoneStatus()
@@ -253,32 +356,36 @@ function TimeZoneBlock({ on, setOn }: { on: boolean; setOn: (v: boolean) => void
       .catch(() => {});
   }, []);
   if (!zone?.supported) return null;
-  const automatic = zone.automatic
-    ? ' "Set time zone automatically" is on in Windows, and it may put its own time zone back while you are connected: turn it off for the match to hold.'
-    : "";
   return (
-    <div className="md:col-span-2">
-      <Block
-        name="Time zone"
-        hint={`Sites read your computer's time zone and compare it with the address you appear as. With this on, Windows' time zone is set to the exit's while you are connected, and yours comes back when you disconnect or quit, or at the next start if HProxy was closed some other way. Every program on this computer sees the change, not only browsers.${automatic}`}
-      >
-        <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
-          <Check on={on} onChange={setOn} label="Match my time zone to the exit while connected" />
-          {zone.automatic && (
-            <Button variant="text" onClick={() => void openExternal(DATE_TIME_SETTINGS)}>
-              Date and time settings
-            </Button>
-          )}
-        </div>
-      </Block>
-    </div>
+    <Row
+      name="Time zone"
+      note={on && zone.automatic ? <span className="text-warn">Windows sets its own time zone. Turn that off for this to hold.</span> : undefined}
+      info={
+        <>
+          <p>Sites compare your computer&rsquo;s time zone with the address you appear as.</p>
+          <p>
+            With this on, Windows takes the exit&rsquo;s time zone while you are connected. Yours comes back when you disconnect or quit, or
+            at the next start if HProxy was closed some other way. Every program on this computer sees the change, not only browsers.
+          </p>
+        </>
+      }
+    >
+      <div className="flex flex-col items-end gap-2">
+        <Check on={on} onChange={setOn} label="Match the exit's" />
+        {on && zone.automatic && (
+          <Button variant="text" onClick={() => void openExternal(DATE_TIME_SETTINGS)}>
+            Date and time settings
+          </Button>
+        )}
+      </div>
+    </Row>
   );
 }
 
 /* In the background, with no taskbar button. Closing the window hides
    it to the icon by the clock; starting with the computer is the person's
    choice and off until ticked. */
-function BackgroundBlock({ keepRunning, setKeepRunning }: { keepRunning: boolean; setKeepRunning: (v: boolean) => void }) {
+function BackgroundRow({ keepRunning, setKeepRunning }: { keepRunning: boolean; setKeepRunning: (v: boolean) => void }) {
   const store = useStoreInstall();
   const [withComputer, setWithComputer] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -294,16 +401,24 @@ function BackgroundBlock({ keepRunning, setKeepRunning }: { keepRunning: boolean
       .catch((e: unknown) => setProblem(String(e)));
   };
   return (
-    <Block
+    <Row
       name="In the background"
-      hint={`With the first one on, closing the window keeps HProxy running by the clock, connection and all, with no taskbar button. Click the icon to open it again; right-click it to connect, disconnect or quit. ${store ? "The Microsoft Store brings the updates." : "Updates install on their own while nobody is using the app."}`}
+      note={problem ? <span className="text-danger">{problem}</span> : undefined}
+      info={
+        <>
+          <p>Closing the window keeps HProxy running by the clock, connection and all, with no taskbar button.</p>
+          <p>
+            Click the icon to open it again; right-click it to connect, disconnect or quit.{" "}
+            {store ? "The Microsoft Store brings the updates." : "Updates install on their own while nobody is using it."}
+          </p>
+        </>
+      }
     >
-      <div className="flex flex-wrap gap-x-8 gap-y-3">
-        <Check on={keepRunning} onChange={setKeepRunning} label="Keep running when the window closes" />
-        {!store && <Check on={withComputer} onChange={toggleWithComputer} label="Start with the computer, in the background" />}
+      <div className="flex flex-col items-start gap-3">
+        <Check on={keepRunning} onChange={setKeepRunning} label="Keep running when closed" />
+        {!store && <Check on={withComputer} onChange={toggleWithComputer} label="Start with the computer" />}
       </div>
-      {problem && <p className="mt-3 text-[13px] font-semibold text-danger">{problem}</p>}
-    </Block>
+    </Row>
   );
 }
 
@@ -320,220 +435,393 @@ export default function Settings({
   const seconds = Math.round(settings.timeoutMs / 1000);
   const probePreset = PROBE_PRESETS.find(([url]) => url === settings.connectProbeUrl);
   const probeChoice = probePreset ? probePreset[0] : "custom";
+  const device = thisDevice();
+  // The Connect page's layout, the H and the connected look: chosen once, so
+  // they wait under "More looks", keeping the choices on screen few. Open by
+  // itself when one of them is not the default, so a choice is never hidden.
+  const [moreLooks, setMoreLooks] = useState(
+    () => settings.connectDesign !== CONNECT_DESIGNS[0][0] || settings.hubStyle !== HUB_STYLES[0][0] || settings.connectLook !== CONNECT_LOOKS[0][0],
+  );
+
+  const phone = isMobile();
+  // A phone opens on the list of sections; a computer on the one open last.
+  const [section, setSection] = useState<SectionId | null>(() => (phone ? null : loadSection()));
+  const open = (id: SectionId) => {
+    if (phone) {
+      pushPage(() => setSection(id));
+      return;
+    }
+    setSection(id);
+    try {
+      localStorage.setItem(SECTION_KEY, id);
+    } catch {
+      /* not kept: fine */
+    }
+  };
+  const here = SECTIONS.find((s) => s.id === section) ?? SECTIONS[0];
+  usePhoneSub(phone && section ? { title: here.name, back: () => setSection(null) } : null);
+
+  // A computer: the section list's blue pill slides to the one opened, and the section
+  // comes in from below or above as the list runs (ui/slidingPill.ts, lib/motion.ts).
+  const navRef = useRef<HTMLElement>(null);
+  const pillRef = useRef<HTMLElement>(null);
+  useSlidingPill(navRef, pillRef, "[aria-current='page']", section);
+  const paneRef = useRef<HTMLElement>(null);
+  const shownSection = useRef(section);
+  useLayoutEffect(() => {
+    const from = shownSection.current;
+    shownSection.current = section;
+    if (phone || !from || !section || from === section) return;
+    const at = (id: SectionId) => SECTIONS.findIndex((s) => s.id === id);
+    slideIn(paneRef.current, at(section) > at(from) ? "down" : "up");
+  }, [section, phone]);
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-[1200px] px-6 pb-8 pt-1.5 max-sm:px-3">
-        <Card pad="roomy">
-          <PageHead title="Settings" sub="How the checker probes, how hard it works your connection, and how the app looks." />
+      <div className="mx-auto max-w-[1100px] px-6 pb-8 pt-1.5 max-sm:px-3">
+        <Card tone="flat" pad="roomy">
+          {/* On a phone the top bar names the page. */}
+          {!phone && <PageHead title="Settings" />}
 
-          {/* One column the width of the card on a phone, two from md. Without
-              grid-cols-1 the single column is sized by its widest control, and
-              one long tick box label pushed the page past a 360 px screen. */}
-          <div className="mt-8 grid grid-cols-1 gap-x-10 gap-y-7 md:grid-cols-2">
-            <Block
-              name="Threads"
-              value={settings.concurrency}
-              hint={
-                highConcurrency
-                  ? `Above ${GENTLE_CONCURRENCY_CEILING} can overwhelm a home router and briefly drop your internet. For strong connections only.`
-                  : "Proxies checked at the same time. A ceiling, not a target: the engine backs off when your line queues."
-              }
-            >
-              <Range value={settings.concurrency} onChange={(v) => update({ concurrency: v })} min={1} max={MAX_CONCURRENCY} label="Threads" />
-            </Block>
+          {phone && section === null ? (
+            <nav className="ux-setlist" aria-label="Settings sections">
+              {SECTIONS.map((s) => (
+                <button key={s.id} type="button" className="ux-setlink" onClick={() => open(s.id)}>
+                  <span className="icon">
+                    <s.icon />
+                  </span>
+                  <span className="name">{s.name}</span>
+                  <Icon.chevronRight className="go" />
+                </button>
+              ))}
+            </nav>
+          ) : (
+            <div className="ux-settings">
+              {!phone && (
+                <nav ref={navRef} className="ux-setnav" aria-label="Settings sections">
+                  <i ref={pillRef} className="ux-pill" aria-hidden="true" />
+                  {SECTIONS.map((s) => (
+                    <button key={s.id} type="button" aria-current={s.id === section ? "page" : undefined} onClick={() => open(s.id)}>
+                      <s.icon />
+                      {s.name}
+                    </button>
+                  ))}
+                </nav>
+              )}
 
-            <Block name="Timeout" value={`${seconds} s`} hint="How long to wait for each proxy before calling it a timeout.">
-              <Range value={seconds} onChange={(v) => update({ timeoutMs: Math.max(1000, v * 1000) })} min={1} max={60} label="Timeout in seconds" />
-            </Block>
+              <section ref={paneRef} className="ux-setpane" aria-label={here.name}>
+                {section === "checking" && (
+                  <>
+                    <Row
+                      name="Checks at once"
+                      value={highConcurrency ? <span className="text-danger">{settings.concurrency}</span> : settings.concurrency}
+                      note={
+                        highConcurrency ? (
+                          <span className="text-danger">Above {GENTLE_CONCURRENCY_CEILING}, a home router can drop for a moment.</span>
+                        ) : undefined
+                      }
+                      info={
+                        <>
+                          <p>How many proxies are checked at the same time. More is quicker.</p>
+                          <p>
+                            Above {GENTLE_CONCURRENCY_CEILING}, a home router can be overwhelmed and your internet can drop for a moment: for strong
+                            connections only. A ceiling, not a target: HProxy backs off when your line queues.
+                          </p>
+                        </>
+                      }
+                    >
+                      <Range
+                        value={settings.concurrency}
+                        onChange={(v) => update({ concurrency: v })}
+                        min={1}
+                        max={MAX_CONCURRENCY}
+                        label="Checks at once"
+                        danger={highConcurrency}
+                      />
+                    </Row>
 
-            <Block name="Protocols" hint="Fewer protocols means fewer connections per proxy.">
-              <div className="flex flex-wrap gap-x-8 gap-y-3">
-                {(Object.keys(PROTOCOL_LABEL) as (keyof Protocols)[]).map((k) => (
-                  <Check key={k} on={settings.protocols[k]} onChange={(v) => toggleProto(k, v)} label={PROTOCOL_LABEL[k]} />
-                ))}
-              </div>
-            </Block>
+                    <Row name="Wait per proxy" value={`${seconds} s`} info="How long to wait for a proxy to answer before it counts as not answering.">
+                      <Range value={seconds} onChange={(v) => update({ timeoutMs: Math.max(1000, v * 1000) })} min={1} max={60} label="Wait per proxy, in seconds" />
+                    </Row>
 
-            <Block name="Retries" hint="Extra attempts for a proxy that did not answer.">
-              <ButtonGroup
-                size="sm"
-                value={String(settings.retries)}
-                onChange={(v) => update({ retries: Number(v) })}
-                options={
-                  [
-                    ["0", "None"],
-                    ["1", "One"],
-                    ["2", "Two"],
-                    ["3", "Three"],
-                  ] as const
-                }
-              />
-            </Block>
+                    <Row
+                      name="Protocols"
+                      info={
+                        <>
+                          <dl>
+                            <dt>HTTP, HTTPS</dt>
+                            <dd>Web proxies, for browsers and most programs.</dd>
+                            <dt>SOCKS4, SOCKS5</dt>
+                            <dd>Carry any program&rsquo;s traffic. SOCKS5 also takes a login.</dd>
+                          </dl>
+                          <p>Only the ticked ones are tried. Fewer means fewer connections per proxy.</p>
+                        </>
+                      }
+                    >
+                      <div className="ux-ticks">
+                        {(Object.keys(PROTOCOL_LABEL) as (keyof Protocols)[]).map((k) => (
+                          <Check key={k} on={settings.protocols[k]} onChange={(v) => toggleProto(k, v)} label={PROTOCOL_LABEL[k]} />
+                        ))}
+                      </div>
+                    </Row>
 
-            <div className="md:col-span-2">
-              <Block
-                name="Where checking runs"
-                /* Stated where the choice is made, not in a help page nobody
-                   opens. Every mode that touches our servers sends credentials
-                   with the list. Keep this, settings.ts and the README's "What
-                   leaves your machine" table saying the same thing. */
-                hint={
-                  settings.source === "both"
-                    ? `The fastest option. Your list is shared between our servers and ${thisDevice()} over one queue, so whichever side is quicker gets through more of it. Part of the list is sent to us, credentials included, and anything our servers cannot answer is checked here instead. Proxies locked to your own IP address fail from our side. Rows checked on our side carry no timing breakdown, exit address, leaked headers or software, and they are labelled.`
-                    : settings.source === "api"
-                      ? "Every connection is made from our hardware, so your address never touches the proxies you are testing and your own line stays free. Your whole list is sent to us, credentials included, and the results stream back with less detail: no timing breakdown, no exit address, no leaked headers, no software. Proxies locked to your own IP address fail from our side."
-                      : "The default. Every connection is opened from here, so nothing about your proxies is transmitted, this is the only mode that returns the full detail, and proxies locked to your own IP address are judged correctly. On a large list that is thousands of connections from your own address, which is slower and is visible to your network and to every proxy you test."
-                }
-              >
-                {/* Default first: the order of a set of pills reads as a recommendation. */}
-                <ButtonGroup
-                  value={settings.source}
-                  onChange={(source) => update({ source })}
-                  options={
-                    [
-                      ["local", thisDevice(true)],
-                      ["both", "Both at once"],
-                      ["api", "HProxy's servers"],
-                    ] as const
-                  }
-                />
-              </Block>
+                    <Row name="Retries" info="How many more times to try a proxy that did not answer.">
+                      <ButtonGroup
+                        size="sm"
+                        value={String(settings.retries)}
+                        onChange={(v) => update({ retries: Number(v) })}
+                        options={
+                          [
+                            ["0", "None"],
+                            ["1", "1"],
+                            ["2", "2"],
+                            ["3", "3"],
+                          ] as const
+                        }
+                      />
+                    </Row>
+
+                    <Row
+                      name="Check from"
+                      note={settings.source !== "local" ? <span className="text-warn">Your list, logins included, goes to HProxy&rsquo;s servers.</span> : undefined}
+                      /* Stated where the choice is made, not in a help page nobody
+                         opens. Every mode that touches our servers sends credentials
+                         with the list. Keep this, settings.ts and the README's "What
+                         leaves your machine" table saying the same thing. */
+                      info={
+                        <>
+                          <dl>
+                            <dt>{thisDevice(true)}</dt>
+                            <dd>The default. Nothing about your proxies is sent, and every detail is measured. A big list is many connections from your address.</dd>
+                            <dt>Both</dt>
+                            <dd>The fastest. Our servers and {device} share the list: part of it, logins included, is sent to us.</dd>
+                            <dt>HProxy&rsquo;s servers</dt>
+                            <dd>Your address never touches the proxies. Your whole list, logins included, is sent to us, and fewer details come back.</dd>
+                          </dl>
+                          <p>Proxies locked to your own IP address fail from our servers.</p>
+                        </>
+                      }
+                    >
+                      {/* Default first: the order of a set of choices reads as a recommendation. */}
+                      <ButtonGroup
+                        size="sm"
+                        value={settings.source}
+                        onChange={(source) => update({ source })}
+                        options={
+                          [
+                            ["local", thisDevice(true)],
+                            ["both", "Both"],
+                            ["api", "HProxy's servers"],
+                          ] as const
+                        }
+                      />
+                    </Row>
+
+                    <Row
+                      name="Country and network"
+                      /* ⚠️ The second half is derived from the mode above rather than
+                         asserted: a privacy claim that quietly goes stale is worse than
+                         no claim. */
+                      info={
+                        <>
+                          <p>Shows each proxy&rsquo;s country, city and provider.</p>
+                          <p>
+                            The addresses you check go to HProxy&rsquo;s free IP lookup in batches. Never the ports, the logins or the results.{" "}
+                            {settings.source === "local"
+                              ? `Checking runs entirely on ${device}, so with this off the app sends nothing at all.`
+                              : "Checking also runs on our servers, so part of your list reaches us either way."}
+                          </p>
+                        </>
+                      }
+                    >
+                      <Check on={settings.geoLookup} onChange={(v) => update({ geoLookup: v })} label="Look up" />
+                    </Row>
+
+                    <Row
+                      name="Extra tests"
+                      info={
+                        <>
+                          <p>Each costs one more round trip per working proxy, and shows in the proxy&rsquo;s details.</p>
+                          <dl>
+                            <dt>UDP</dt>
+                            <dd>Whether a SOCKS5 proxy carries UDP, which games, calls and DNS use.</dd>
+                            <dt>Speed</dt>
+                            <dd>Pulls a small file through the proxy and shows Mbit/s.</dd>
+                          </dl>
+                        </>
+                      }
+                    >
+                      <div className="flex flex-col items-start gap-3">
+                        <Check on={settings.measureUdp} onChange={(v) => update({ measureUdp: v })} label="UDP on SOCKS5" />
+                        <Check on={settings.measureSpeed} onChange={(v) => update({ measureSpeed: v })} label="Download speed" />
+                      </div>
+                    </Row>
+                  </>
+                )}
+
+                {section === "connect" && (
+                  <>
+                    <Row
+                      name="Connection check"
+                      value={probePreset ? undefined : "custom"}
+                      info={
+                        <>
+                          <p>Every twenty seconds while connected, one request goes through the proxy to see that it still works.</p>
+                          <dl>
+                            {PROBE_PRESETS.map(([url, name, what]) => (
+                              <div key={url} className="contents">
+                                <dt>{name}</dt>
+                                <dd>{what}</dd>
+                              </div>
+                            ))}
+                            <dt>Custom</dt>
+                            <dd>any http or https address; empty means HProxy</dd>
+                          </dl>
+                        </>
+                      }
+                    >
+                      <div className="flex flex-wrap items-center justify-end gap-3">
+                        <ButtonGroup
+                          size="sm"
+                          value={probeChoice}
+                          onChange={(v) => update({ connectProbeUrl: v === "custom" ? "" : v })}
+                          options={[...PROBE_PRESETS.map(([url, name]) => [url, name] as const), ["custom", "Custom"] as const]}
+                        />
+                        {probeChoice === "custom" && (
+                          <Input
+                            value={settings.connectProbeUrl}
+                            onChange={(v) => update({ connectProbeUrl: v })}
+                            placeholder="https://example.com/"
+                            width="short"
+                            mono
+                            label="Check address"
+                          />
+                        )}
+                      </div>
+                    </Row>
+
+                    <TimeZoneRow on={settings.matchTimeZone} setOn={(matchTimeZone) => update({ matchTimeZone })} />
+
+                    <FraudRow settings={settings} update={update} />
+                  </>
+                )}
+
+                {section === "look" && (
+                  <>
+                    <Row name="White or dark">
+                      <ButtonGroup
+                        size="sm"
+                        value={settings.theme}
+                        onChange={(theme) => update({ theme })}
+                        options={
+                          [
+                            ["electric", "White"],
+                            ["midnight", "Dark"],
+                          ] as const
+                        }
+                      />
+                    </Row>
+
+                    <Row name="Background" stacked info={`Each picture is the real page, small. Your own picture stays on ${device} and is never sent anywhere.`}>
+                      <BackgroundPicker value={settings.background} onChange={(background) => update({ background })} />
+                    </Row>
+
+                    <div className="ux-setmore">
+                      <button type="button" className="ux-link" aria-expanded={moreLooks} onClick={() => setMoreLooks(!moreLooks)}>
+                        More looks
+                        <Icon.chevronDown className={cx("h-3.5 w-3.5 transition-transform", moreLooks && "rotate-180")} />
+                      </button>
+                    </div>
+
+                    {moreLooks && (
+                      <>
+                        <Row
+                          name="Connect page"
+                          stacked
+                          info={
+                            <dl>
+                              {CONNECT_DESIGNS.map(([d, name, what]) => (
+                                <div key={d} className="contents">
+                                  <dt>{name}</dt>
+                                  <dd>{what}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          }
+                        >
+                          <ButtonGroup
+                            size="sm"
+                            value={settings.connectDesign}
+                            onChange={(connectDesign) => update({ connectDesign })}
+                            options={CONNECT_DESIGNS.map(([d, name]) => [d, name] as const)}
+                          />
+                        </Row>
+
+                        <Row
+                          name="The H"
+                          stacked
+                          info={
+                            <dl>
+                              {HUB_STYLES.map(([h, name, what]) => (
+                                <div key={h} className="contents">
+                                  <dt>{name}</dt>
+                                  <dd>{what}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          }
+                        >
+                          <ButtonGroup
+                            size="sm"
+                            value={settings.hubStyle}
+                            onChange={(hubStyle) => update({ hubStyle })}
+                            options={HUB_STYLES.map(([h, name]) => [h, name] as const)}
+                          />
+                        </Row>
+
+                        <Row
+                          name="When connected"
+                          stacked
+                          info={
+                            <dl>
+                              {CONNECT_LOOKS.map(([l, name, what]) => (
+                                <div key={l} className="contents">
+                                  <dt>{name}</dt>
+                                  <dd>{what}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          }
+                        >
+                          <ButtonGroup
+                            size="sm"
+                            value={settings.connectLook}
+                            onChange={(connectLook) => update({ connectLook })}
+                            options={CONNECT_LOOKS.map(([l, name]) => [l, name] as const)}
+                          />
+                        </Row>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {section === "app" && (
+                  <>
+                    {!isMobile() && <BackgroundRow keepRunning={settings.keepRunning} setKeepRunning={(keepRunning) => update({ keepRunning })} />}
+                    <UpdatesRow />
+                    <Row
+                      name="Privacy"
+                      info="Every server HProxy talks to, what each one receives, what our servers keep and for how long, and how to have it deleted."
+                    >
+                      <Button variant="text" onClick={() => void openExternal(PRIVACY_POLICY_URL)}>
+                        Privacy policy
+                      </Button>
+                    </Row>
+                  </>
+                )}
+              </section>
             </div>
-
-            <Block
-              name="Location and network"
-              /* ⚠️ The second half is derived from the mode above rather than
-                 asserted: a privacy claim that quietly goes stale is worse than
-                 no claim. */
-              hint={
-                <>
-                  The addresses you check are sent to HProxy&rsquo;s free IP API in batches. Never the ports, the credentials
-                  or the results.{" "}
-                  {settings.source === "local"
-                    ? `Checking runs entirely on ${thisDevice()}, so turning this off means the app sends nothing at all.`
-                    : "Checking is also running on our servers, so part of your list already reaches us either way."}
-                </>
-              }
-            >
-              <Check on={settings.geoLookup} onChange={(v) => update({ geoLookup: v })} label="Look up country, city and ISP" />
-            </Block>
-
-            <Block
-              name="Extra measurements"
-              hint="Each costs one more round trip per working proxy. UDP asks a SOCKS5 proxy to relay a datagram to our judge. Speed pulls a small payload through the proxy from our speed door and reports Mbit/s; both show in the row's detail."
-            >
-              <div className="flex flex-wrap gap-x-8 gap-y-3">
-                <Check on={settings.measureUdp} onChange={(v) => update({ measureUdp: v })} label="Test UDP on SOCKS5" />
-                <Check on={settings.measureSpeed} onChange={(v) => update({ measureSpeed: v })} label="Measure download speed" />
-              </div>
-            </Block>
-
-            <div className="md:col-span-2">
-              <Block
-                name="Connect check"
-                value={probePreset ? probePreset[1] : "custom"}
-                hint={
-                  probePreset
-                    ? `While connected, a request goes through the relay to this server every twenty seconds: ${probePreset[2]}. Our judge is the only server that can say which address you appear as; a Cloudflare trace page can too; anything else answers whether the tunnel works and how fast.`
-                    : "Any http or https address. It answers whether the tunnel works and how fast; only our judge or a Cloudflare trace page can also say which address you appear as. Empty means our judge."
-                }
-              >
-                <div className="flex flex-wrap items-center gap-3">
-                  <ButtonGroup
-                    size="sm"
-                    value={probeChoice}
-                    onChange={(v) => update({ connectProbeUrl: v === "custom" ? "" : v })}
-                    options={[...PROBE_PRESETS.map(([url, name]) => [url, name] as const), ["custom", "Custom"] as const]}
-                  />
-                  {probeChoice === "custom" && (
-                    <Input
-                      value={settings.connectProbeUrl}
-                      onChange={(v) => update({ connectProbeUrl: v })}
-                      placeholder="https://example.com/"
-                      width="short"
-                      mono
-                      label="Probe address"
-                    />
-                  )}
-                </div>
-              </Block>
-            </div>
-
-            <TimeZoneBlock on={settings.matchTimeZone} setOn={(matchTimeZone) => update({ matchTimeZone })} />
-
-            <div className="md:col-span-2">
-              <FraudBlock settings={settings} update={update} />
-            </div>
-
-            <div className="md:col-span-2">
-              <Block
-                name="Look"
-                aside={
-                  <ButtonGroup
-                    size="sm"
-                    value={settings.theme}
-                    onChange={(theme) => update({ theme })}
-                    options={
-                      [
-                        ["electric", "White"],
-                        ["midnight", "Dark"],
-                      ] as const
-                    }
-                  />
-                }
-                hint="White or dark (the moon in the title bar switches too), and what sits behind everything. Each picture below is the real page, small."
-              >
-                <BackgroundPicker value={settings.background} onChange={(background) => update({ background })} />
-              </Block>
-            </div>
-
-            <div className="md:col-span-2">
-              <Block name="The H in the middle" hint={HUB_STYLES.find(([h]) => h === settings.hubStyle)?.[2] ?? HUB_STYLES[0][2]}>
-                <ButtonGroup
-                  size="sm"
-                  value={settings.hubStyle}
-                  onChange={(hubStyle) => update({ hubStyle })}
-                  options={HUB_STYLES.map(([h, name]) => [h, name] as const)}
-                />
-              </Block>
-            </div>
-
-            <div className="md:col-span-2">
-              <Block
-                name="When connected"
-                hint={CONNECT_LOOKS.find(([l]) => l === settings.connectLook)?.[2] ?? CONNECT_LOOKS[0][2]}
-              >
-                <ButtonGroup
-                  size="sm"
-                  value={settings.connectLook}
-                  onChange={(connectLook) => update({ connectLook })}
-                  options={CONNECT_LOOKS.map(([l, name]) => [l, name] as const)}
-                />
-              </Block>
-            </div>
-
-            {!isMobile() && (
-              <div className="md:col-span-2">
-                <BackgroundBlock keepRunning={settings.keepRunning} setKeepRunning={(keepRunning) => update({ keepRunning })} />
-              </div>
-            )}
-
-            <div className="md:col-span-2">
-              <Block
-                name="Privacy"
-                hint="Every server HProxy talks to, what each one receives, what our servers keep and for how long, and how to have it deleted."
-              >
-                <Button variant="text" onClick={() => void openExternal(PRIVACY_POLICY_URL)}>
-                  Privacy policy
-                </Button>
-              </Block>
-            </div>
-
-            <div className="md:col-span-2">
-              <AboutBlock />
-            </div>
-          </div>
+          )}
         </Card>
       </div>
     </div>

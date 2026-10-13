@@ -25,15 +25,16 @@ import {
   copyText,
 } from "../../lib/tauri";
 import { addRun, loadRuns } from "../../lib/history";
-import { recordRun } from "../../lib/insights";
+import { PASTE_LIST_HERE } from "../../lib/proxyExamples";
 import { toCsv, toJson, toList } from "../../lib/export";
 import { setCheckRunning } from "../../lib/runState";
-import { fraudScores, fraudService, scoredIp, type FraudRow } from "../../lib/fraud";
-import { geoApiUrl, protocolList, whatLeaves, type Settings } from "../../lib/settings";
-import { Button, Card, Dropdown, Icon, Input, TextArea } from "../ui";
-import { ANONS, EMPTY_FILTERS, FilterPanel, LATENCY_MAX, PROTO_LABEL, PROTOS, type Filters } from "./FilterPanel";
+import { fraudScoresAll, fraudService, scoredIp, withAnswer, type FraudSet } from "../../lib/fraud";
+import { geoApiUrl, protocolList, whatLeaves, whereChecked, type Settings } from "../../lib/settings";
+import { Button, Card, Dropdown, Icon, InfoTip, Input, Roll, TextArea, useCrossbar } from "../ui";
+import { ANONS, ActiveFilters, EMPTY_FILTERS, FilterButton, LATENCY_MAX, PROTOS, activeFilterCount, type Filters, type Status } from "./FilterBar";
 
-/* The Checker screen, in look D (chosen 2026-09-23).
+/* The Checker screen, in look D (chosen 2026-09-23); results first since
+   2026-10-10.
 
    Idle (2026-09-24): one panel, one box, one button. The list is pasted or
    typed into the box, or a file dropped on it (or anywhere on the tab); the
@@ -42,27 +43,30 @@ import { ANONS, EMPTY_FILTERS, FilterPanel, LATENCY_MAX, PROTO_LABEL, PROTOS, ty
    count is the count the engine will check. The welcome page with four ways
    in and a paragraph of text is gone: people did not know which to press.
 
-   Results, top to bottom: the counts as one line of text; the search with the
-   actions beside it (Copy working, Export, New list or Stop), which stays at
-   the top while the list scrolls; the filters in two columns of groups with
-   the countries and "Showing X of Y" under them; then the table, whose header
-   pins under the search row and whose last line says where the other rows
-   went. The page scrolls as one, so a small window still reaches everything.
-   unfx's floating bar and its Filtered / Total pills are gone. */
+   Results, top to bottom (2026-10-12: no grey boxes, less text, more
+   compact):
+   - Which proxies show, as words on a hairline with the H's crossbar under
+     the current one, like Proxies' parts: Working 4, Not working 6, All 10
+     (their digits roll while a check runs); at the right how far a run is
+     and how long is left, then the average. It replaced three lines that
+     said the same: the counts with the protocol tallies, "Showing X of Y",
+     and "The other 6 are dead and hidden. Show them".
+   - Pinned while the list scrolls: a thin bar that fills as the proxies are
+     checked, then one row: the search, one Filters button (FilterBar.tsx),
+     and the actions as plain words, Copy working last and blue. What the
+     filters narrow shows under it as chips, only while any is on.
+   - The table: no box, no grey tags; its header pins under the row above.
+   The page scrolls as one, so a small window still reaches everything. */
 
 const spaced = (n: number) => n.toLocaleString("en-US").replace(/,/g, " ");
 
 const append = (prev: string, more: string) => (prev.trim() ? prev.replace(/\s*$/, "") + "\n" + more : more);
 
-/* What the empty box says: that anything goes, and a few of the shapes. RFC
-   5737 documentation addresses, so nothing real is shown. */
-const PASTE_HERE = [
-  "Paste your proxies here, in any format, as many as you have:",
-  "198.51.100.7:8080",
-  "198.51.100.7:8080:user:pass",
-  "user:pass@gate.example.com:8000",
-  "socks5://198.51.100.7:1080",
-].join("\n");
+/* The empty box: what to do, then one line of each format (lib/proxyExamples.ts,
+   documentation addresses only). Two lines in the morning of 2026-10-12 ("too much
+   text everywhere"), five since that afternoon ("make sure it has a proper
+   placeholder"; he saw it and said "it looks much better now"). */
+const PASTE_HERE = PASTE_LIST_HERE;
 
 /* Why a line is not a proxy, as the parser said it. The parser writes its
    reasons to follow a line number ("line 3: could not read ..."), so the first
@@ -93,19 +97,25 @@ function Unreadable({ line, reason }: { line: string; reason: string }) {
 export default function CheckerConsole({
   settings,
   onConnect,
-  onSaveList,
+  onSaveGroup,
   seed,
   active = true,
+  onHistory,
+  names,
 }: {
   settings: Settings;
+  /** Names given in My proxies, by `host:port`: a checked proxy you named shows its name first. */
+  names?: Map<string, string>;
   onConnect?: (raw: string) => void;
-  /** Keep the working rows as a list on the Connect tab. */
-  onSaveList?: (lines: string[]) => void;
+  /** Keep the working rows as a group (Proxies, Groups). */
+  onSaveGroup?: (lines: string[]) => void;
   /** Lines handed over from Connect ("Check this list"), checked on arrival. */
   seed?: { text: string; at: number } | null;
   /** False while another tab is showing: the screen stays alive behind it
       (a run keeps going), but its keyboard shortcuts stand down. */
   active?: boolean;
+  /** Open the past runs (History lives inside the Checker since 2026-10-02). */
+  onHistory?: () => void;
 }) {
   const [text, setText] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
@@ -116,34 +126,32 @@ export default function CheckerConsole({
   /* Fraud scores, by address, once asked for (the toolbar's "Fraud scores",
      or "Look it up" in a row's sheet). A new list starts without them; the
      session keeps what it asked (lib/fraud.ts), so asking again is free. */
-  const [fraud, setFraud] = useState<Map<string, FraudRow>>(() => new Map());
+  const [fraud, setFraud] = useState<Map<string, FraudSet>>(() => new Map());
   const [scoring, setScoring] = useState<{ done: number; total: number } | null>(null);
   useEffect(() => {
     if (rows.length === 0) setFraud(new Map());
   }, [rows.length]);
   const scoreFraud = (ips: string[]) => {
     const list = [...new Set(ips)];
+    const services = settings.fraudServices;
     if (list.length === 0 || scoring) return;
-    let done = 0;
-    setScoring({ done, total: list.length });
-    void fraudScores(list, settings.fraudService, settings.fraudKeys, (found) => {
-      done = Math.min(list.length, done + found.length);
+    // Counted in addresses: one is done once every service turned on answered.
+    let answers = 0;
+    setScoring({ done: 0, total: list.length });
+    void fraudScoresAll(list, services, settings.fraudKeys, (service, found) => {
+      answers += found.length;
       setFraud((prev) => {
         const next = new Map(prev);
-        for (const r of found) next.set(r.ip, r);
+        for (const r of found) next.set(r.ip, withAnswer(next.get(r.ip), service, r));
         return next;
       });
-      setScoring({ done, total: list.length });
+      setScoring({ done: Math.min(list.length, Math.floor(answers / services.length)), total: list.length });
     }).finally(() => setScoring(null));
   };
 
   /* One object rather than six pieces of state, which is what lets Reset be
      `setFilters(EMPTY_FILTERS)` instead of six setters that will disagree. */
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
-  /* Open by default on a computer, as the old screen had it. On a phone the
-     groups would push the results a screen down, so they start folded there;
-     the countries line stays, with "Show filters" beside it. */
-  const [filtersOpen, setFiltersOpen] = useState(() => typeof window === "undefined" || window.innerWidth > 720);
 
   /* Publish "a run is in flight" so the updater can refuse to relaunch out from
      under it. Restarting mid-check silently discards every result the user has
@@ -173,6 +181,11 @@ export default function CheckerConsole({
      progress line), so it is measured, and handed to the header as --stick. */
   const stickRef = useRef<HTMLDivElement>(null);
   const hasRows = rows.length > 0;
+  /* The status line's crossbar (ui/crossbar.ts). Keyed to the rows appearing
+     too: the line only exists once there are results. */
+  const statusRow = useRef<HTMLElement>(null);
+  const statusBar = useRef<HTMLElement>(null);
+  useCrossbar(statusRow, statusBar, `${filters.status}:${hasRows}`);
   useLayoutEffect(() => {
     const scroller = scrollRef.current;
     const stick = stickRef.current;
@@ -278,9 +291,6 @@ export default function CheckerConsole({
       setChecking(false);
       const alive = live.filter((r) => r.status === "working").length;
       addRun({ ts: startedAt, total: live.length, alive, durationMs: Date.now() - startedAt });
-      /* Fold the run into the per-network aggregates. Counts and a small
-         latency histogram per ASN, never the addresses themselves. */
-      recordRun(live);
     };
 
     /* Locations are looked up beside the check and arrive in waves. A row that
@@ -382,7 +392,6 @@ export default function CheckerConsole({
   const avgLatency = working.length
     ? Math.round(working.reduce((a, r) => a + (r.latency ?? 0), 0) / working.length)
     : 0;
-  const elite = working.filter((r) => r.anonymity === "Elite").length;
 
   /* How many working rows carry each protocol and each grade: the numbers
      beside the ticks, as in unfx, and the live tallies during a run. */
@@ -413,18 +422,6 @@ export default function CheckerConsole({
     return { rate: perSec, etaLabel: label };
   }, [tick, runStart, checking, checkedCount, rows.length]);
 
-  /* How many groups are actually narrowing the list, so a hidden panel can
-     never silently hide the fact that results are being filtered. */
-  const activeFilterCount =
-    (PROTOS.every((p) => filters.proto[p]) ? 0 : 1) +
-    (ANONS.every((a) => filters.anon[a]) ? 0 : 1) +
-    (filters.showDead ? 1 : 0) +
-    (filters.onlyKeepAlive ? 1 : 0) +
-    (filters.onlyRotating ? 1 : 0) +
-    (filters.maxLatency < LATENCY_MAX ? 1 : 0) +
-    (filters.ports.trim() ? 1 : 0) +
-    (filters.countries.length ? 1 : 0);
-
   /* Parsed once per render rather than per row. */
   const portRule = useMemo(() => {
     const list = filters.ports
@@ -434,14 +431,14 @@ export default function CheckerConsole({
     return list.length ? { list, allow: filters.portsAllow } : null;
   }, [filters.ports, filters.portsAllow]);
 
-  /* The rows the filters let through, and how many dead ones "Show dead"
-     would add: the table's last line says where the others went. */
-  const { visible, hiddenDead } = useMemo(() => {
+  /* The rows the filters let through, of the status picked in the status line
+     (working, not working, or all). */
+  const visible = useMemo(() => {
     const allProto = PROTOS.every((p) => filters.proto[p]);
     const allAnon = ANONS.every((a) => filters.anon[a]);
     const q = filters.search.trim().toLowerCase();
 
-    /* Every filter but "Show dead". */
+    /* Every filter but the status. */
     const match = (r: Row) => {
       if (filters.onlyKeepAlive && !r.keepAlive) return false;
       if (filters.onlyRotating && !r.rotating) return false;
@@ -465,21 +462,19 @@ export default function CheckerConsole({
     };
 
     const kept: Row[] = [];
-    let hidden = 0;
     for (const r of rows) {
       // A row still being checked always shows: hiding it would make the list
       // jump as results land, and it has no attributes to filter on yet.
       if (r.status === "pending") kept.push(r);
       else if (!match(r)) continue;
-      // Survivors only, until asked otherwise.
-      else if (r.status === "working" || filters.showDead) kept.push(r);
-      else hidden++;
+      else if (filters.status === "all" || (filters.status === "working") === (r.status === "working")) kept.push(r);
     }
     kept.sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status]);
-    return { visible: kept, hiddenDead: hidden };
+    return kept;
   }, [rows, filters, portRule]);
 
-  /* Country facet, ordered by how many rows each has. */
+  /* Country facet, ordered by how many rows each has: every country on the
+     list (the Country button's panel has room for all of them, and a search). */
   const countryFacet = useMemo(() => {
     const c = new Map<string, { count: number; name?: string }>();
     for (const r of rows) {
@@ -488,10 +483,7 @@ export default function CheckerConsole({
       if (e) e.count++;
       else c.set(r.cc, { count: 1, name: r.country });
     }
-    return [...c.entries()]
-      .map(([cc, e]) => ({ cc, ...e }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 14);
+    return [...c.entries()].map(([cc, e]) => ({ cc, ...e })).sort((a, b) => b.count - a.count);
   }, [rows]);
 
   const filteredWorking = visible.filter((r) => r.status === "working");
@@ -584,8 +576,16 @@ export default function CheckerConsole({
     return (
       <div className="relative h-full overflow-y-auto" onDragOver={dragOn} onDragLeave={dragOff} onDrop={onDropFiles}>
         <div className="mx-auto flex min-h-full max-w-[1600px] flex-col gap-3 px-6 pb-6 pt-1.5 max-sm:px-3">
-          <Card fill pad="roomy">
-            <h1 className="text-[24px] font-extrabold tracking-[-0.02em] text-ink">Check your proxies</h1>
+          <Card tone="flat" fill pad="roomy">
+            <div className="flex items-center justify-between gap-3">
+              <h1 className="text-[24px] font-extrabold tracking-[-0.02em] text-ink">Check your proxies</h1>
+              {onHistory && (
+                <Button variant="text" onClick={onHistory}>
+                  <Icon.clock className="h-4 w-4" />
+                  History
+                </Button>
+              )}
+            </div>
             <div className="relative mt-4 min-h-[260px] flex-1">
               <TextArea value={text} onChange={setText} placeholder={PASTE_HERE} label="Proxy list" inputRef={textRef} />
               {/* The file can be dropped right here too. Only on the empty box:
@@ -643,12 +643,16 @@ export default function CheckerConsole({
               </div>
             )}
 
-            <p className="mt-4 text-[12.5px] font-medium leading-relaxed text-ink-soft">{whatLeaves(settings)}</p>
+            {/* Where the list goes, in three words; the whole sentence behind the "i". */}
+            <p className="mt-4 flex items-center gap-1.5 text-[12.5px] font-semibold text-ink-soft">
+              <Icon.shield className="h-3.5 w-3.5" />
+              {whereChecked(settings)}
+              <InfoTip label="where your list goes">{whatLeaves(settings)}</InfoTip>
+            </p>
           </Card>
 
-          {/* The "What you have learned so far" panel (InsightsPanel.tsx) is off the screen since
-              2026-09-24: a list of network names and percentages under the checker read as noise.
-              The component and the counts it reads are kept, so it can come back in one line. */}
+          {/* The "What you have learned so far" panel was removed 2026-10-04 (off the screen
+              since 2026-09-24: it read as noise); it is in git history. */}
 
         </div>
 
@@ -665,106 +669,131 @@ export default function CheckerConsole({
   }
 
   const pct = rows.length ? Math.round((checkedCount / rows.length) * 100) : 0;
-  const showDead = (on: boolean) => setFilters((f) => ({ ...f, showDead: on }));
+  const failed = dead.length + timeouts.length;
+  const showStatus = (s: Status) => setFilters((f) => ({ ...f, status: s }));
+  /* Another list: back to the empty box with the cursor in it; this run stays in History. */
+  const newCheck = () => {
+    setRows([]);
+    setText("");
+    setFilters(EMPTY_FILTERS);
+    window.setTimeout(() => textRef.current?.focus(), 0);
+  };
+  /* The same list again, every row from the start. */
+  const checkAgain = () => void run(rows.map((r) => r.raw).join("\n"));
+  const STATUSES: readonly (readonly [Status, string, number])[] = [
+    ["working", "Working", working.length],
+    ["failed", "Not working", failed],
+    ["all", "All", rows.length],
+  ];
 
-  /* The table's last line: where the rows that are not showing went. Nothing
-     while a run is in flight, since the rows still being checked are on it. */
-  const end = checking ? null : hiddenDead > 0 ? (
-    <>
-      {visible.length === 0 ? "All" : "The other"} {spaced(hiddenDead)} {hiddenDead === 1 ? "is" : "are"} dead and hidden.
-      <button type="button" className="ux-link" onClick={() => showDead(true)}>
-        Show {hiddenDead === 1 ? "it" : "them"} <Icon.arrowRight className="h-3.5 w-3.5" />
-      </button>
-    </>
-  ) : visible.length === 0 ? (
-    <>
-      Nothing matches these filters.
-      <button type="button" className="ux-link" onClick={() => setFilters(EMPTY_FILTERS)}>
-        Reset them <Icon.arrowRight className="h-3.5 w-3.5" />
-      </button>
-    </>
-  ) : filters.showDead && settled.some((r) => r.status !== "working") ? (
-    <>
-      Showing the dead ones too.
-      <button type="button" className="ux-link" onClick={() => showDead(false)}>
-        Hide them <Icon.arrowRight className="h-3.5 w-3.5" />
-      </button>
-    </>
-  ) : visible.length === rows.length ? (
-    "That is every proxy on the list."
-  ) : (
-    "That is every proxy these filters let through."
-  );
+  /* The table's last line, only when nothing shows: why, and the way back. The
+     status line says how many there are of each, so a full list needs no line
+     under it; while a run is in flight the rows being checked are on it. */
+  const end =
+    checking || visible.length > 0 ? null : activeFilterCount(filters) > 0 || filters.search.trim() ? (
+      <>
+        Nothing here matches these filters.
+        <button type="button" className="ux-link" onClick={() => setFilters((f) => ({ ...EMPTY_FILTERS, status: f.status }))}>
+          Reset them <Icon.arrowRight className="h-3.5 w-3.5" />
+        </button>
+      </>
+    ) : filters.status === "working" ? (
+      <>
+        None of them works.
+        <button type="button" className="ux-link" onClick={() => showStatus("failed")}>
+          See why <Icon.arrowRight className="h-3.5 w-3.5" />
+        </button>
+      </>
+    ) : filters.status === "failed" ? (
+      "Every one of them works."
+    ) : null;
 
   return (
     <div ref={scrollRef} className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-[1600px] flex-col gap-3 px-6 pb-6 pt-1.5 max-sm:px-3">
-        {/* The counts: a line of text, not a row of coloured pills. */}
-        <div className="ux-summary num">
-          <span className="count">
-            <i className="dot tone-ok" />
-            <b>{spaced(working.length)}</b> working
-          </span>
-          <span className="count">
-            <i className="dot tone-danger" />
-            <b>{spaced(dead.length)}</b> dead
-          </span>
-          <span className="count">
-            <i className="dot tone-warn" />
-            <b>{spaced(timeouts.length)}</b> timeout
-          </span>
-          <span className="sep" />
-          {PROTOS.map((p) => (
-            <span key={p} className="count">
-              {PROTO_LABEL[p]} <b>{spaced(counts.proto[p])}</b>
-            </span>
+        {/* Which proxies show: words on a hairline, the current one with the H's crossbar
+            under it (ui/crossbar.ts), like Proxies' parts. At the right, while it checks,
+            how far, how fast, how long is left; then the average. */}
+        <div className="ux-statusline">
+        <nav ref={statusRow} className="ux-pagetabs is-small" aria-label="Which proxies show">
+          {STATUSES.map(([id, name, n]) => (
+            <button
+              key={id}
+              type="button"
+              aria-current={filters.status === id ? "page" : undefined}
+              onClick={() => showStatus(id)}
+              title={id === "working" && working.length > 0 ? `${spaced(avgLatency)} ms on average` : undefined}
+            >
+              {name}
+              <span className="count num">
+                <Roll value={spaced(n)} />
+              </span>
+            </button>
           ))}
-          {working.length > 0 && (
-            <span className="aside">
-              <b>{spaced(avgLatency)} ms</b> average · <b>{spaced(elite)}</b> elite
-            </span>
-          )}
+          <i ref={statusBar} className="ux-pagetabs-bar" aria-hidden="true" />
+        </nav>
+          {/* At the right, the page's own actions (2026-10-12, so a new check is one press
+              away): while a run goes, how far it is and
+              Stop; then Check again, New check and History. */}
+          <div className="aside">
+            {checking ? (
+              <>
+                <span className="num">
+                  <b>{spaced(checkedCount)}</b> of <b>{spaced(rows.length)}</b>
+                  {rate > 0 ? ` · ${rate >= 10 ? Math.round(rate) : rate.toFixed(1)} per second` : ""}
+                  {etaLabel ? ` · ${etaLabel}` : ""}
+                </span>
+                <Button variant="danger" size="sm" onClick={() => void cancel()} title="Esc">
+                  <Icon.power className="h-4 w-4" />
+                  Stop
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="text" size="sm" onClick={checkAgain} title="Check the same list again">
+                  <Icon.refresh className="h-4 w-4" />
+                  Check again
+                </Button>
+                <Button variant="text" size="sm" onClick={newCheck} title="Check another list (this one stays in History)">
+                  <Icon.plus className="h-4 w-4" />
+                  New check
+                </Button>
+                {onHistory && (
+                  <Button variant="text" size="sm" onClick={onHistory}>
+                    <Icon.clock className="h-4 w-4" />
+                    History
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
         </div>
 
-        {/* The search and what you take away, pinned while the list scrolls. */}
-        <div ref={stickRef} className="ux-stick -my-1.5 flex flex-col gap-3 pb-3 pt-1.5">
-          {checking && (
-            <div className="ux-progress">
-              <div className="bar" style={{ width: `${pct}%` }} />
-              <div className="label num">
-                {spaced(checkedCount)} / {spaced(rows.length)}
-                {rate > 0 ? ` · ${rate >= 10 ? Math.round(rate) : rate.toFixed(1)} per second` : ""}
-                {etaLabel ? ` · ${etaLabel}` : ""}
-              </div>
-            </div>
-          )}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="min-w-0 flex-[1_1_300px]">
+        {/* Pinned while the list scrolls: the search, the filters and the actions in one row,
+            what the filters narrow under it; along its top edge, while a check runs, a thin
+            bar fills up. */}
+        <div ref={stickRef} className="ux-stick -my-1.5 flex flex-col gap-2 pb-3 pt-2">
+          <div className="ux-runbar" data-shown={checking || undefined} aria-hidden="true">
+            <i style={{ transform: `scaleX(${checking ? pct / 100 : 1})` }} />
+          </div>
+          <div className="ux-tools">
+            <span className="search">
               <Input
                 icon="search"
                 value={filters.search}
                 onChange={(v) => setFilters((f) => ({ ...f, search: v }))}
-                placeholder="Search an address, a country, a network"
-                label="Search the results"
+                placeholder="Search address or country"
+                label="Search the results (address, country, city, network)"
                 inputRef={searchRef}
               />
             </span>
-            <Button variant="solid" onClick={() => void copyWorking()} disabled={filteredWorking.length === 0} title="Ctrl+Shift+C">
-              <Icon.copy className="h-4 w-4" />
-              {copied ? (
-                "Copied"
-              ) : (
-                <span>
-                  Copy {spaced(filteredWorking.length)}
-                  {/* A phone keeps the number; the word would wrap the row. */}
-                  <span className="max-[480px]:hidden"> working</span>
-                </span>
-              )}
-            </Button>
+            <FilterButton filters={filters} setFilters={setFilters} counts={counts} countries={countryFacet} />
+            <span className="actions">
             <Button
+              variant="text"
               onClick={() => scoreFraud(filteredWorking.map((r) => scoredIp(r)).filter((ip): ip is string => !!ip))}
               disabled={!!scoring || filteredWorking.length === 0}
-              title={`The fraud score of every working proxy shown, one lookup each at ${fraudService(settings.fraudService).name} (Settings, Fraud score)`}
+              title={`Fraud score of every working proxy shown, from ${settings.fraudServices.map((id) => fraudService(id).name).join(" and ")}`}
             >
               <Icon.shield className="h-4 w-4" />
               {scoring ? (
@@ -777,48 +806,40 @@ export default function CheckerConsole({
             </Button>
             <Dropdown
               label="Export"
+              variant="text"
               icon={<Icon.download className="h-4 w-4" />}
-              onMain={downloadTxt}
               disabled={settled.length === 0}
               items={[
-                { label: "Working list as .txt", note: "host:port, one per line, what you paste elsewhere", onClick: downloadTxt },
-                { label: "Every row shown as .csv", note: "every column, the timing phases, the leaked headers", onClick: downloadCsv },
-                { label: "Every row shown as .json", note: "the same, with every transport's timings", onClick: downloadJson },
-                ...(onSaveList && filteredWorking.length > 0
+                { label: "Working list as .txt", note: "host:port, one per line", onClick: downloadTxt },
+                { label: "Every row shown as .csv", note: "every column", onClick: downloadCsv },
+                { label: "Every row shown as .json", note: "every column, with the timings", onClick: downloadJson },
+                ...(onSaveGroup && filteredWorking.length > 0
                   ? [
                       {
-                        label: "Save the working ones as a list",
-                        note: "then connect through them, rotating, on the Connect tab",
-                        onClick: () => onSaveList(filteredWorking.map((r) => r.raw)),
+                        label: "Save the working ones as a group",
+                        note: "then connect through them in one click",
+                        onClick: () => onSaveGroup(filteredWorking.map((r) => r.raw)),
                       },
                     ]
                   : []),
               ]}
             />
-            {checking ? (
-              <Button variant="danger" onClick={() => void cancel()} title="Esc">
-                <Icon.power className="h-4 w-4" />
-                Stop
-              </Button>
-            ) : (
-              <Button variant="text" onClick={() => setRows([])}>
-                New list
-              </Button>
-            )}
+            <Button variant="solid" onClick={() => void copyWorking()} disabled={filteredWorking.length === 0} title="Ctrl+Shift+C">
+              <Icon.copy className="h-4 w-4" />
+              {copied ? (
+                "Copied"
+              ) : (
+                <span>
+                  Copy {spaced(filteredWorking.length)}
+                  {/* A phone keeps the number; the word would wrap the row. */}
+                  <span className="max-[480px]:hidden"> working</span>
+                </span>
+              )}
+            </Button>
+            </span>
           </div>
+          <ActiveFilters filters={filters} setFilters={setFilters} shown={visible.length} />
         </div>
-
-        <FilterPanel
-          filters={filters}
-          setFilters={setFilters}
-          counts={counts}
-          countries={countryFacet}
-          showing={visible.length}
-          total={rows.length}
-          open={filtersOpen}
-          onToggleOpen={() => setFiltersOpen((v) => !v)}
-          activeCount={activeFilterCount}
-        />
 
         <ResultsTable
           rows={rows}
@@ -830,6 +851,7 @@ export default function CheckerConsole({
           onConnectRow={onConnect ? (r) => onConnect(r.raw) : undefined}
           fraud={fraud}
           onFraud={scoreFraud}
+          names={names}
         />
       </div>
     </div>

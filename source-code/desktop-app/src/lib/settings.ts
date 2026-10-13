@@ -1,15 +1,18 @@
 /* Persistent user settings (localStorage). Defaults are the gentle,
    network-friendly ones. */
 
-import { DEFAULT_FRAUD_SERVICE, isFraudService, type FraudKeys, type FraudServiceId } from "./fraud";
+import { DEFAULT_FRAUD_SERVICE, fraudServicesOf, isFraudService, type FraudKeys, type FraudServiceId } from "./fraud";
 import {
   DEFAULT_BACKGROUND,
+  DEFAULT_CONNECT_DESIGN,
   DEFAULT_CONNECT_LOOK,
   DEFAULT_HUB_STYLE,
   isBackground,
+  isConnectDesign,
   isConnectLook,
   isHubStyle,
   type Background,
+  type ConnectDesign,
   type ConnectLook,
   type HubStyle,
 } from "./look";
@@ -63,10 +66,12 @@ export type Settings = {
    *  is. Change one and change the other. */
   source: "local" | "api" | "both";
   theme: "electric" | "midnight";
-  /** The page behind everything: Aura by default (lib/look.ts). */
+  /** The page behind everything: Soft by default (lib/look.ts). */
   background: Background;
   /** How the connection card looks while connected (lib/look.ts, CONNECT_LOOKS). */
   connectLook: ConnectLook;
+  /** How the whole Connect page is laid out (lib/look.ts, CONNECT_DESIGNS). */
+  connectDesign: ConnectDesign;
   /** The H in the middle of the card's route: a button, a switch, or the small sign (lib/look.ts, HUB_STYLES). */
   hubStyle: HubStyle;
   /** Closing the window keeps the app in the tray by the clock, connection
@@ -80,9 +85,9 @@ export type Settings = {
   /** Also pull a small payload through every working proxy and report Mbit/s. */
   measureSpeed: boolean;
   /** Who gives fraud scores (lib/fraud.ts): FFraud's free lookup by default,
-      or a service the person has a key for. The address being scored goes to
-      that service from this computer, nowhere else. */
-  fraudService: FraudServiceId;
+      and any services the person has a key for, several at once. The address
+      being scored goes to those services from this computer, nowhere else. */
+  fraudServices: FraudServiceId[];
   /** The keys given, per service, kept on this computer only. */
   fraudKeys: FraudKeys;
   /** Look up the address you appear as while connected (Connect's card). */
@@ -100,18 +105,19 @@ export const DEFAULT_SETTINGS: Settings = {
   protocols: { http: true, https: true, socks4: true, socks5: true },
   geoLookup: true,
   source: "local",
-  // White by default, in the extension and the app; dark is one click in
-  // the title bar.
-  theme: "electric",
-  // Aura; the rest are in Settings.
+  // Dark by default in the app (the extension stays white); white is one
+  // click in the title bar.
+  theme: "midnight",
+  // Soft, a calm grey page; the rest are in Settings.
   background: DEFAULT_BACKGROUND,
   connectLook: DEFAULT_CONNECT_LOOK,
+  connectDesign: DEFAULT_CONNECT_DESIGN,
   hubStyle: DEFAULT_HUB_STYLE,
   keepRunning: true,
   connectProbeUrl: "https://hproxy.com/api/free-proxy/echo",
   measureUdp: false,
   measureSpeed: false,
-  fraudService: DEFAULT_FRAUD_SERVICE,
+  fraudServices: [DEFAULT_FRAUD_SERVICE],
   fraudKeys: {},
   fraudOnConnect: true,
   matchTimeZone: false,
@@ -123,9 +129,9 @@ export const DEFAULT_PROBE_URL = "https://hproxy.com/api/free-proxy/echo";
 
 /** `[url, name, what it can tell you]`. Anything else is typed in as custom. */
 export const PROBE_PRESETS: readonly (readonly [string, string, string])[] = [
-  [DEFAULT_PROBE_URL, "HProxy judge", "names the address you appear as"],
-  ["https://www.google.com/generate_204", "Google", "reachability and round trip"],
-  ["https://www.cloudflare.com/cdn-cgi/trace", "Cloudflare", "also names the address you appear as"],
+  [DEFAULT_PROBE_URL, "HProxy", "whether it works, and the address you appear as"],
+  ["https://www.google.com/generate_204", "Google", "whether it works, and how fast"],
+  ["https://www.cloudflare.com/cdn-cgi/trace", "Cloudflare", "whether it works, and the address you appear as"],
 ];
 
 /** What the engine should use as its geo endpoint for a run. An empty string is
@@ -139,9 +145,17 @@ export function geoApiUrl(s: Settings): string | undefined {
     for the defaults is a false one after a click (the Settings hints and the
     README's "What leaves your machine" say the same). */
 export function whatLeaves(s: Pick<Settings, "source" | "geoLookup">): string {
-  if (s.source !== "local") return "Checking also runs on HProxy's servers (Settings, Where checking runs), so your list goes there, logins included.";
+  if (s.source !== "local") return "Checking also runs on HProxy's servers (Settings, Check from), so your list goes there, logins included.";
   if (s.geoLookup) return `Checked from ${thisDevice()}: your list and its logins stay here. Only the addresses go out, to show where each one is, and Settings turns that off.`;
   return `Checked from ${thisDevice()}, and nothing about your list leaves it.`;
+}
+
+/** Where a check runs, in three words, for the line under the Checker's box;
+    `whatLeaves` is the whole sentence behind its "i". */
+export function whereChecked(s: Pick<Settings, "source">): string {
+  if (s.source === "api") return "Checked on HProxy's servers";
+  if (s.source === "both") return `Checked on HProxy's servers and ${thisDevice()}`;
+  return `Checked on ${thisDevice()}`;
 }
 
 /** Above this the UI warns that a home connection may struggle. */
@@ -150,14 +164,19 @@ export const MAX_CONCURRENCY = 1000;
 
 const KEY = "hproxy-checker-settings";
 
-/* Settings saved before 2026-09-23 carry no `look`. Their theme is the old
-   default (midnight) saved on first run, not a choice anyone made: the app
-   saves the defaults the moment it opens. So once, on the way in, they move to
-   white, the default for both the extension and the app. Anyone who wants
-   dark after that picks it again,
-   and it stays, because from then on the settings carry `look`. */
-const LOOK = "d-2026-09-23";
-type Stored = Partial<Settings> & { look?: string };
+/* The app saves its defaults the moment it opens, so a stored theme is
+   mostly the default of its day, not a choice anyone made. Each change of the
+   default therefore moves everyone once, on the way in, and the settings
+   carry `look` from then on, so a theme picked after that stays picked:
+     · d-2026-09-23   to white, which the extension also is (before it the
+                      app was dark and saved no `look`)
+     · dark-2026-10-05  back to dark, the app's default from then on; the
+                      extension stays white. White is one click away. */
+const LOOK = "dark-2026-10-05";
+/* The Connect page moves to Mix once (2026-10-10: the phone app's look on the computer); a page
+   picked after that stays picked. Copies saved before carry no `page`. */
+const PAGE = "mix-2026-10-10";
+type Stored = Partial<Settings> & { look?: string; page?: string; fraudService?: unknown };
 
 export function loadSettings(): Settings {
   try {
@@ -165,7 +184,8 @@ export function loadSettings(): Settings {
     if (raw) {
       const parsed = JSON.parse(raw) as Stored;
       const theme = parsed.look === LOOK ? parsed.theme : DEFAULT_SETTINGS.theme;
-      const { look: _look, ...rest } = parsed;
+      // `fraudService`, one service, was kept until 2026-10-02.
+      const { look: _look, page, fraudService: oldFraudService, ...rest } = parsed;
       void _look;
       return {
         ...DEFAULT_SETTINGS,
@@ -173,8 +193,9 @@ export function loadSettings(): Settings {
         theme: theme ?? DEFAULT_SETTINGS.theme,
         background: isBackground(parsed.background) ? parsed.background : DEFAULT_SETTINGS.background,
         connectLook: isConnectLook(parsed.connectLook) ? parsed.connectLook : DEFAULT_SETTINGS.connectLook,
+        connectDesign: page === PAGE && isConnectDesign(parsed.connectDesign) ? parsed.connectDesign : DEFAULT_SETTINGS.connectDesign,
         hubStyle: isHubStyle(parsed.hubStyle) ? parsed.hubStyle : DEFAULT_SETTINGS.hubStyle,
-        fraudService: isFraudService(parsed.fraudService) ? parsed.fraudService : DEFAULT_SETTINGS.fraudService,
+        fraudServices: fraudServicesOf(parsed.fraudServices ?? (isFraudService(oldFraudService) ? [oldFraudService] : undefined)),
         fraudKeys: keysOf(parsed.fraudKeys),
         fraudOnConnect: typeof parsed.fraudOnConnect === "boolean" ? parsed.fraudOnConnect : DEFAULT_SETTINGS.fraudOnConnect,
         matchTimeZone: typeof parsed.matchTimeZone === "boolean" ? parsed.matchTimeZone : DEFAULT_SETTINGS.matchTimeZone,
@@ -200,7 +221,7 @@ function keysOf(v: unknown): FraudKeys {
 
 export function saveSettings(s: Settings): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ ...s, look: LOOK }));
+    localStorage.setItem(KEY, JSON.stringify({ ...s, look: LOOK, page: PAGE }));
   } catch {
     /* ignore */
   }

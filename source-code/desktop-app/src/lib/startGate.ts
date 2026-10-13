@@ -1,8 +1,8 @@
 /* The start: a newer version first, then the app.
  *
- * The maintainer's word (2026-09-27), about the apps on his phone: "every time I open an app that has an
- * update ... it requires me to install it before I can start it". So every copy looks for a newer
- * version when it opens, before its screens, and takes it the way its channel allows
+ * The way phone apps do it: an app with an update installs it before it starts. So every copy
+ * looks for a newer version when it opens, before its screens, and takes it the way its channel
+ * allows
  * (src-tauri/src/channel.rs):
  *
  *   the downloads (Windows, macOS, AppImage)  download, install, the new version opens

@@ -28,7 +28,7 @@ export default function Wordmark({
   gid?: string;
 }) {
   return (
-    <span translate="no" className={`inline-flex items-baseline font-bold tracking-[-0.025em] ${className}`}>
+    <span translate="no" className={`inline-flex items-baseline font-bold tracking-[-0.025em] ${className}`} style={{ fontFamily: "var(--font-brand)" }}>
       <HLetter fill={light ? "current" : "blue"} gid={gid} className="mr-[0.07em] h-[0.73em] w-auto" />
       <span className={light ? "" : "text-ink"}>Proxy</span>
       <span className={light ? "opacity-60" : "text-digi"}>.</span>

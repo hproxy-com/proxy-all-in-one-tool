@@ -48,30 +48,42 @@ function fakeRoot() {
 }
 
 describe("the background setting", () => {
-  it("defaults to Aura and knows every choice", () => {
-    expect(DEFAULT_BACKGROUND).toBe("aura");
-    expect(BACKGROUNDS[0][0]).toBe("aura");
-    expect(isBackground("contours")).toBe(true);
+  it("defaults to Soft and knows every choice", () => {
+    expect(DEFAULT_BACKGROUND).toBe("soft");
+    expect(BACKGROUNDS[0][0]).toBe("soft");
+    expect(isBackground("dotgrid")).toBe(true);
     expect(isBackground("teal")).toBe(false);
   });
 
-  it("maps each choice to its surface and art", () => {
-    expect(lookAttributes("aura")).toEqual({ surface: "aura" });
-    expect(lookAttributes("mesh")).toEqual({ surface: "aura", art: "mesh" });
-    expect(lookAttributes("paper")).toEqual({ surface: "paper" });
-    expect(lookAttributes("white")).toEqual({ surface: "clean" });
-    expect(lookAttributes("picture")).toEqual({ surface: "aura", art: "picture" });
+  /* Aura and its studies were a haze of see-through blue (2026-10-02): a
+     setting saved with one of them opens on the default. */
+  it("opens a setting saved with a hazy background on Soft", () => {
+    for (const old of ["aura", "glow", "mesh", "grain", "contours", "watermark", "ribbon"]) {
+      expect(isBackground(old), old).toBe(false);
+      store.set("hproxy-checker-settings", JSON.stringify({ background: old, look: "d-2026-09-23" }));
+      expect(loadSettings().background, old).toBe("soft");
+    }
+    store.set("hproxy-checker-settings", JSON.stringify({ background: "paper", look: "d-2026-09-23" }));
+    expect(loadSettings().background).toBe("paper");
   });
 
-  it("sets the attributes, and falls back to Aura when the picture is missing", () => {
+  it("maps each choice to its surface and art", () => {
+    expect(lookAttributes("soft")).toEqual({ surface: "soft" });
+    expect(lookAttributes("paper")).toEqual({ surface: "paper" });
+    expect(lookAttributes("white")).toEqual({ surface: "clean" });
+    expect(lookAttributes("blueprint")).toEqual({ surface: "clean", art: "blueprint" });
+    expect(lookAttributes("picture")).toEqual({ surface: "soft", art: "picture" });
+  });
+
+  it("sets the attributes, and falls back to Soft when the picture is missing", () => {
     const root = fakeRoot();
-    applyLook("ribbon", null, root as unknown as HTMLElement);
-    expect(root.dataset).toEqual({ surface: "aura", bg: "ribbon" });
+    applyLook("band", null, root as unknown as HTMLElement);
+    expect(root.dataset).toEqual({ surface: "clean", bg: "band" });
     applyLook("picture", "data:image/jpeg;base64,xyz", root as unknown as HTMLElement);
-    expect(root.dataset).toEqual({ surface: "aura", bg: "picture" });
+    expect(root.dataset).toEqual({ surface: "soft", bg: "picture" });
     expect(root.props.get("--bg-picture")).toBe('url("data:image/jpeg;base64,xyz")');
     applyLook("picture", null, root as unknown as HTMLElement);
-    expect(root.dataset).toEqual({ surface: "aura" });
+    expect(root.dataset).toEqual({ surface: "soft" });
     expect(root.props.has("--bg-picture")).toBe(false);
     applyLook("white", null, root as unknown as HTMLElement);
     expect(root.dataset).toEqual({ surface: "clean" });

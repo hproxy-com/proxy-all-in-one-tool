@@ -53,6 +53,12 @@ export const Icon = {
       <path d="M5 12h12m-4.5-4.5L17 12l-4.5 4.5" />
     </svg>
   ),
+  /** The right arrow turned round: Back. */
+  arrowLeft: ({ className }: IconProps) => (
+    <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
+      <path d="M19 12H7m4.5-4.5L7 12l4.5 4.5" />
+    </svg>
+  ),
   /** Settings: three sliders with square knobs. */
   settings: ({ className }: IconProps) => (
     <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
@@ -108,6 +114,25 @@ export const Icon = {
   download: ({ className }: IconProps) => (
     <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
       <path d="M12 4.5v10m0 0-4-4m4 4 4-4M5.5 19h13" />
+    </svg>
+  ),
+  /** A status: the line of a pulse. */
+  pulse: ({ className }: IconProps) => (
+    <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
+      <path d="M3 12h4l3-7 4 14 3-7h4" />
+    </svg>
+  ),
+  /** Filters: three lines, each shorter, as a list narrows. */
+  filter: ({ className }: IconProps) => (
+    <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
+      <path d="M4 7h16M7 12h10M10 17h4" />
+    </svg>
+  ),
+  /** A login: a key, its bow round, its bit square. */
+  key: ({ className }: IconProps) => (
+    <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
+      <circle cx="8" cy="15" r="4" />
+      <path d="m11 12 8-8m-3 3 2.5 2.5M13.5 9.5 16 12" />
     </svg>
   ),
   refresh: ({ className }: IconProps) => (
@@ -196,6 +221,18 @@ export const Icon = {
   trash: ({ className }: IconProps) => (
     <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
       <path d="M5 7h14M10 7V4.5h4V7M7 7l1 12.5h8L17 7" />
+    </svg>
+  ),
+  /** More: three square dots, the menu at the end of a row. */
+  more: ({ className }: IconProps) => (
+    <svg viewBox="0 0 24 24" {...stroke} strokeWidth={3} className={className} aria-hidden="true">
+      <path d="M5.5 12h.01M12 12h.01M18.5 12h.01" />
+    </svg>
+  ),
+  /** Fastest: a bolt with straight cuts. */
+  bolt: ({ className }: IconProps) => (
+    <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
+      <path d="M13.5 3 5.5 13.5H11L10 21l8.5-11H13Z" />
     </svg>
   ),
   /** White mode: a sun with square rays. */

@@ -1,15 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  answerLines,
+  cachedSet,
   clearFraudCache,
   fraudLabel,
   fraudScores,
+  fraudScoresAll,
+  fraudServicesOf,
   fraudTone,
+  headline,
   isIpAddress,
   LOOKUP_BATCH,
   missingKey,
   scoredIp,
   serviceRequest,
   testFraudService,
+  withAnswer,
   type FraudRow,
 } from "./fraud";
 import { DEFAULT_SETTINGS, loadSettings } from "./settings";
@@ -125,6 +131,60 @@ describe("looking up", () => {
   });
 });
 
+describe("several services at once", () => {
+  const named = (ip: string, n: number, service: string): FraudRow => ({
+    ip,
+    score: { ip, score: n, risk: null, flags: [], reason: null, service },
+    error: null,
+  });
+
+  it("asks every service turned on and keeps each answer, in Settings' order", async () => {
+    const lookup = vi.fn(async (ips: string[], service: Record<string, string>) =>
+      ips.map((ip) => named(ip, service.service === "ipqs" ? 40 : 12, service.service)),
+    );
+    const got = await fraudScoresAll(["192.0.2.9"], ["ipqs", "ffraud"], { ipqs: "k" }, undefined, lookup);
+    const set = got.get("192.0.2.9")!;
+    expect(set.answers.map((a) => a.service)).toEqual(["ffraud", "ipqs"]);
+    expect(headline(set).score?.score).toBe(40);
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the highest score, and the reason when no service gave one", () => {
+    let set = withAnswer(undefined, "ffraud", named("192.0.2.10", 12, "FFraud"));
+    set = withAnswer(set, "ipqs", named("192.0.2.10", 40, "IPQualityScore"));
+    expect(headline(set).score?.score).toBe(40);
+    const none = withAnswer(undefined, "abuseipdb", { ip: "192.0.2.11", score: null, error: "AbuseIPDB needs your API key" });
+    expect(headline(none).error).toBe("AbuseIPDB needs your API key");
+  });
+
+  it("names every answer for the i", () => {
+    let set = withAnswer(undefined, "ipqs", named("192.0.2.12", 34, "IPQualityScore"));
+    set = withAnswer(set, "ffraud", { ...named("192.0.2.12", 11, "FFraud"), score: { ...named("192.0.2.12", 11, "FFraud").score!, risk: "low" } });
+    set = withAnswer(set, "abuseipdb", { ip: "192.0.2.12", score: null, error: "needs your API key" });
+    expect(answerLines(set)).toEqual(["FFraud 11 · low", "IPQualityScore 34", "AbuseIPDB: needs your API key"]);
+  });
+
+  it("replaces a service's old answer instead of adding a second", () => {
+    let set = withAnswer(undefined, "ffraud", named("192.0.2.13", 12, "FFraud"));
+    set = withAnswer(set, "ffraud", named("192.0.2.13", 20, "FFraud"));
+    expect(set.answers).toHaveLength(1);
+    expect(headline(set).score?.score).toBe(20);
+  });
+
+  it("finds a set in the session only when every service has scored it", async () => {
+    const lookup = vi.fn(async (ips: string[]) => ips.map((ip) => named(ip, 5, "FFraud")));
+    await fraudScores(["192.0.2.14"], "ffraud", {}, undefined, lookup);
+    expect(cachedSet(["ffraud"], "192.0.2.14")?.answers).toHaveLength(1);
+    expect(cachedSet(["ffraud", "proxycheck"], "192.0.2.14")).toBeUndefined();
+  });
+
+  it("keeps known services, each once, in Settings' order, never none", () => {
+    expect(fraudServicesOf(["ipqs", "ffraud", "ipqs", "whois"])).toEqual(["ffraud", "ipqs"]);
+    expect(fraudServicesOf([])).toEqual(["ffraud"]);
+    expect(fraudServicesOf("ipqs")).toEqual(["ffraud"]);
+  });
+});
+
 describe("the Settings test", () => {
   it("asks past the session's scores and says what came back", async () => {
     const lookup = vi.fn(async (ips: string[]) => ips.map((ip) => score(ip, 3)));
@@ -153,18 +213,24 @@ describe("the fraud settings", () => {
 
   it("start on FFraud, with no keys, looking up while connected", () => {
     const s = loadSettings();
-    expect([s.fraudService, s.fraudKeys, s.fraudOnConnect]).toEqual(["ffraud", {}, true]);
-    expect(DEFAULT_SETTINGS.fraudService).toBe("ffraud");
+    expect([s.fraudServices, s.fraudKeys, s.fraudOnConnect]).toEqual([["ffraud"], {}, true]);
+    expect(DEFAULT_SETTINGS.fraudServices).toEqual(["ffraud"]);
   });
 
-  it("keep what was picked and drop what is not a key", () => {
+  it("carry the one service picked before 2026-10-02 over, and drop what is not a key", () => {
     store.set(
       "hproxy-checker-settings",
       JSON.stringify({ look: "d-2026-09-23", fraudService: "ipqs", fraudKeys: { ipqs: "abc", abuseipdb: 12, nope: "x" }, fraudOnConnect: false }),
     );
     const s = loadSettings();
-    expect([s.fraudService, s.fraudKeys, s.fraudOnConnect]).toEqual(["ipqs", { ipqs: "abc" }, false]);
+    expect([s.fraudServices, s.fraudKeys, s.fraudOnConnect]).toEqual([["ipqs"], { ipqs: "abc" }, false]);
+    expect("fraudService" in s).toBe(false);
     store.set("hproxy-checker-settings", JSON.stringify({ fraudService: "whois" }));
-    expect(loadSettings().fraudService).toBe("ffraud");
+    expect(loadSettings().fraudServices).toEqual(["ffraud"]);
+  });
+
+  it("keep several services turned on", () => {
+    store.set("hproxy-checker-settings", JSON.stringify({ fraudServices: ["abuseipdb", "ffraud"], fraudService: "ipqs" }));
+    expect(loadSettings().fraudServices).toEqual(["ffraud", "abuseipdb"]);
   });
 });

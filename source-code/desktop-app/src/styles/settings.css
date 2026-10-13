@@ -1,0 +1,294 @@
+/* ── Settings (2026-09-30) ─────────────────────────────────────────────────
+   A nav of four sections on the left, one shown at a time on the right, each
+   setting one row: the name and its "i" on the left, the control on the
+   right (2026-10-02: the explanations moved into the "i", tips.css). The section open is solid HProxy blue with white words; the others
+   only change their words on hover (nothing see-through, no tint). On a
+   phone the nav becomes a row across the top and every row stacks. */
+
+.ux-settings {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 40px;
+  margin-top: 22px;
+}
+
+.ux-setnav {
+  position: sticky;
+  top: 12px;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ux-setnav button {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 42px;
+  padding: 0 14px;
+  border: 0;
+  cursor: pointer;
+  border-radius: 13px 4px 13px 4px;
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 650;
+  text-align: left;
+  color: var(--ink-mute);
+  background: none;
+  transition: color 140ms ease;
+}
+.ux-setnav button > svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+}
+.ux-setnav button:hover {
+  color: var(--ink);
+}
+.ux-setnav button:focus-visible {
+  outline: 2px solid var(--digi);
+  outline-offset: 2px;
+}
+/* The open section: the blue is the list's sliding pill, which brings the
+   words in white (ui/slidingPill.ts). */
+.ux-setnav > .ux-pill {
+  border-radius: 13px 4px 13px 4px;
+}
+
+/* One setting. */
+.ux-setrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 36px;
+  padding: 18px 0;
+  border-top: 1px solid var(--hairline);
+}
+.ux-setrow.is-stacked {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+.ux-setpane > .ux-setrow:first-child {
+  border-top: 0;
+  padding-top: 4px;
+}
+.ux-setrow .name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.ux-setrow .name .value {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent-ink);
+}
+.ux-setrow .name .value {
+  margin-left: 2px;
+}
+/* What is happening now: a warning, an update downloading. One short line. */
+.ux-setrow .note {
+  margin-top: 4px;
+  max-width: 60ch;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--ink-mute);
+}
+
+/* "More looks": the Connect page's layout, the H and the connected look,
+   folded away under the background. */
+.ux-setmore {
+  padding: 14px 0 16px;
+  border-top: 1px solid var(--hairline);
+}
+
+/* The fraud-score services: a tick per service; once on, its key and its test
+   on the same line. On a phone the key goes under the name. */
+.ux-services {
+  display: flex;
+  flex-direction: column;
+}
+.ux-service {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 16px;
+  min-height: 44px;
+  padding: 6px 0;
+  border-top: 1px solid var(--divider);
+}
+.ux-service:first-child {
+  border-top: 0;
+}
+.ux-service .pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+/* Its key and its test end at the right edge, like every other row's
+   control: a service without a key had its Test alone mid-row. */
+.ux-service .setup {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+.ux-service .key {
+  flex: 1 1 260px;
+  min-width: 0;
+  max-width: 420px;
+}
+.ux-service .result {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+}
+.ux-setrow .control {
+  justify-self: end;
+  min-width: 0;
+  max-width: 100%;
+}
+.ux-setrow.is-stacked .control {
+  justify-self: stretch;
+}
+.ux-setrow .control .ux-range {
+  width: 300px;
+  max-width: 100%;
+}
+/* A few ticks side by side (Protocols). */
+.ux-ticks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px 24px;
+}
+
+@media (max-width: 760px) {
+  .ux-settings {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .ux-setnav {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+  }
+  .ux-setnav button {
+    flex: none;
+  }
+  .ux-setrow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ux-setrow .control {
+    justify-self: stretch;
+  }
+  /* Under the name, a control's parts start where the name does. */
+  .ux-setrow .control .justify-end {
+    justify-content: flex-start;
+  }
+  .ux-setrow .control .ux-range {
+    width: 100%;
+  }
+  .ux-service {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ux-service .setup {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  /* Under the name, two by two from the left: right-aligned they broke
+     into one line of three and a fourth alone. */
+  .ux-ticks {
+    display: grid;
+    grid-template-columns: repeat(2, max-content);
+    justify-content: start;
+    gap: 14px 32px;
+  }
+}
+
+/* ── Settings, redone (2026-10-12) ─────────────────────────────────────────
+   Fewer boxes. The open section is its
+   words in ink with a blue bar beside them, which slides to the next (the
+   list's sliding pill, drawn as the H's crossbar standing up), not a filled
+   blue box. */
+.ux-setnav > .ux-pill {
+  background: none;
+  box-shadow: none;
+}
+.ux-setnav > .ux-pill > .ux-pillcopy {
+  display: none;
+}
+.ux-setnav > .ux-pill::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--digi);
+}
+.ux-setnav button[aria-current="page"] {
+  color: var(--ink);
+}
+
+/* Every on and off in Settings is a switch: a track with the H's cut, the
+   lines' grey when off and our blue when on, a white knob that slides. Solid
+   colours; a switch that cannot change stays solid grey, never a faded blue. */
+.ux-setpane .ux-check {
+  gap: 10px;
+}
+.ux-setpane .ux-check .dot,
+.ux-setpane .ux-check:hover .dot,
+.ux-setpane .ux-check.is-disabled:hover .dot {
+  position: relative;
+  display: block;
+  width: 36px;
+  height: 22px;
+  border-radius: 9px 4px 9px 4px;
+  background: var(--bar);
+  box-shadow: none;
+}
+.ux-setpane .ux-check .dot svg {
+  display: none;
+}
+.ux-setpane .ux-check .dot::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 7px 3px 7px 3px;
+  background: #ffffff;
+  transition: transform 260ms var(--glide);
+}
+.ux-setpane .ux-check input:checked ~ .dot {
+  background: var(--digi);
+  box-shadow: none;
+}
+.ux-setpane .ux-check input:checked ~ .dot::after {
+  transform: translateX(14px);
+}
+.ux-setpane .ux-check.is-disabled input:checked ~ .dot {
+  background: var(--ink-soft);
+}
+.ux-setpane .ux-check input:focus-visible ~ .dot {
+  outline: 2px solid var(--digi);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ux-setpane .ux-check .dot::after {
+    transition: none;
+  }
+}

@@ -4,7 +4,7 @@
    The language is LOOK D (2026-09-23, chosen on the design
    page): filled surfaces with no borders, and every control you can
    press carrying the H's corners (round where the crossbar is
-   round, square where it meets the stems). White by default, dark
+   round, square where it meets the stems). Dark by default, white
    one click away; colour only on judgements; every control presses
    and springs back (lib/press.ts). It replaced the pass that copied
    unfx's pills and tinted rows. The rules live in
@@ -21,12 +21,17 @@
 export { Card, type CardProps, type CardTone, type CardPad } from "./Card";
 export { Button, ButtonGroup, type ButtonProps, type ButtonVariant, type ButtonSize } from "./Button";
 export { Dropdown, type DropdownItem, type DropdownProps } from "./Dropdown";
+export { Popover, type PopoverProps } from "./Popover";
 export { Tag, Counter, Pair, Status, type TagProps, type Tone } from "./Badge";
 export { Tile, Dot, Flag, type TileProps } from "./Tile";
 export { Icon } from "./Icon";
 export { Chip, type ChipProps } from "./Chip";
 export { PageHead, type PageHeadProps } from "./PageHead";
 export { Switch, type SwitchProps } from "./Switch";
+export { InfoTip, useTip, type TipTrigger } from "./Tip";
+export { Roll, DigitRoll } from "./Roll";
+export { useSlidingPill } from "./slidingPill";
+export { useCrossbar } from "./crossbar";
 export {
   Block,
   BlockTitle,
