@@ -68,16 +68,20 @@ hproxy mcp                                                      # the same tools
 - **Fraud scores** for every working exit.
 - **Switches** your computer to the proxy you pick, a list that rotates, or a free exit in the
   country you want, without typing a password anywhere.
+- **Connects a whole phone**: the Android app sends every app through the proxy you pick, with
+  Android's own VPN service.
 - **Works from the command line and from AI assistants**: `hproxy check`, `hproxy connect`, and
   an MCP server with `proxy_list`, `proxy_check` and `ip_lookup`.
-- **A Chrome extension** that does the same inside the browser.
+- **A Chrome extension** that does the same inside the browser:
+  **[on the Chrome Web Store](https://chromewebstore.google.com/detail/mnbaebpfkhopgljijkaoogbadedkffjo)**.
 - **Private by design**: checks run on your own device by default, and your list and its logins
   stay there. What goes out, and where to, is in [PRIVACY.md](source-code/PRIVACY.md).
 
 ## Build it yourself
 
-Everything HProxy is made of is in [source-code](source-code/): the app (Tauri: Rust and React),
-the command-line tool, the engine and the Chrome extension.
+Everything HProxy is made of is in [source-code](source-code/): the app for Windows, macOS and
+Linux (Tauri: Rust and React), the Android app (Kotlin and Jetpack Compose), the command-line tool,
+the engine and the Chrome extension.
 [source-code/README.md](source-code/README.md) says how to build and test each part.
 
 <p align="center"><sub>Built by <a href="https://hproxy.com">HProxy</a> · <a href="LICENSE">MIT license</a></sub></p>
