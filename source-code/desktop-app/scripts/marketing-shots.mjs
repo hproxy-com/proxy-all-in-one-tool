@@ -52,7 +52,7 @@ try {
   const js = (e) => cdp.evaluate(s, e);
   const clickText = async (text) => {
     const hit = await js(`(() => {
-      const b = [...document.querySelectorAll('button,[role=tab],a')].find((b) => b.textContent.trim() === ${JSON.stringify(text)});
+      const b = [...document.querySelectorAll('button,[role=tab],a')].find((b) => b.textContent.trim() === ${JSON.stringify(text)} && !b.closest('.ux-pillcopy'));
       if (!b) return false;
       b.click();
       return true;
@@ -74,16 +74,28 @@ try {
     writeFileSync(join(RAW, name), Buffer.from(data, "base64"));
     console.log(`raw ${name}`);
   };
+  // White or dark lives in Settings since 2026-10-12 (the switch beside the H is gone): there
+  // and back, which keeps every page as it was (Proxies and the Checker stay alive,
+  // the connection sits above the pages).
+  const goTab = (label) =>
+    js(`(() => { const b = document.querySelector('.ux-navseg > .ux-tab[aria-label=${JSON.stringify(label)}]'); if (!b) return false; b.click(); return true; })()`);
   const setDark = async (on) => {
-    const title = on ? "Dark mode" : "White mode";
+    const from = await js(`document.querySelector('.ux-navseg > .ux-tab.is-active')?.getAttribute('aria-label') ?? ''`);
+    if (!(await goTab("Settings"))) throw new Error("no Settings tab in the title bar");
+    await sleep(700);
+    await clickText("Look");
+    await sleep(500);
     const hit = await js(`(() => {
-      const b = document.querySelector('button[title="${title}"]');
+      const row = [...document.querySelectorAll('.ux-setrow')].find((r) => r.querySelector('.name')?.textContent.trim().startsWith('White or dark'));
+      const b = row && [...row.querySelectorAll('.control button')].find((b) => b.textContent.trim() === ${JSON.stringify(on ? "Dark" : "White")} && !b.closest('.ux-pillcopy'));
       if (!b) return false;
       b.click();
       return true;
     })()`);
-    if (!hit) throw new Error(`no "${title}" switch in the title bar`);
-    await sleep(1000);
+    if (!hit) throw new Error('no "White or dark" choice in Settings, Look');
+    await sleep(600);
+    if (from && from !== "Settings") await goTab(from);
+    await sleep(1500);
   };
   const runCheck = async () => {
     await clickText("Check");
@@ -105,7 +117,8 @@ try {
 
   // A first start with one setting: the White background. The default, Aura, is a warm
   // paper tone that reads as yellowish in a picture; White is neutral.
-  const WHITE = `localStorage.setItem('hproxy-checker-settings', JSON.stringify({ background: 'white', look: 'd-2026-09-23' }))`;
+  // White by name: the app opens dark by default since 2026-10-05 (src/lib/settings.ts).
+  const WHITE = `localStorage.setItem('hproxy-checker-settings', JSON.stringify({ theme: 'electric', background: 'white', look: 'dark-2026-10-05' }))`;
   await navigate(cdp, s, URL, 60_000);
   await js(`localStorage.clear()`);
   await js(WHITE);
@@ -119,7 +132,7 @@ try {
   await shoot("check-dark.png");
 
   // Use with AI, dark then light.
-  await clickText("Use with AI");
+  await clickText("AI"); // the tab says "AI" since 2026-10-12, its page "Use with AI"
   await sleep(1200);
   await shoot("ai-dark.png");
   await setDark(false);
@@ -149,7 +162,7 @@ try {
   const pjs = (e) => cdp.evaluate(ps, e);
   const pclick = async (text) => {
     const hit = await pjs(`(() => {
-      const b = [...document.querySelectorAll('button,[role=tab],a')].find((b) => b.textContent.trim() === ${JSON.stringify(text)});
+      const b = [...document.querySelectorAll('button,[role=tab],a')].find((b) => b.textContent.trim() === ${JSON.stringify(text)} && !b.closest('.ux-pillcopy'));
       if (!b) return false;
       b.click();
       return true;

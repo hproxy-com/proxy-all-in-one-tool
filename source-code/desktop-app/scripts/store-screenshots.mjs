@@ -47,7 +47,7 @@ try {
   const js = (e) => cdp.evaluate(s, e);
   const clickText = async (text) => {
     const hit = await js(`(() => {
-      const b = [...document.querySelectorAll('button,[role=tab],a')].find((b) => b.textContent.trim() === ${JSON.stringify(text)});
+      const b = [...document.querySelectorAll('button,[role=tab],a')].find((b) => b.textContent.trim() === ${JSON.stringify(text)} && !b.closest('.ux-pillcopy'));
       if (!b) return false;
       b.click();
       return true;
@@ -97,17 +97,26 @@ try {
   await sleep(3500);
   await shoot("3-connect.png");
 
-  // 4. The same, in the dark look: the moon in the title bar. (Not Settings: its
-  // fraud score block names other companies' services, which a store image
-  // should not carry.)
+  // 4. The same, in the dark look: chosen in Settings, Look (the title bar's switch went on
+  // 2026-10-12), then back to Connect for the picture. (No picture of Settings: its fraud
+  // score block names other companies' services, which a store image should not carry.)
+  const tabHit = (label) =>
+    js(`(() => { const b = document.querySelector('.ux-navseg > .ux-tab[aria-label=${JSON.stringify(label)}]'); if (!b) return false; b.click(); return true; })()`);
+  if (!(await tabHit("Settings"))) throw new Error("no Settings tab in the title bar");
+  await sleep(700);
+  await js(`[...document.querySelectorAll('.ux-setnav > button')].find((b) => b.textContent.trim() === 'Look')?.click()`);
+  await sleep(500);
   const dark = await js(`(() => {
-    const b = document.querySelector('button[title="Dark mode"]');
+    const row = [...document.querySelectorAll('.ux-setrow')].find((r) => r.querySelector('.name')?.textContent.trim().startsWith('White or dark'));
+    const b = row && [...row.querySelectorAll('.control button')].find((b) => b.textContent.trim() === 'Dark' && !b.closest('.ux-pillcopy'));
     if (!b) return false;
     b.click();
     return true;
   })()`);
-  if (!dark) throw new Error("no dark mode switch in the title bar");
-  await sleep(1200);
+  if (!dark) throw new Error('no "White or dark" choice in Settings, Look');
+  await sleep(600);
+  await tabHit("Connect");
+  await sleep(1800);
   await shoot("4-connect-dark.png");
 } finally {
   await close();

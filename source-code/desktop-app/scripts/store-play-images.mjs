@@ -12,7 +12,7 @@
 //   feature-graphic.png       1024 x 500    the banner at the top of the listing.
 //
 // The house rules every picture keeps:
-//   - The dark look behind everything (his pick): the app ink canvas, solid, no tint, no glass, no
+//   - The dark look behind everything: the app ink canvas, solid, no tint, no glass, no
 //     shadow, nothing see-through; the device has a solid hairline edge.
 //   - The brand mark is the blue H, never a white H and never a blue field behind it.
 //   - Every address is from the ranges set aside for examples (RFC 5737), every network number
@@ -57,8 +57,8 @@ const NETWORKS = [
   ["VNPT", "City Broadband", "AS45899", "AS64507"],
 ];
 
-/* The dark look, his pick for every store picture (2026-09-28: "only pictures of the dark mode,
-   it looks the best"). The colours are the app's own dark tokens (src/styles/globals.css,
+/* The dark look for every store picture, the look that shows the app best. The colours are
+   the app's own dark tokens (src/styles/globals.css,
    [data-theme="midnight"]): the ink canvas is one of the three solid fills the house allows. */
 const CANVAS = "#0b1120"; // --canvas
 const BEZEL = "#1a2542"; // --raised
@@ -72,7 +72,7 @@ const BLUE = "#3d7bff"; // --digi
 const H_MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21.4367 26"><defs><linearGradient id="h" x1="0" y1="0" x2="22" y2="26" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#8db1ff"/><stop offset="0.5" stop-color="#3d7bff"/><stop offset="1" stop-color="#2d63e6"/></linearGradient></defs><g fill="url(#h)"><path d="M0 0V0C3.98547 0 7.21633 3.23086 7.21633 7.21633V26H0V0Z"/><rect x="14.2188" width="7.21633" height="26"/><path d="M7.2349 26H0V15.9714C0 12.4548 2.85076 9.60408 6.36735 9.60408H14.2204V0H21.4367V10.4531C21.4367 13.9696 18.586 16.8204 15.0694 16.8204H7.2349V26Z"/></g></svg>`;
 /* What the app keeps in localStorage for a first start in the dark look (src/lib/settings.ts:
    the theme counts only next to the current look marker). */
-const DARK_SETTINGS = JSON.stringify({ theme: "midnight", look: "d-2026-09-23" });
+const DARK_SETTINGS = JSON.stringify({ theme: "midnight", look: "dark-2026-10-05" });
 
 const fontDir = join(APP, "node_modules", "@fontsource-variable", "dm-sans", "files");
 const fontFile = ["dm-sans-latin-wght-normal.woff2", "dm-sans-latin-standard-normal.woff2"].map((f) => join(fontDir, f)).find(existsSync);

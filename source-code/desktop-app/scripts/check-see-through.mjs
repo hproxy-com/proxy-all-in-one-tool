@@ -13,6 +13,10 @@
      · a pale fill: #e6eeff and the like (every channel at 208 or
        more, not white), Tailwind's bg-blue-50 ... bg-*-200
      · glass: backdrop-blur, backdrop-filter
+   Since 2026-10-02 a fill is also read where the old check could not
+   see it: on the lines after `background:` when the value continues
+   there, and in a background variable (`--page-bg`, `--bg-*`). Aura's
+   blue haze sat in one, the drop veil's 95 % blue on the next line.
    Allowed, as on the website: LINES and WORDS may use opacity, and
    the dimmed page behind an open dialog (data-scrim). A CSS line that
    is a line, a moving sheen or a press ripple, not a fill, says so on
@@ -72,6 +76,41 @@ function judgeLine(line, isCss) {
   return hits;
 }
 
+/* A disabled control faded with opacity turns its blue fill see-through blue
+   (2026-10-01: the disabled Add button at 45%). Disabled controls are drawn
+   solid instead: grey words, a grey tick, a hairline. In CSS, an opacity
+   below 1 in a rule for a disabled state; in a component, a Tailwind
+   opacity class next to "disabled". An icon or words without a fill may say
+   `see-through: allowed, <why>` on the line. */
+function judgeDisabledFade(line, css, selector) {
+  if (/see-through:\s*allowed/.test(line)) return [];
+  if (css) {
+    const fade = /^\s*opacity:\s*(?:0?\.\d+|0)\s*;/.test(line);
+    if (fade && /:disabled|\[disabled\]|\.is-disabled|aria-disabled/.test(selector)) {
+      return [{ what: "faded disabled control", text: `${selector.trim()} ${line.trim()}`.slice(0, 140) }];
+    }
+    return [];
+  }
+  if (/disabled/.test(line) && /\bopacity-(?:\d+|\[)/.test(line)) return [{ what: "faded disabled control", text: line.trim().slice(0, 140) }];
+  return [];
+}
+
+/* A fill's value where judgeLine does not look: the lines a `background`
+   declaration continues on, and a background variable's declaration (named
+   bg or background), on its first line and the ones after. A see-through
+   colour there is the same fill. Lines inside a crisp pattern use solid
+   colours and `transparent` gaps, which show the solid page: allowed. */
+const FILL_PROP = /^(?:background(?:-color|-image)?|--(?:[\w-]*-)?(?:bg|background)(?:-[\w-]*)?)$/;
+function judgeFillValue(line, prop, firstLine) {
+  if (!prop || !FILL_PROP.test(prop)) return [];
+  if (line.includes("see-through: allowed")) return [];
+  // judgeLine already reads a `background:` line itself.
+  if (firstLine && !prop.startsWith("--")) return [];
+  const v = firstLine ? line.slice(line.indexOf(":") + 1) : line;
+  const translucent = /rgba?\([^)]*[,/]\s*0?\.\d+\s*\)/.test(v) || /#[0-9a-fA-F]{8}\b/.test(v) || /color-mix\(/.test(v);
+  return translucent ? [{ what: "translucent or mixed fill", text: `${prop}: ${line.trim()}`.slice(0, 140) }] : [];
+}
+
 async function walk(dir, out) {
   let entries;
   try {
@@ -94,8 +133,22 @@ const hits = [];
 for (const f of files) {
   const rel = path.relative(ROOT, f).split(path.sep).join("/");
   const lines = (await readFile(f, "utf8")).split(/\r?\n/);
+  const css = f.endsWith(".css");
+  // The rule a CSS line belongs to: the last line that opened one.
+  let selector = "";
+  // The declaration a CSS line belongs to while its value runs on.
+  let prop = null;
   lines.forEach((line, i) => {
-    for (const h of judgeLine(line, f.endsWith(".css"))) hits.push({ file: rel, line: i + 1, ...h });
+    if (css && /\{\s*$/.test(line)) selector = line;
+    for (const h of judgeLine(line, css)) hits.push({ file: rel, line: i + 1, ...h });
+    for (const h of judgeDisabledFade(line, css, selector)) hits.push({ file: rel, line: i + 1, ...h });
+    if (!css) return;
+    const start = line.match(/^\s*(--[\w-]+|[a-z-]+)\s*:(?!:)/);
+    const first = !!start && !/\{\s*$/.test(line);
+    if (first) prop = start[1];
+    for (const h of judgeFillValue(line, prop, first)) hits.push({ file: rel, line: i + 1, ...h });
+    // A value ends at its semicolon, or where its rule does.
+    if (/;\s*(?:\/\*.*\*\/\s*)?$/.test(line) || /[{}]\s*$/.test(line)) prop = null;
   });
 }
 
