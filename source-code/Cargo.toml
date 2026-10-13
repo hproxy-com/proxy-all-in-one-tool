@@ -10,6 +10,15 @@
 #                               forwards to the real one with the password attached.
 #   proxy-engine/hproxy-api     The client for hproxy.com's free doors: IP locations,
 #                               API-mode checking, the free list.
+#   proxy-engine/hproxy-places  The places a person connects through, and what each
+#                               one is (the targeting a provider puts in a username).
+#   proxy-engine/hproxy-tunnel  Phones: every app's packets through the relay (the VPN),
+#                               and the firewall's way out for each app.
+#   proxy-engine/hproxy-connection  One connection for every door: a place becomes the
+#                               relay's source, the relay switches in place, probes say
+#                               whether traffic really gets through.
+#   proxy-engine/hproxy-mobile  The engine for the native phone app (phone-android):
+#                               libhproxy.so, called from Kotlin through JNI.
 #   command-line-tool           `hproxy`: check, connect, free, list, ip, and `mcp`
 #                               for AI assistants. Servers, scripts and agents.
 #   desktop-app/src-tauri       The desktop app (Windows, macOS, Linux) and the phone
@@ -26,12 +35,16 @@ members = [
     "proxy-engine/hproxy-relay",
     "proxy-engine/hproxy-system",
     "proxy-engine/hproxy-api",
+    "proxy-engine/hproxy-places",
+    "proxy-engine/hproxy-tunnel",
+    "proxy-engine/hproxy-connection",
+    "proxy-engine/hproxy-mobile",
     "command-line-tool",
     "desktop-app/src-tauri",
 ]
 
 [workspace.package]
-version = "0.2.8"
+version = "0.3.8"
 edition = "2021"
 license = "MIT"
 authors = ["HProxy"]
@@ -43,6 +56,9 @@ hproxy-probe = { path = "proxy-engine/hproxy-probe" }
 hproxy-relay = { path = "proxy-engine/hproxy-relay" }
 hproxy-system = { path = "proxy-engine/hproxy-system" }
 hproxy-api = { path = "proxy-engine/hproxy-api" }
+hproxy-places = { path = "proxy-engine/hproxy-places" }
+hproxy-tunnel = { path = "proxy-engine/hproxy-tunnel" }
+hproxy-connection = { path = "proxy-engine/hproxy-connection" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync", "signal"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -59,3 +75,10 @@ opt-level = "z"
 lto = "fat"
 codegen-units = 1
 strip = true
+
+# The phone app's engine (phone-android builds it with --profile phone). On a
+# phone the VPN moves every packet of every app through Rust (hproxy-tunnel),
+# so here the CPU is the cost that matters: built for speed, not for size.
+[profile.phone]
+inherits = "release"
+opt-level = 3
