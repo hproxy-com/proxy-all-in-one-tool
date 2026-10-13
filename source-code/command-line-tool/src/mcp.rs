@@ -6,9 +6,10 @@
 //!
 //! The tools share their names with the `hproxy-mcp` npm server (which checks
 //! from our servers), so one set of instructions works with either:
-//! `proxy_check`, `proxy_list`, `ip_lookup`. On top, the four only a local
-//! program can offer: `proxy_connect`, `proxy_status`, `proxy_new_ip`,
-//! `proxy_disconnect`.
+//! `proxy_check`, `proxy_list`, `ip_lookup`. On top, the five only a local
+//! program can offer: `proxy_places` (what the person saved in the HProxy
+//! app, read from its library), `proxy_connect`, `proxy_status`,
+//! `proxy_new_ip`, `proxy_disconnect`.
 //!
 //! Three rules shape every answer:
 //!
@@ -35,7 +36,7 @@ use hproxy_api::HttpClient;
 use hproxy_probe::{Batch, CheckResult, Checker, ProtocolSet, Status};
 use hproxy_relay::pool::Pool;
 use hproxy_relay::upstream::{self, Scheme};
-use hproxy_relay::{List, Rotation, Source, Stats};
+use hproxy_relay::{List, Rotation, Source, Stats, SwitchableSource};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::UnboundedSender;
@@ -50,6 +51,9 @@ use crate::Outcome;
 const MAX_LINES: usize = 10_000;
 /// Most proxies listed one by one in an answer. The rest are counted.
 const MAX_LISTED: usize = 200;
+/// How many saved proxies and groups `proxy_places` lists of each unless asked
+/// for more: a person with a thousand saved sessions searches instead.
+const PLACES_LISTED: usize = 50;
 /// What a working row says in an answer, in this order.
 const ANSWER_FIELDS: &[&str] = &[
     "input",
@@ -69,21 +73,78 @@ const INSTRUCTIONS: &str = "hproxy checks proxies from this machine and connects
 proxy_check tests proxy lines in any format and returns the working ones with exit address and location. \
 proxy_list returns free proxies from hproxy.com; verify=true tests them here first. \
 ip_lookup locates addresses. \
+proxy_places lists the proxies and groups the person saved in the HProxy app: names, what each targets (country, \
+city, session), how each did when last checked; never a password. \
 proxy_connect starts a local proxy on 127.0.0.1 (HTTP and SOCKS5 on one port, no password) that forwards through \
 the chosen proxy with its login attached: point curl -x, a browser's --proxy-server, HTTP_PROXY/HTTPS_PROXY or \
-Playwright at the returned http_proxy. A proxy set in this server's environment (HPROXY_PROXY) is used when \
-proxy_connect gets no source, and its password never appears in an answer. Free proxies are public: never send \
-logins or private data through them. app_open opens the HProxy desktop app for the person, or wakes it in the tray. \
-A wrong tool name or argument is answered with the closest real one and every choice, so read the answer and call \
-again.";
+Playwright at the returned http_proxy. proxy_connect {place} uses one the person saved, by its name or id. A proxy \
+set in this server's environment (HPROXY_PROXY) is used when proxy_connect gets no source, and its password never \
+appears in an answer. Free proxies are public: never send \
+logins or private data through them. app_open wakes the HProxy desktop app in the tray without a window; \
+background=false opens its window for the person. help explains every tool and how they go together, or one tool \
+with help {tool}. A wrong tool name or argument is answered with the closest real one and every choice, so read the \
+answer and call again.";
+
+/// What `help` says with no tool named: every tool and how they go together.
+const HELP: &str = "HProxy's tools, and how they go together:
+
+Check proxies     proxy_check {proxies: [\"host:port\", ...]} or {file: \"path\"}: the working ones, fastest first,
+                  with protocols, anonymity, exit IP, country and network. Dead ones are counted by reason.
+Free proxies      proxy_list {country: \"US\", verify: true}: free public proxies from hproxy.com, tested here.
+                  Public proxies: never send logins or private data through them.
+Where an IP is    ip_lookup {ips: [\"1.2.3.4\"]}: country, city, timezone, network.
+Saved proxies     proxy_places {search: \"california\"}: the proxies and groups the person saved in the HProxy app,
+                  by name, with what each targets and how it did when last checked. Never a password.
+Use a proxy       proxy_connect {place: \"a saved name or id\"}, or {proxy: \"host:port:user:pass\"}, or {file, rotate},
+                  or {free: true, free_country}: a proxy on 127.0.0.1 with no password that forwards through it;
+                  point curl -x, --proxy-server, HTTP(S)_PROXY or Playwright at the http_proxy it returns.
+                  {place, member: 3} starts a saved group on its third proxy.
+                  proxy_status: the address, the upstream (password masked), the traffic; probe=true checks the exit.
+                  proxy_new_ip: the next proxy of the list, or a fresh free exit; {member: 7} a group's seventh.
+                  proxy_disconnect: stops it.
+The app           app_open: wakes the HProxy app in the tray, no window. background=false opens its window.
+
+One tool in detail: help {tool: \"proxy_connect\"}.";
+
+/// `help`: the overview, or one tool's description and arguments.
+fn help(args: &Value) -> Result<String, String> {
+    let Some(name) = args.get("tool").and_then(Value::as_str) else {
+        return Ok(HELP.to_string());
+    };
+    let tool = tool_named(name).ok_or_else(|| {
+        let names: Vec<String> = tools()
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| t["name"].as_str().map(String::from))
+            .collect();
+        format!("no tool named `{name}`; the tools are {}", names.join(", "))
+    })?;
+    let mut out = format!("{name}: {}", tool["description"].as_str().unwrap_or(""));
+    if let Some(props) = tool["inputSchema"]["properties"].as_object() {
+        if !props.is_empty() {
+            out.push_str("\n\nArguments:");
+            for (arg, spec) in props {
+                let what = spec["description"]
+                    .as_str()
+                    .or_else(|| spec["type"].as_str())
+                    .unwrap_or("");
+                out.push_str(&format!("\n  {arg}: {what}"));
+            }
+        }
+    }
+    Ok(out)
+}
 
 /// The relay this server is running, if any.
 struct Link {
     local: SocketAddr,
-    source: Arc<Source>,
+    source: Arc<SwitchableSource>,
     stats: Arc<Stats>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     started: Instant,
+    /// The saved proxy or group it goes through, by name, when it was one.
+    place: Option<String>,
 }
 
 struct Server {
@@ -229,11 +290,15 @@ impl Server {
                     "proxy_check" => self.proxy_check(&args, &id).await,
                     "proxy_list" => self.proxy_list(&args, &id).await,
                     "ip_lookup" => self.ip_lookup(&args).await,
+                    "proxy_places" => proxy_places(&args),
                     "proxy_connect" => self.proxy_connect(&args).await,
                     "proxy_status" => self.proxy_status(&args).await,
-                    "proxy_new_ip" => self.proxy_new_ip().await,
+                    "proxy_new_ip" => self.proxy_new_ip(&args).await,
                     "proxy_disconnect" => self.proxy_disconnect().await,
-                    "app_open" => crate::app::open(args.get("background").and_then(Value::as_bool).unwrap_or(false)),
+                    // In the tray unless the person is to see the window: an
+                    // assistant working away must not pop a window up.
+                    "app_open" => crate::app::open(args.get("background").and_then(Value::as_bool).unwrap_or(true)),
+                    "help" => help(&args),
                     _ => {
                         self.reply_error(id, -32602, &format!("no tool named `{name}`"));
                         return;
@@ -362,13 +427,13 @@ impl Server {
             return Err("`port` must be 0 to 65535 (0 takes any free port)".into());
         }
         let addr = SocketAddr::from(([127, 0, 0, 1], port as u16));
-        let source = build_source(args).await?;
+        let Built { source, place, notice } = build_source(args).await?;
         let kind = source.kind();
 
         // One relay at a time: connecting again replaces the old one.
         self.stop_link().await;
 
-        let source = Arc::new(source);
+        let source = Arc::new(SwitchableSource::new(source));
         let stats = Arc::new(Stats::default());
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<SocketAddr>();
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
@@ -409,6 +474,7 @@ impl Server {
             stats,
             stop: Some(stop_tx),
             started: Instant::now(),
+            place: place.clone(),
         });
         // Say so on the machine itself. A person who never sees this
         // conversation can then run `hproxy status` to find out that something
@@ -419,24 +485,33 @@ impl Server {
                 listening: local.to_string(),
                 http_proxy: format!("http://{local}"),
                 socks5_proxy: format!("socks5h://{local}"),
-                upstream: source.in_use_now(),
+                upstream: source.current().in_use_now(),
                 source: kind.name().to_string(),
                 started_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs()),
+                place: place.clone(),
             },
             &published,
         );
 
         let note = "no username or password needed on this address; the login is added on the way out";
         if !arg_bool(args, "verify", true) {
-            return Ok(link_answer(local, &source.in_use_now(), kind, None)
+            return Ok(link_answer(local, &source.current(), place.as_deref(), None)
                 .put("note", note)
+                .put("left_out", &notice)
                 .done());
         }
-        let exit = self.verified_exit(local, &source).await;
-        Ok(link_answer(local, &source.in_use_now(), kind, Some(&exit))
+        // A member asked for by number is the one the model wants: probed as
+        // it is, never swapped for another that happens to work.
+        let exit = if arg_count(args, "member")?.is_some() {
+            self.probe_exit(local).await
+        } else {
+            self.verified_exit(local, &source).await
+        };
+        Ok(link_answer(local, &source.current(), place.as_deref(), Some(&exit))
             .put("note", note)
+            .put("left_out", &notice)
             .done())
     }
 
@@ -444,7 +519,7 @@ impl Server {
     /// (a list, the free pool), move on and probe again, a few times. The agent
     /// gets a connection that works, or the reason none did, instead of an
     /// address that fails on its first request.
-    async fn verified_exit(&self, local: SocketAddr, source: &Source) -> Result<CheckResult, String> {
+    async fn verified_exit(&self, local: SocketAddr, source: &SwitchableSource) -> Result<CheckResult, String> {
         // Not good enough to hand an agent: no answer, no HTTPS (nearly every
         // site an agent visits is HTTPS, and a proxy that only relays plain
         // HTTP fails on the first one), or HTTPS through a proxy that re-signs
@@ -455,9 +530,9 @@ impl Server {
         };
         let mut exit = self.probe_exit(local).await;
         let mut tries = 0;
-        while unusable(&exit) && source.can_rotate() && tries < 3 {
+        while unusable(&exit) && source.current().can_rotate() && tries < 3 {
             tries += 1;
-            if source.advance().await.is_err() {
+            if source.next_ip().await.is_err() {
                 break;
             }
             exit = self.probe_exit(local).await;
@@ -484,15 +559,15 @@ impl Server {
             }
             Some(link) => Some((
                 link.local,
-                link.source.in_use_now(),
-                link.source.kind(),
+                link.source.current(),
+                link.place.clone(),
                 link.stats.snapshot(),
                 link.started.elapsed().as_secs(),
             )),
             None => None,
         };
         drop(guard);
-        let Some((local, upstream, kind, stats, uptime)) = mine else {
+        let Some((local, source, place, stats, uptime)) = mine else {
             // Nothing of ours, which does not mean nothing at all: the person
             // may have started their own with `hproxy connect --background`.
             // Naming it stops the model concluding there is no proxy here, and
@@ -502,16 +577,17 @@ impl Server {
                 .unwrap_or_default();
             let mut answer = Obj::new().put("connected", false);
             if let Some(r) = others.into_iter().next() {
-                answer = answer.put(
-                    "on_this_machine",
-                    serde_json::json!({
-                        "http_proxy": r.http_proxy,
-                        "socks5_proxy": r.socks5_proxy,
-                        "upstream": r.upstream,
-                        "source": r.source,
-                        "note": "started outside this conversation, usable as it is; leave stopping it to the person",
-                    }),
-                );
+                let mut found = serde_json::json!({
+                    "http_proxy": r.http_proxy,
+                    "socks5_proxy": r.socks5_proxy,
+                    "upstream": r.upstream,
+                    "source": r.source,
+                    "note": "started outside this conversation, usable as it is; leave stopping it to the person",
+                });
+                if let Some(place) = &r.place {
+                    found["place"] = json!(place);
+                }
+                answer = answer.put("on_this_machine", found);
             }
             return Ok(answer.done());
         };
@@ -520,28 +596,40 @@ impl Server {
         } else {
             None
         };
-        Ok(link_answer(local, &upstream, kind, exit.as_ref())
+        Ok(link_answer(local, &source, place.as_deref(), exit.as_ref())
             .put("uptime_seconds", uptime)
             .put("stats", stats)
             .done())
     }
 
-    async fn proxy_new_ip(&self) -> Result<String, String> {
-        let (local, source) = {
+    async fn proxy_new_ip(&self, args: &Value) -> Result<String, String> {
+        let (local, source, place) = {
             let guard = self.link.lock().await;
             let link = guard.as_ref().ok_or("not connected; call proxy_connect first")?;
-            (link.local, link.source.clone())
+            (link.local, link.source.clone(), link.place.clone())
         };
-        if !source.can_rotate() {
+        // A group's proxy by number: that one, probed as it is.
+        if let Some(member) = arg_count(args, "member")? {
+            if member == 0 {
+                return Err("`member` counts from 1: 1 is the group's first proxy".into());
+            }
+            source.go_to_line(member - 1)?;
+            let exit = self.probe_exit(local).await;
+            return Ok(link_answer(local, &source.current(), place.as_deref(), Some(&exit)).done());
+        }
+        if !source.current().can_rotate() {
             return Err(
                 "this is a single proxy with nothing to switch to. Rotating gateways change IP by their own rules \
-                 (often a session in the username); a list (`file`) or the free pool can rotate here."
+                 (often a session in the username); a list (`file`), a saved group (`place`) or the free pool can \
+                 rotate here."
                     .into(),
             );
         }
-        source.advance().await?;
+        // The open connections end with the switch, so every request after
+        // this answer goes out the new exit, also over a kept-alive connection.
+        source.next_ip().await?;
         let exit = self.verified_exit(local, &source).await;
-        Ok(link_answer(local, &source.in_use_now(), source.kind(), Some(&exit)).done())
+        Ok(link_answer(local, &source.current(), place.as_deref(), Some(&exit)).done())
     }
 
     async fn proxy_disconnect(&self) -> Result<String, String> {
@@ -569,20 +657,25 @@ impl Server {
     }
 }
 
-/// The part of a connect, status or new-IP answer they all share. `exit` is
-/// the probe through the relay, when one was made.
+/// The part of a connect, status or new-IP answer they all share: where to
+/// point, what it goes through (the saved place by name, when it is one; a
+/// list's member in use, counted from 1 as its list numbers them), and the
+/// probe through the relay as `exit`, when one was made.
 fn link_answer(
     local: SocketAddr,
-    upstream: &str,
-    kind: hproxy_relay::SourceKind,
+    source: &Source,
+    place: Option<&str>,
     exit: Option<&Result<CheckResult, String>>,
 ) -> Obj {
     let o = Obj::new()
         .put("connected", true)
         .put("http_proxy", format!("http://{local}"))
         .put("socks5_proxy", format!("socks5h://{local}"))
-        .put("upstream", upstream)
-        .put("source", kind);
+        .put("upstream", source.in_use_now())
+        .put("source", source.kind())
+        .put("place", place)
+        .put("member", source.line_in_use().map(|line| line + 1))
+        .put("members", source.line_in_use().and(source.size()));
     let Some(exit) = exit else {
         return o;
     };
@@ -616,14 +709,65 @@ fn link_answer(
     }
 }
 
-/// Where the relay's traffic goes: a line, a list file, the free pool, or
-/// this server's environment.
-async fn build_source(args: &Value) -> Result<Source, String> {
+/// What `proxy_connect` goes through, the saved place's name when it is one,
+/// and a note about lines of a saved group that were left out.
+struct Built {
+    source: Source,
+    place: Option<String>,
+    notice: Option<String>,
+}
+
+impl From<Source> for Built {
+    fn from(source: Source) -> Self {
+        Built {
+            source,
+            place: None,
+            notice: None,
+        }
+    }
+}
+
+/// Where the relay's traffic goes: a place the person saved in the HProxy
+/// app, a line, a list file, the free pool, or this server's environment.
+async fn build_source(args: &Value) -> Result<Built, String> {
+    let free = arg_bool(args, "free", false) || arg_str(args, "free_country").is_some();
+    let named = [
+        arg_str(args, "place").is_some(),
+        arg_str(args, "proxy").is_some(),
+        arg_str(args, "file").is_some(),
+        free,
+    ];
+    if named.iter().filter(|n| **n).count() > 1 {
+        return Err("place, proxy, file and free each say where traffic goes; give one".into());
+    }
+    let member = arg_count(args, "member")?;
+    if let Some(wanted) = arg_str(args, "place") {
+        if member == Some(0) {
+            return Err("`member` counts from 1: 1 is the group's first proxy".into());
+        }
+        // Read from the app's library on this machine; the lines stay in the
+        // relay, the model gets the place's name.
+        let (source, name, notice) = crate::places::source_named(&wanted, member)?;
+        return Ok(Built {
+            source,
+            place: Some(name),
+            notice,
+        });
+    }
+    if member.is_some() {
+        return Err("`member` is a saved group's proxy by number: give `place` with it".into());
+    }
+    build_unsaved_source(args, free).await.map(Built::from)
+}
+
+/// A source the person did not save in the app: the free pool, a line, a
+/// list file, or this server's environment.
+async fn build_unsaved_source(args: &Value, free: bool) -> Result<Source, String> {
     let rotate = match arg_str(args, "rotate") {
         Some(r) => hproxy_relay::cli::parse_rotation(&r)?,
         None => Rotation::EveryConnection,
     };
-    if arg_bool(args, "free", false) || arg_str(args, "free_country").is_some() {
+    if free {
         let country = arg_str(args, "free_country");
         let scheme = if arg_bool(args, "socks5", false) {
             Scheme::Socks5
@@ -649,10 +793,30 @@ async fn build_source(args: &Value) -> Result<Source, String> {
         return list_source(&path, rotate);
     }
     Err(
-        "say which proxy: `proxy` (one line), `file` (a list), `free: true` (the free pool), \
-         or start this server with HPROXY_PROXY set"
+        "say which proxy: `place` (one the person saved in the HProxy app; proxy_places lists them), \
+         `proxy` (one line), `file` (a list), `free: true` (the free pool), or start this server with \
+         HPROXY_PROXY set"
             .into(),
     )
+}
+
+/// `proxy_places`: what the person saved in the HProxy app, read from its
+/// library on this machine. Names, addresses, what each one targets, how it
+/// did when last checked; never a password or a login.
+fn proxy_places(args: &Value) -> Result<String, String> {
+    let limit = arg_count(args, "limit")?.unwrap_or(PLACES_LISTED).clamp(1, MAX_LISTED);
+    let lib = crate::places::open_library()?;
+    let mut answer = crate::places::listing(&lib, arg_str(args, "search").as_deref().unwrap_or(""), limit);
+    let none =
+        answer["proxies"].as_array().is_none_or(Vec::is_empty) && answer["groups"].as_array().is_none_or(Vec::is_empty);
+    answer["note"] = json!(if none && lib.proxies.is_empty() && lib.groups.is_empty() {
+        "nothing is saved in the HProxy app on this machine yet"
+    } else if none {
+        "nothing saved fits that search; call again without one to see everything"
+    } else {
+        "connect with proxy_connect {place: <name or id>}; a group with {place, member: N} starts on its Nth proxy"
+    });
+    Ok(answer.to_string())
 }
 
 fn list_source(path: &str, rotate: Rotation) -> Result<Source, String> {
@@ -881,15 +1045,30 @@ fn tools() -> Value {
             "annotations": read_only
         },
         {
-            "name": "proxy_connect",
-            "title": "Connect through a proxy",
-            "description": "Start a no-password HTTP and SOCKS5 proxy on 127.0.0.1 that forwards through a real proxy with its login added. Use the returned http_proxy with curl -x, --proxy-server, HTTP(S)_PROXY or Playwright. Source: proxy (one line), file (a list, see rotate), free=true (free pool), or none for this server's HPROXY_PROXY. Returns the verified exit IP and country, never the password. Calling again replaces the connection.",
+            "name": "proxy_places",
+            "title": "Saved proxies",
+            "description": "The proxies and groups the person saved in the HProxy app on this machine: name, id, address, what each targets (country, city, session), how it did when last checked; groups with size and rule. Never a password or login. Connect with proxy_connect {place}.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "search": {"type": "string", "description": "Only those whose name, address, place or session holds this."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Of each kind. Default 50."}
+                }
+            },
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
+        },
+        {
+            "name": "proxy_connect",
+            "title": "Connect through a proxy",
+            "description": "Start a no-password HTTP and SOCKS5 proxy on 127.0.0.1 that forwards through a real proxy with its login added. Use the returned http_proxy with curl -x, --proxy-server, HTTP(S)_PROXY or Playwright. Source: place (saved in the HProxy app, by name or id; see proxy_places), proxy (one line), file (a list, see rotate), free=true (free pool), or none for this server's HPROXY_PROXY. Returns the verified exit IP and country, never the password. Calling again replaces the connection.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "place": {"type": "string", "description": "A saved proxy or group, by name or id."},
+                    "member": {"type": "integer", "minimum": 1, "description": "With a saved group: start on its Nth proxy."},
                     "proxy": {"type": "string"},
                     "file": {"type": "string", "description": "A list to rotate through."},
-                    "rotate": {"type": "string", "description": "every (default), every:N, random, on-failure."},
+                    "rotate": {"type": "string", "description": "every (default), every:N (connections), every:Nm (minutes), random, on-failure."},
                     "free": {"type": "boolean"},
                     "free_country": {"type": "string", "description": "Two-letter code."},
                     "socks5": {"type": "boolean", "description": "Free pool: SOCKS5 exits."},
@@ -909,8 +1088,8 @@ fn tools() -> Value {
         {
             "name": "proxy_new_ip",
             "title": "New IP",
-            "description": "Move the local proxy to the next list member or a fresh free exit; returns the new exit. One proxy line cannot rotate.",
-            "inputSchema": {"type": "object", "properties": {}},
+            "description": "Move the local proxy to the next list member or a fresh free exit, or with member to that one of a list or saved group; open connections close, so every request after this goes out the new exit. Returns the new exit. One proxy line cannot rotate.",
+            "inputSchema": {"type": "object", "properties": {"member": {"type": "integer", "minimum": 1, "description": "The list's or group's Nth proxy."}}},
             "annotations": acts
         },
         {
@@ -923,9 +1102,16 @@ fn tools() -> Value {
         {
             "name": "app_open",
             "title": "Open the HProxy app",
-            "description": "Open the HProxy desktop app's window for the person, or with background=true wake it in the tray without a window. Where only the standalone tool is installed, says so.",
-            "inputSchema": {"type": "object", "properties": {"background": {"type": "boolean", "description": "Start it in the tray, no window."}}},
+            "description": "Wake the HProxy desktop app in the tray, without a window, so the person is not interrupted; background=false opens its window for the person. Where only the standalone tool is installed, says so.",
+            "inputSchema": {"type": "object", "properties": {"background": {"type": "boolean", "description": "Default true: in the tray, no window. false: open the window."}}},
             "annotations": {"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
+        },
+        {
+            "name": "help",
+            "title": "How to use these tools",
+            "description": "Every HProxy tool and how they go together; with tool, one tool's description and arguments.",
+            "inputSchema": {"type": "object", "properties": {"tool": {"type": "string", "description": "A tool's name, for its details."}}},
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
         }
     ])
 }
@@ -1021,6 +1207,8 @@ mod tests {
         assert!(e.contains("Did you mean `country`?"), "{e}");
         assert!(e.contains("protocol"), "{e}");
         let e = check_call("proxy_new_ip", &json!({"country": "DE"})).unwrap_err();
+        assert!(e.contains("member"), "the one argument it takes is named: {e}");
+        let e = check_call("proxy_disconnect", &json!({"now": true})).unwrap_err();
         assert!(e.contains("takes no arguments"), "{e}");
     }
 
@@ -1141,17 +1329,36 @@ mod tests {
                 "proxy_check",
                 "proxy_list",
                 "ip_lookup",
+                "proxy_places",
                 "proxy_connect",
                 "proxy_status",
                 "proxy_new_ip",
                 "proxy_disconnect",
-                "app_open"
+                "app_open",
+                "help"
             ]
         );
         for tool in t.as_array().unwrap() {
             assert!(tool["description"].as_str().unwrap().len() > 20);
             assert_eq!(tool["inputSchema"]["type"], "object");
         }
+    }
+
+    #[test]
+    fn help_names_every_tool_and_explains_one() {
+        let all = help(&json!({})).unwrap();
+        for t in tools().as_array().unwrap() {
+            let name = t["name"].as_str().unwrap();
+            if name != "help" {
+                assert!(all.contains(name), "{name} is missing from help");
+            }
+        }
+        let one = help(&json!({"tool": "proxy_connect"})).unwrap();
+        assert!(one.starts_with("proxy_connect: "), "{one}");
+        assert!(one.contains("Arguments:") && one.contains("free_country"), "{one}");
+        assert!(help(&json!({"tool": "ip_lookup"})).unwrap().contains("ips: array"));
+        let wrong = help(&json!({"tool": "nope"})).unwrap_err();
+        assert!(wrong.contains("proxy_check") && wrong.contains("help"), "{wrong}");
     }
 
     #[tokio::test]

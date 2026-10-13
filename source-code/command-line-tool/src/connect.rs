@@ -34,7 +34,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hproxy_relay::cli::{listen_addr, source_from, Args};
-use hproxy_relay::Stats;
+use hproxy_relay::{Source, Stats, SwitchableSource};
 use serde::{Deserialize, Serialize};
 
 use crate::rows::Obj;
@@ -57,6 +57,25 @@ pub struct Running {
     pub upstream: String,
     pub source: String,
     pub started_at: u64,
+    /// The proxy or group saved in the HProxy app it goes through, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
+}
+
+/// Where a connection's traffic goes: a place saved in the HProxy app, read
+/// from its library (src/places.rs), or what the relay's own arguments say.
+/// Returns the source, how the pool described its first exit, and the
+/// place's name.
+pub async fn source_for(args: &Args) -> Result<(Source, Option<String>, Option<String>), String> {
+    if let Some(wanted) = &args.place {
+        let (source, name, notice) = crate::places::source_named(wanted, args.member)?;
+        if let Some(n) = notice {
+            eprintln!("  {n}");
+        }
+        return Ok((source, None, Some(name)));
+    }
+    let (source, first_exit) = source_from(args).await?;
+    Ok((source, first_exit, None))
 }
 
 /// `<data dir>/hproxy/connections`, created on demand. The OS's own place for
@@ -339,6 +358,15 @@ pub async fn command(mut argv: Vec<String>) -> Outcome {
         if let Err(e) = state_dir_is_writable() {
             return Outcome::Error(e);
         }
+        // A saved place that cannot be found or used is said here, to the
+        // person, rather than lost in the background copy's silence. The copy
+        // is handed the place's name and reads it itself: a line passed on
+        // would put its password in the list of running processes.
+        if let Some(wanted) = &args.place {
+            if let Err(e) = crate::places::source_named(wanted, args.member) {
+                return Outcome::Error(e);
+            }
+        }
         // Several connections are fine; two on one address are not. Catching
         // it here says which one is in the way, where a bind error would only
         // say the address is taken.
@@ -365,6 +393,22 @@ pub async fn command(mut argv: Vec<String>) -> Outcome {
     if child {
         return serve_in_background(args).await;
     }
+    if args.place.is_some() {
+        if let Err(e) = listen_addr(&args) {
+            return Outcome::Error(e);
+        }
+        let (src, first_exit, name) = match source_for(&args).await {
+            Ok(v) => v,
+            Err(e) => return Outcome::Error(e),
+        };
+        if !args.json {
+            eprintln!("  through \"{}\", saved in the HProxy app", name.unwrap_or_default());
+        }
+        return match hproxy_relay::cli::run_with_source(args, src, first_exit).await {
+            Ok(()) => Outcome::Ok,
+            Err(e) => Outcome::Error(e),
+        };
+    }
     match hproxy_relay::cli::run(args).await {
         Ok(()) => Outcome::Ok,
         Err(e) => Outcome::Error(e),
@@ -381,7 +425,7 @@ async fn serve_in_background(args: Args) -> Outcome {
         Ok(a) => a,
         Err(e) => return Outcome::Error(e),
     };
-    let (src, first_exit) = match source_from(&args).await {
+    let (src, first_exit, place) = match source_for(&args).await {
         Ok(v) => v,
         Err(e) => return Outcome::Error(e),
     };
@@ -395,7 +439,7 @@ async fn serve_in_background(args: Args) -> Outcome {
         addr,
         args.allow_lan,
         false,
-        Arc::new(src),
+        Arc::new(SwitchableSource::new(src)),
         Arc::new(Stats::default()),
         move |local| {
             let running = Running {
@@ -406,6 +450,7 @@ async fn serve_in_background(args: Args) -> Outcome {
                 upstream: label,
                 source: kind.name().to_string(),
                 started_at: now_secs(),
+                place,
             };
             // Writing this file IS the readiness signal the starter waits for.
             let _ = publish_and_mark(&running, &mark);
@@ -456,6 +501,7 @@ pub async fn status(argv: &[String]) -> Outcome {
                 .put("socks5_proxy", &r.socks5_proxy)
                 .put("upstream", &r.upstream)
                 .put("source", &r.source)
+                .put("place", &r.place)
                 .put("uptime_seconds", now_secs().saturating_sub(r.started_at))
                 .put("pid", r.pid);
             if let Some(e) = &exit {
@@ -471,7 +517,10 @@ pub async fn status(argv: &[String]) -> Outcome {
             }
             println!("{} through {}", r.http_proxy, r.upstream);
             println!("  also SOCKS5: {}", r.socks5_proxy);
-            println!("  source     : {}", r.source);
+            match &r.place {
+                Some(place) => println!("  source     : {} \"{place}\", saved in the HProxy app", r.source),
+                None => println!("  source     : {}", r.source),
+            }
             println!(
                 "  running    : {} s, process {}",
                 now_secs().saturating_sub(r.started_at),
@@ -559,6 +608,10 @@ pub const EXTRA_USAGE: &str = "\
   -b, --background      Run behind you: no window, no terminal held. Prints
                         where it listens, then returns. `hproxy status` shows
                         it, `hproxy stop` ends it.
+      --place <NAME>    A proxy or group saved in the HProxy app, by its name
+                        or id (`hproxy places` lists them). A group keeps the
+                        rule it was saved with.
+      --member <N>      With --place and a group: start on its Nth proxy.
 ";
 
 #[cfg(test)]
@@ -581,8 +634,20 @@ mod tests {
             upstream: "http://user:********@198.51.100.7:8080".into(),
             source: "fixed".into(),
             started_at: now_secs(),
+            place: None,
         };
         (listener, r)
+    }
+
+    #[test]
+    fn an_entry_names_its_saved_place_and_one_from_an_older_copy_still_reads() {
+        let (_l, mut r) = a_listening_entry(7);
+        r.place = Some("Shop".into());
+        let written = serde_json::to_string(&r).unwrap();
+        assert!(written.contains("\"place\":\"Shop\""), "{written}");
+        let older = r#"{"pid":1,"listening":"127.0.0.1:1","http_proxy":"","socks5_proxy":"","upstream":"","source":"fixed","started_at":0}"#;
+        let read: Running = serde_json::from_str(older).expect("an entry without a place reads");
+        assert_eq!(read.place, None);
     }
 
     #[test]

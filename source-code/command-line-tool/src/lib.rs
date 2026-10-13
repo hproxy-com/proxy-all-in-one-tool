@@ -20,6 +20,7 @@ mod connect;
 mod hint;
 mod mcp;
 mod newer;
+pub mod places;
 mod probe;
 mod rows;
 mod web;
@@ -45,6 +46,8 @@ hproxy: check proxies, connect through one, or give both to an AI assistant.
 USAGE
   hproxy check [LINES...] [--file <path>|-] [options]
   hproxy connect <PROXY> | --file <list> [--rotate RULE] | --free [--country CC]
+  hproxy connect --place <NAME> [--member N]
+  hproxy places [SEARCH] [--json]
   hproxy status [--probe] [--json] | hproxy stop [ADDRESS]
   hproxy list [--country CC] [--protocol P] [--anonymity A] [--limit N] [--json]
   hproxy ip <address>...
@@ -96,6 +99,22 @@ the real one with the login attached. HTTP and SOCKS5 on the same port.
   (hproxy connect --help has the rest)
 
 ";
+const PLACES: &str = "\
+PLACES lists the proxies and groups saved in the HProxy app on this computer:
+names, addresses, what each one targets (country, city, session) and how it
+did when last checked. Never a password or a login. A word narrows the list
+to the ones it fits. The app keeps them; this only reads them.
+  --json                 one JSON object per place
+  --limit <N>            at most N of each kind (default 500)
+
+CONNECT --place uses one of them by its name or id, a group with the rule it
+was saved with; --member N starts a group on its Nth proxy.
+
+EXAMPLES
+  hproxy places california
+  hproxy connect --place \"US sessions\" --member 3 --background
+
+";
 const STATUS: &str = "\
 STATUS lists every background connection on this machine, including one an AI
 assistant opened over MCP: where it listens, which proxy it uses (never the
@@ -118,8 +137,9 @@ EXAMPLES
 ";
 const MCP: &str = "\
 MCP serves all of it to an AI assistant over stdio (Model Context Protocol):
-proxy_check, proxy_list, ip_lookup, proxy_connect, proxy_status,
-proxy_new_ip, proxy_disconnect, app_open. Claude Code:
+proxy_check, proxy_list, ip_lookup, proxy_places (what you saved in the HProxy
+app, never a password), proxy_connect, proxy_status, proxy_new_ip,
+proxy_disconnect, app_open. Claude Code:
   claude mcp add hproxy -- hproxy mcp
 Set HPROXY_PROXY=<line> in the server's environment and proxy_connect uses
 that proxy without its password ever entering the conversation.
@@ -139,7 +159,7 @@ NEW VERSIONS
 ";
 
 fn usage() -> String {
-    [HEAD, CHECK, CONNECT, STATUS, LIST, app::USAGE, MCP, EXIT].concat()
+    [HEAD, CHECK, CONNECT, PLACES, STATUS, LIST, app::USAGE, MCP, EXIT].concat()
 }
 
 /// One command's help: its section, its examples, the exit codes.
@@ -147,6 +167,7 @@ fn help_for(cmd: &str) -> Option<String> {
     Some(match cmd {
         "check" => [CHECK, EXIT].concat(),
         "connect" | "free" => [hproxy_relay::cli::USAGE, connect::EXTRA_USAGE].concat(),
+        "places" => [PLACES, EXIT].concat(),
         "status" | "stop" => [STATUS, EXIT].concat(),
         "list" | "ip" => [LIST, EXIT].concat(),
         "app" => [app::USAGE, EXIT].concat(),
@@ -184,6 +205,7 @@ pub fn is_command(word: &str) -> bool {
         "check"
             | "connect"
             | "free"
+            | "places"
             | "status"
             | "stop"
             | "list"
@@ -259,6 +281,7 @@ pub fn run(args: Vec<String>) -> u8 {
         "ip" => rt.block_on(web::ip(rest)),
         "app" => rt.block_on(app::command(rest)),
         "mcp" => rt.block_on(mcp::serve()),
+        "places" => places::command(rest),
         "status" => rt.block_on(connect::status(rest)),
         "stop" => rt.block_on(connect::stop(rest)),
         "connect" | "free" => {

@@ -29,6 +29,19 @@ pub const COMMANDS: &[(&str, &str, &[&str])] = &[
         &["vpn", "free-proxy", "freeproxy", "anonymous"],
     ),
     (
+        "places",
+        "the proxies and groups saved in the HProxy app (never a password)",
+        &[
+            "saved",
+            "mine",
+            "my-proxies",
+            "groups",
+            "favorites",
+            "favourites",
+            "library",
+        ],
+    ),
+    (
         "status",
         "what runs in the background here, and through which proxy",
         &["ps", "info", "state", "running", "show", "ls"],
@@ -179,6 +192,8 @@ pub const CHECK_OPTIONS: &[&str] = &[
     "--help",
 ];
 pub const CONNECT_OPTIONS: &[&str] = &[
+    "--place",
+    "--member",
     "--file",
     "--rotate",
     "--free",
@@ -192,6 +207,7 @@ pub const CONNECT_OPTIONS: &[&str] = &[
     "--help",
 ];
 pub const STATUS_OPTIONS: &[&str] = &["--probe", "--json", "--help"];
+pub const PLACES_OPTIONS: &[&str] = &["--json", "--limit", "--help"];
 pub const STOP_OPTIONS: &[&str] = &["--help"];
 pub const LIST_OPTIONS: &[&str] = &["--country", "--protocol", "--anonymity", "--limit", "--json", "--help"];
 pub const IP_OPTIONS: &[&str] = &["--help"];
