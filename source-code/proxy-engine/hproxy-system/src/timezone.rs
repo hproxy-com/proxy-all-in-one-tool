@@ -34,7 +34,9 @@ pub struct ZoneSnapshot {
 pub enum ZoneRestore {
     Restored,
     /// Changed by someone else since we set it: left as it is.
-    LeftAlone { now: String },
+    LeftAlone {
+        now: String,
+    },
 }
 
 /// Reading and setting the computer's zone: Windows' own in the app
@@ -120,7 +122,8 @@ pub fn automatic_zone_on() -> bool {
 /// `tzutil /g` adds `_dstoff` when daylight saving is switched off for a zone;
 /// it is the same zone.
 pub fn same_zone(a: &str, b: &str) -> bool {
-    a.trim_end_matches("_dstoff").eq_ignore_ascii_case(b.trim_end_matches("_dstoff"))
+    a.trim_end_matches("_dstoff")
+        .eq_ignore_ascii_case(b.trim_end_matches("_dstoff"))
 }
 
 #[cfg(windows)]
@@ -141,7 +144,11 @@ mod platform {
             .map_err(|e| format!("could not run tzutil: {e}"))?;
         if !out.status.success() {
             let why = String::from_utf8_lossy(&out.stderr);
-            let why = if why.trim().is_empty() { String::from_utf8_lossy(&out.stdout) } else { why };
+            let why = if why.trim().is_empty() {
+                String::from_utf8_lossy(&out.stdout)
+            } else {
+                why
+            };
             return Err(format!("Windows refused the time zone change ({})", why.trim()));
         }
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
@@ -203,7 +210,12 @@ pub(crate) mod fake {
 
     impl FakeClock {
         pub fn at(zone: &str) -> Self {
-            FakeClock { zone: RefCell::new(zone.into()), sets: RefCell::new(Vec::new()), refuse: false, keeps: None }
+            FakeClock {
+                zone: RefCell::new(zone.into()),
+                sets: RefCell::new(Vec::new()),
+                refuse: false,
+                keeps: None,
+            }
         }
     }
 
@@ -267,7 +279,13 @@ mod tests {
         let (recorded, zone_then) = seen.expect("a change is recorded");
         assert_eq!(zone_then, BERLIN, "recorded before the zone moved");
         assert_eq!(recorded, snap);
-        assert_eq!(snap, ZoneSnapshot { before: BERLIN.into(), ours: CHICAGO.into() });
+        assert_eq!(
+            snap,
+            ZoneSnapshot {
+                before: BERLIN.into(),
+                ours: CHICAGO.into()
+            }
+        );
         assert_eq!(*clock.zone.borrow(), CHICAGO);
     }
 
@@ -284,14 +302,23 @@ mod tests {
         let clock = FakeClock::at(BERLIN);
         let first = match_zone(&clock, "America/Chicago", None, |_| {}).unwrap().unwrap();
         let second = match_zone(&clock, "Asia/Tokyo", Some(&first), |_| {}).unwrap().unwrap();
-        assert_eq!(second, ZoneSnapshot { before: BERLIN.into(), ours: TOKYO.into() });
+        assert_eq!(
+            second,
+            ZoneSnapshot {
+                before: BERLIN.into(),
+                ours: TOKYO.into()
+            }
+        );
         assert_eq!(restore_zone(&clock, &second).unwrap(), ZoneRestore::Restored);
         assert_eq!(*clock.zone.borrow(), BERLIN);
     }
 
     #[test]
     fn a_refused_change_is_an_error_and_the_zone_stays() {
-        let clock = FakeClock { refuse: true, ..FakeClock::at(BERLIN) };
+        let clock = FakeClock {
+            refuse: true,
+            ..FakeClock::at(BERLIN)
+        };
         let err = match_zone(&clock, "America/Chicago", None, |_| {}).unwrap_err();
         assert!(err.contains("refused"), "{err}");
         assert_eq!(*clock.zone.borrow(), BERLIN);
@@ -299,7 +326,10 @@ mod tests {
 
     #[test]
     fn a_zone_windows_did_not_take_is_an_error() {
-        let clock = FakeClock { keeps: Some(BERLIN.into()), ..FakeClock::at(BERLIN) };
+        let clock = FakeClock {
+            keeps: Some(BERLIN.into()),
+            ..FakeClock::at(BERLIN)
+        };
         let err = match_zone(&clock, "America/Chicago", None, |_| {}).unwrap_err();
         assert_eq!(err, format!("Windows kept {BERLIN} instead of {CHICAGO}"));
     }
@@ -319,7 +349,12 @@ mod tests {
         // Windows' automatic time zone, or the person, moved it on.
         *clock.zone.borrow_mut() = "Pacific Standard Time".into();
         let sets = clock.sets.borrow().len();
-        assert_eq!(restore_zone(&clock, &snap).unwrap(), ZoneRestore::LeftAlone { now: "Pacific Standard Time".into() });
+        assert_eq!(
+            restore_zone(&clock, &snap).unwrap(),
+            ZoneRestore::LeftAlone {
+                now: "Pacific Standard Time".into()
+            }
+        );
         assert_eq!(clock.sets.borrow().len(), sets, "nothing set");
     }
 
@@ -328,8 +363,14 @@ mod tests {
         // The app died between the record and the change: the zone is still
         // the one from before, so the record's `ours` is not it.
         let clock = FakeClock::at(BERLIN);
-        let record = ZoneSnapshot { before: BERLIN.into(), ours: CHICAGO.into() };
-        assert_eq!(restore_zone(&clock, &record).unwrap(), ZoneRestore::LeftAlone { now: BERLIN.into() });
+        let record = ZoneSnapshot {
+            before: BERLIN.into(),
+            ours: CHICAGO.into(),
+        };
+        assert_eq!(
+            restore_zone(&clock, &record).unwrap(),
+            ZoneRestore::LeftAlone { now: BERLIN.into() }
+        );
         assert!(clock.sets.borrow().is_empty());
     }
 
@@ -366,7 +407,10 @@ mod tests {
 
     #[test]
     fn a_snapshot_round_trips_through_json() {
-        let s = ZoneSnapshot { before: BERLIN.into(), ours: CHICAGO.into() };
+        let s = ZoneSnapshot {
+            before: BERLIN.into(),
+            ours: CHICAGO.into(),
+        };
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(serde_json::from_str::<ZoneSnapshot>(&json).unwrap(), s);
     }
