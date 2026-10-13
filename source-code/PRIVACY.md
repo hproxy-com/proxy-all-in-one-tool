@@ -5,7 +5,7 @@ below is in the code; nothing is inferred from a policy.
 
 **There is no account, no telemetry, no analytics, no crash reporting and no
 tracking inside the app.** The app contacts HProxy, and for fraud scores
-FFraud or the service whose key you give it. Every one of them is in the table
+FFraud and each service whose key you give it. Every one of them is in the table
 below, and each can be switched off or pointed elsewhere. Two of those requests
 leave a record on our side, and only when you use the feature that sends them:
 both are under "What our servers keep", with what they hold and for how long.
@@ -21,8 +21,8 @@ both are under "What our servers keep", with what they hold and for how long.
 | Speed measurement (off by default) | `hproxy.com/api/free-proxy/speedtest` | A request THROUGH the proxy for a 64 KB payload. | Settings, "Measure download speed" |
 | Connect, while connected | The server chosen under Settings, "Connect check": our judge by default, or Google, Cloudflare or any address you type | One request THROUGH the relay every twenty seconds: the round trip, and, from our judge or a Cloudflare trace page, the address you appear as. | Settings, "Connect check" |
 | Connect, "Free proxy" | `hproxy.com/api/vpn/next`, `/api/vpn/report` | The country and protocol you asked for, the last exits you were given (so you get a different one), and a report when an exit stops answering. The report is kept (below, "What our servers keep"). | Only when you choose a free proxy |
-| Fraud score, Connect (on by default) | `api.ffraud.com` (free, no key), or the service whose key you gave: IPQualityScore, Scamalytics, proxycheck.io or AbuseIPDB | The address you appear as, once for each new exit. Your key goes to its own service only. Nothing passes through HProxy, and nothing a service answers is kept past the session or sent anywhere. | Settings, "Fraud score" |
-| Fraud score, Check (only when you ask) | The same | The exit address of each working proxy you ask about ("Fraud scores", or "Look it up" on a row). | Nothing is sent until you ask |
+| Fraud score, Connect (on by default) | `api.ffraud.com` (free, no key), and each service you ticked and gave a key: IPQualityScore, Scamalytics, proxycheck.io or AbuseIPDB | The address you appear as, once for each new exit, to every service ticked. Each key goes to its own service only. Nothing passes through HProxy, and nothing a service answers is kept past the session or sent anywhere. | Settings, "Fraud score" |
+| Fraud score, Checker (only when you ask) | The same | The exit address of each working proxy you ask about ("Fraud scores", or "Look it up" on a row). | Nothing is sent until you ask |
 | Updates, the download for Windows, macOS or Linux (AppImage) | `hproxy.com/downloads/desktop/` | At start and every six hours: one list, the same for everyone, and the installer when there is a newer version. Downloads are signed and verified before they are installed. | Nothing is sent about you |
 | Version check, every copy | `hproxy.com/downloads/versions.json` | At start and every six hours: one list, the same for everyone. The request names this copy's version and where it came from, for example `hproxy-checker/0.2.4 (windows)`, and nothing else. It is how a copy from a store or a downloaded package learns of a fix, and how we count how many copies run each version (kept 30 days, with the address shortened: "What our servers keep"). | Always on: it is how a fix reaches every copy |
 | Updates, a copy from the Microsoft Store or Google Play | The store | The store's own update check, at start, under the store's own policy. | The store's settings |
