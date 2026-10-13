@@ -1,7 +1,7 @@
 # HProxy for Windows
 
 **[Download HProxy for Windows](https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe)**
-(the installer, about 4 MB, for Windows 10 and 11, 64-bit)
+(the installer, about 5 MB, for Windows 10 and 11, 64-bit)
 
 ## Install
 
