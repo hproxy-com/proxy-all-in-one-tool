@@ -25,6 +25,14 @@ hproxy-system = { workspace = true }
 # The client for hproxy.com's free doors (locations, API-mode checking),
 # shared with the CLI so the two never label a row differently.
 hproxy-api = { workspace = true }
+# What a place is: the targeting a provider puts in a proxy's username.
+hproxy-places = { workspace = true }
+# One connection for every door: a place becomes the relay's source, and the
+# probe, the health and the DNS leak test, shared with the phone app.
+hproxy-connection = { workspace = true }
+# The phone's VPN: every app's packets turned into connections through the
+# relay (src/vpn.rs). Only Android runs it; elsewhere only its addresses are read.
+hproxy-tunnel = { workspace = true }
 # The command-line tool, included: started with a command (`mcp`, `check`,
 # ...) the app runs as the tool and opens no window (src/main.rs). An AI
 # assistant starts it that way from Use with AI, with nothing to download.

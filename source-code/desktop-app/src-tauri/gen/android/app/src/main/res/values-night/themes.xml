@@ -1,6 +1,18 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
+    <!-- The app's window, dark like the page by default: Android shows it, with the icon on it,
+         while the app starts, before the page draws. The page's own colours do not follow the
+         phone's night mode; they are the app's setting, so this file and values-night say the
+         same. -->
     <style name="Theme.hproxy_checker" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
+        <item name="android:windowBackground">@color/page_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+    </style>
+    <!-- The same window for a white page: the start screen from Android 13 on, chosen by
+         PhonePlugin.kt when the page turns white. -->
+    <style name="Theme.hproxy_checker.Light">
+        <item name="android:windowBackground">@color/page_light</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
     </style>
 </resources>

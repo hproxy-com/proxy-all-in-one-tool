@@ -52,7 +52,13 @@ struct Matched {
 impl Matched {
     /// Match the computer to the exit's `zone`, once per exit zone. `record`
     /// keeps the snapshot on disk, or removes it for `None`.
-    fn follow(&mut self, clock: &impl ZoneClock, zone: &str, now_ms: u64, mut record: impl FnMut(Option<&ZoneSnapshot>)) {
+    fn follow(
+        &mut self,
+        clock: &impl ZoneClock,
+        zone: &str,
+        now_ms: u64,
+        mut record: impl FnMut(Option<&ZoneSnapshot>),
+    ) {
         if self.followed.as_deref() == Some(zone) {
             return;
         }
@@ -78,7 +84,11 @@ impl Matched {
     /// when it was left as it is, because someone else changed it since. When
     /// Windows refuses, the snapshot stays, in memory and on disk, for the
     /// next try: at quit, or at the next start.
-    fn restore(&mut self, clock: &impl ZoneClock, mut record: impl FnMut(Option<&ZoneSnapshot>)) -> Result<Option<String>, String> {
+    fn restore(
+        &mut self,
+        clock: &impl ZoneClock,
+        mut record: impl FnMut(Option<&ZoneSnapshot>),
+    ) -> Result<Option<String>, String> {
         let snapshot = std::mem::take(self).snapshot;
         let Some(snapshot) = snapshot else { return Ok(None) };
         match timezone::restore_zone(clock, &snapshot) {
@@ -86,9 +96,9 @@ impl Matched {
                 record(None);
                 Ok(match outcome {
                     ZoneRestore::Restored => None,
-                    ZoneRestore::LeftAlone { now } => {
-                        Some(format!("The time zone was changed to {now} while connected, so it was left as it is."))
-                    }
+                    ZoneRestore::LeftAlone { now } => Some(format!(
+                        "The time zone was changed to {now} while connected, so it was left as it is."
+                    )),
                 })
             }
             Err(e) => {
@@ -126,7 +136,10 @@ fn now_ms() -> u64 {
 }
 
 fn record_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("timezone-snapshot.json"))
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("timezone-snapshot.json"))
 }
 
 /// The snapshot on disk for a crash to find, or no file for `None`.
@@ -187,7 +200,9 @@ pub fn follow_exit(app: &AppHandle, session: u64, zone: &str) {
     m.follow(&SystemClock, zone, now_ms(), |s| record(app, s));
     match (&m.problem, &m.snapshot) {
         (Some(p), _) => log::warn!("the time zone could not be matched to {zone}: {p}"),
-        (None, Some(s)) if before.as_ref() != Some(s) => log::info!("time zone matched to the exit: {} ({zone})", s.ours),
+        (None, Some(s)) if before.as_ref() != Some(s) => {
+            log::info!("time zone matched to the exit: {} ({zone})", s.ours)
+        }
         _ => {}
     }
 }
@@ -243,7 +258,10 @@ pub async fn timezone_status(app: AppHandle) -> ZoneStatus {
 /// it since. Blocking (Windows' `tzutil`).
 pub fn restore(app: &AppHandle) -> Result<Option<String>, String> {
     let state = app.state::<ZoneState>();
-    let mut m = state.matched.lock().map_err(|_| "the time zone state is unavailable".to_string())?;
+    let mut m = state
+        .matched
+        .lock()
+        .map_err(|_| "the time zone state is unavailable".to_string())?;
     m.restore(&SystemClock, |s| record(app, s))
 }
 
@@ -258,7 +276,9 @@ pub fn repair_on_start(app: &AppHandle) -> Option<String> {
             let _ = std::fs::remove_file(&path);
             Some(match outcome {
                 ZoneRestore::Restored => format!("put the time zone back to {} after the last run", snapshot.before),
-                ZoneRestore::LeftAlone { now } => format!("left the time zone at {now}: it was changed after the last run"),
+                ZoneRestore::LeftAlone { now } => {
+                    format!("left the time zone at {now}: it was changed after the last run")
+                }
             })
         }
         Err(e) => {
@@ -288,7 +308,10 @@ mod tests {
 
     impl Clock {
         fn at(zone: &str) -> Self {
-            Clock { zone: RefCell::new(zone.into()), refuse: Cell::new(false) }
+            Clock {
+                zone: RefCell::new(zone.into()),
+                refuse: Cell::new(false),
+            }
         }
         fn now(&self) -> String {
             self.zone.borrow().clone()
@@ -325,7 +348,13 @@ mod tests {
         m.follow(&clock, "America/Chicago", 1, disk.keep());
         assert_eq!(clock.now(), CHICAGO);
         assert_eq!(m.at_ms, Some(1));
-        assert_eq!(disk.0, Some(ZoneSnapshot { before: BERLIN.into(), ours: CHICAGO.into() }));
+        assert_eq!(
+            disk.0,
+            Some(ZoneSnapshot {
+                before: BERLIN.into(),
+                ours: CHICAGO.into()
+            })
+        );
         // Windows' automatic time zone puts its own back: the next probe of the
         // same exit leaves it alone.
         *clock.zone.borrow_mut() = BERLIN.into();
@@ -345,7 +374,13 @@ mod tests {
         m.follow(&clock, "America/Chicago", 1, disk.keep());
         m.follow(&clock, "Asia/Tokyo", 2, disk.keep());
         assert_eq!(clock.now(), TOKYO);
-        assert_eq!(disk.0, Some(ZoneSnapshot { before: BERLIN.into(), ours: TOKYO.into() }));
+        assert_eq!(
+            disk.0,
+            Some(ZoneSnapshot {
+                before: BERLIN.into(),
+                ours: TOKYO.into()
+            })
+        );
         assert_eq!(m.restore(&clock, disk.keep()), Ok(None));
         assert_eq!(clock.now(), BERLIN);
         assert_eq!(disk.0, None);
@@ -363,7 +398,13 @@ mod tests {
         assert!(m.problem.as_deref().is_some_and(|p| p.contains("refused")));
         assert_eq!(clock.now(), CHICAGO);
         // The record names the match in place, not the one that failed.
-        assert_eq!(disk.0, Some(ZoneSnapshot { before: BERLIN.into(), ours: CHICAGO.into() }));
+        assert_eq!(
+            disk.0,
+            Some(ZoneSnapshot {
+                before: BERLIN.into(),
+                ours: CHICAGO.into()
+            })
+        );
     }
 
     #[test]

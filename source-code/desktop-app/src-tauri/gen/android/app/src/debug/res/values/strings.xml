@@ -1,0 +1,6 @@
+<resources>
+    <!-- A debug build installs beside the store's copy (build.gradle.kts, applicationIdSuffix):
+         the name says which is which. -->
+    <string name="app_name">"HProxy Dev"</string>
+    <string name="main_activity_title">"HProxy Dev"</string>
+</resources>

@@ -300,7 +300,7 @@ async fn at_start(app: &AppHandle, pending: &Pending) -> AtStart {
         return AtStart::Failed { version };
     }
     // Windows never gets here. macOS and Linux swapped the files in place.
-    connect::restore_on_exit(app);
+    crate::before_exit(app);
     app.restart()
 }
 
@@ -368,7 +368,7 @@ pub async fn update_install(app: AppHandle, pending: State<'_, Pending>) -> Resu
             clear_attempt_note(&app);
             return Err(e.to_string());
         }
-        connect::restore_on_exit(&app);
+        crate::before_exit(&app);
         app.restart()
     }
     #[cfg(not(desktop))]
@@ -436,7 +436,7 @@ async fn install_quietly(app: AppHandle, pending: &Pending) -> Result<bool, Stri
     }
     // Windows never gets here. macOS and Linux swapped the files in place:
     // start the new version, which finds the note and waits in the tray.
-    connect::restore_on_exit(&app);
+    crate::before_exit(&app);
     app.restart()
 }
 
@@ -455,7 +455,7 @@ fn updater(app: &AppHandle, timeout: Duration, silent: bool) -> Result<tauri_plu
         .map_err(|e| e.to_string())?
         .timeout(timeout)
         .on_before_exit(move || {
-            connect::restore_on_exit(&restore);
+            crate::before_exit(&restore);
             restore.cleanup_before_exit();
         });
     if silent {

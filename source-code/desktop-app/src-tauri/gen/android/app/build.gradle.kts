@@ -58,6 +58,7 @@ android {
     }
     buildTypes {
         getByName("debug") {
+            applicationIdSuffix = ".dev"
             manifestPlaceholders["usesCleartextTraffic"] = "true"
             isDebuggable = true
             isJniDebuggable = true
@@ -104,6 +105,18 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
+}
+
+// Android 7 (minSdk 24) must start. Tauri reads its plugin calls with Jackson 2.15, whose first
+// use touches java.lang.BootstrapMethodError, a class Android only has from 8.0 (API 26): on
+// Android 7 the app closed the moment it opened (seen on the emulator, 2026-10-05). Jackson 2.13
+// is the last line that runs there, and it has everything Tauri's plugin calls use.
+configurations.all {
+    resolutionStrategy {
+        force("com.fasterxml.jackson.core:jackson-databind:2.13.5")
+        force("com.fasterxml.jackson.core:jackson-core:2.13.5")
+        force("com.fasterxml.jackson.core:jackson-annotations:2.13.5")
+    }
 }
 
 apply(from = "tauri.build.gradle.kts")

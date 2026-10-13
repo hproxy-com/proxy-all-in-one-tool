@@ -5,6 +5,7 @@
 //!   connect     the Connect screen: the relay and the system proxy setting
 //!   files       import a list, export results: the dialogs open from Rust
 //!   fraud       fraud scores of addresses, with the service picked in Settings
+//!   places      the person's proxies, groups and picked place, kept here, not in the window
 //!   timezone    the computer's time zone matched to the exit while connected
 //!
 //! The HProxy web APIs (locations, API-mode checking) are the `hproxy-api`
@@ -21,12 +22,15 @@ mod check;
 mod connect;
 mod files;
 mod fraud;
+mod phone;
+mod places;
 mod store;
 mod timezone;
 mod tool;
 mod tray;
 mod update;
 mod versions;
+mod vpn;
 
 use tauri::Manager;
 
@@ -61,6 +65,16 @@ pub fn forget_tool_path(dir: &str) -> i32 {
     match tool::forget_path(dir) {
         Ok(_) => 0,
         Err(_) => 1,
+    }
+}
+
+/// What must happen however the app ends (closed, an update installing, a
+/// restart into the new version): the system proxy and the time zone put back
+/// (connect.rs), and what the last checks found written down (places.rs).
+pub fn before_exit(app: &tauri::AppHandle) {
+    connect::restore_on_exit(app);
+    if let Some(places) = app.try_state::<places::PlacesState>() {
+        places.flush();
     }
 }
 
@@ -104,8 +118,16 @@ pub fn run() {
         ));
 
     // On Android, which app installed this copy (Google Play or a download): channel.rs.
+    // And the phone's own controls for the window (the status bar's colours, a buzz,
+    // Back to the background): phone.rs.
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(channel::android::plugin());
+    let builder = builder
+        .plugin(channel::android::plugin())
+        .plugin(phone::android::plugin());
+
+    // On Android, the VPN that carries every app to the relay: vpn.rs.
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(vpn::android::plugin());
 
     let app = builder
         .plugin(tauri_plugin_opener::init())
@@ -129,6 +151,9 @@ pub fn run() {
         )
         .setup(|app| {
             app.manage(AppState::new());
+            // The places before anything that connects: the tray and a
+            // connection read them (places.rs).
+            app.manage(places::PlacesState::open(app.handle()));
             app.manage(connect::RelayState::default());
             app.manage(tray::TrayState::default());
             app.manage(update::Pending::default());
@@ -150,6 +175,8 @@ pub fn run() {
                     log::warn!("the tray icon could not be made: {e}");
                     tray::set_keep_running(app.handle().clone(), false);
                 }
+                // Quick connect in the tray's menu, from the library.
+                tray::places_changed(app.handle());
                 // The AI assistant's tool: its own copy, which updates never
                 // end (src/tool.rs), brought up to date with this build. The
                 // Microsoft Store copy has the package's `hproxy` command
@@ -192,13 +219,29 @@ pub fn run() {
             check::parse_line,
             files::import_proxy_file,
             files::export_text_file,
+            places::describe_lines,
+            places::places_get,
+            places::places_move_from_window,
+            places::places_add,
+            places::places_rename,
+            places::places_forget,
+            places::places_pick,
+            places::places_group_save,
+            places::places_group_forget,
+            places::places_group_lines,
+            places::places_group_members,
+            places::places_proxy_line,
+            places::places_check,
             connect::connect_start,
             connect::connect_stop,
             connect::connect_status,
             connect::connect_rotate,
+            connect::connect_back,
+            connect::connect_member,
             connect::connect_probe,
             connect::connect_set_probe,
             connect::system_proxy_current,
+            connect::free_countries,
             connect::free_list,
             connect::free_test,
             connect::leak_dns,
@@ -208,6 +251,10 @@ pub fn run() {
             fraud::fraud_lookup,
             tray::set_keep_running,
             channel::install_channel,
+            phone::phone_colors,
+            phone::phone_buzz,
+            phone::phone_to_background,
+            phone::phone_insets,
             update::update_at_start,
             update::update_check,
             update::update_download,
@@ -226,10 +273,10 @@ pub fn run() {
     app.run(|app, event| {
         // Whichever way the app ends, a machine must never be left pointing at
         // a relay that no longer exists. Both events can fire; the restore
-        // takes the running relay out of the state, so the second call finds
-        // nothing to do.
+        // takes the running relay out of the state and the flush clears what
+        // was waiting, so the second call finds nothing to do.
         if let tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit = event {
-            connect::restore_on_exit(app);
+            before_exit(app);
         }
     });
 }

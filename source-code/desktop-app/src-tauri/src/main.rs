@@ -35,6 +35,17 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    /// The saved places live in the app's data folder, which is named after
+    /// its identifier, and the command line and the AI assistant's tool find
+    /// them there by the same name (hproxy-places, `store::APP_ID`). An
+    /// identifier changed on one side only would leave them reading an empty
+    /// folder.
+    #[test]
+    fn the_places_folder_is_named_after_the_apps_identifier() {
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(conf["identifier"].as_str(), Some(hproxy_places::store::APP_ID));
+    }
+
     /// The app's program must never be taken for the tool. A program named `hproxy`, in any
     /// case, runs as the command-line tool and never opens a window, so since the product
     /// became "HProxy" (2026-09-24) the program keeps its file name, pinned in tauri.conf.json

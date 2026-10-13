@@ -456,13 +456,27 @@ pub fn cancel_checks(state: State<'_, AppState>) {
     }
 }
 
-/// Check one proxy the way a run would, with its location: the Connect
-/// screen's look-before-you-leap. Rejects with the engine's sentence when the
-/// line cannot be read; a dead proxy is a successful answer with `alive: false`
-/// and the reason in `error`.
+/// Check one proxy the way a run would, with its location: the paste field's
+/// look-before-you-leap. Rejects with the engine's sentence when the line
+/// cannot be read; a dead proxy is a successful answer with `alive: false` and
+/// the reason in `error`. The answer is remembered a while, so the line keeps
+/// it when it is saved (places.rs, `PlacesState::checked`).
 #[tauri::command]
-pub async fn check_line(state: State<'_, AppState>, line: String) -> Result<CheckResult, String> {
-    let parsed = hproxy_probe::parse(&line).map_err(|e| e.0)?;
+pub async fn check_line(
+    state: State<'_, AppState>,
+    places: State<'_, crate::places::PlacesState>,
+    line: String,
+) -> Result<CheckResult, String> {
+    let result = check_one(&state, &line).await?;
+    places.checked(&line, crate::places::verdict_of_check(&result, crate::places::now_ms()));
+    Ok(result)
+}
+
+/// One proxy checked the way a run would, with its location: for a line typed
+/// into the window (`check_line`) and for a saved proxy checked by its id
+/// (`places::places_check`), where the line never leaves this side.
+pub async fn check_one(state: &AppState, line: &str) -> Result<CheckResult, String> {
+    let parsed = hproxy_probe::parse(line).map_err(|e| e.0)?;
     let checker = state.checker.clone();
     let geo = state.geo.clone();
     let opts = CheckOptions {
@@ -478,6 +492,21 @@ pub async fn check_line(state: State<'_, AppState>, line: String) -> Result<Chec
     }
     if let Some(host) = result.ip.clone() {
         geo.enrich(&host, &mut result);
+    }
+    // Now that the exit is located: did it leave from the country the login
+    // asked for (`-country-us`)?
+    if let Some(usable) = result.usable.take() {
+        let asked = parsed
+            .auth
+            .as_ref()
+            .and_then(|(user, _)| hproxy_places::read_targeting(user).country);
+        result.usable = Some(usable.with_asked_country(asked.as_deref(), result.country_code.as_deref()));
+    }
+    // Tell the relay in this process what the proxy speaks, so its first
+    // connection does not have to guess (a bare SOCKS5 line is otherwise
+    // tried as HTTP once).
+    if let Some(way) = result.usable.as_ref().and_then(|u| u.way) {
+        hproxy_relay::upstream::remember_at(&parsed.addr(), way.into());
     }
     Ok(result)
 }

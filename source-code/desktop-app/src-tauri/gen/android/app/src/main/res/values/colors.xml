@@ -7,4 +7,7 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <!-- The page's colours (src/styles/globals.css: Graphite, dark; Soft, white). -->
+    <color name="page_dark">#FF0C0C0F</color>
+    <color name="page_light">#FFF0F1F4</color>
 </resources>
