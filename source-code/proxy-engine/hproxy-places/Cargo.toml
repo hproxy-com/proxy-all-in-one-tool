@@ -1,0 +1,18 @@
+[package]
+name = "hproxy-places"
+description = "The places a person connects through (their proxies, groups and the free pool), kept on their own computer, and what each one is: the targeting a residential provider puts in a proxy's username, read back."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The one line parser, so a place is read exactly the way it will be dialled.
+hproxy-probe = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# The library file is sealed with the person's own Windows login (DPAPI).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
