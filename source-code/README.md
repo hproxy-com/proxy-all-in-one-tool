@@ -1,6 +1,5 @@
 # HProxy
 
-[![CI](https://github.com/hproxy-com/proxy-all-in-one-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/hproxy-com/proxy-all-in-one-tool/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
 **A free, open-source proxy checker and connector for Windows, macOS, Linux and
@@ -23,9 +22,10 @@ All of HProxy's software, in one place (Hproxy-Software-Bundle-Core):
 
 | Folder | What it is |
 | --- | --- |
-| `desktop-app/` | The app for Windows, macOS and Linux, and the phone app (Android in `src-tauri/gen/android`, iOS generated on a Mac): check proxies, connect through them. |
+| `desktop-app/` | The app for Windows, macOS and Linux: check proxies, connect the whole computer through them. (`src-tauri/gen/android` holds the earlier Android app, the one on Google Play until 0.3.0.) |
+| `phone-android/` | The Android app, native (Kotlin and Jetpack Compose) on the same engine: check proxies, connect the whole phone through one with Android's VPN service, the free proxy list, fraud scores and support chat. |
 | `command-line-tool/` | `hproxy`, the same engine on the command line, and `hproxy mcp`, its server for AI assistants. |
-| `proxy-engine/` | What every door above shares: the checking engine, the connector (relay), the system proxy glue and the client for hproxy.com's free doors. |
+| `proxy-engine/` | What every door above shares: the checking engine, the connector (relay), the system proxy glue, the saved places, the client for hproxy.com's free doors, and the phone's engine and tunnel (`hproxy-mobile`, `hproxy-tunnel`). |
 | `chrome-extension/` | The browser extension: connect Chrome to your proxies, your HProxy plans or the free pool, with every free exit tested before your pages go through it. |
 | `ai-tool-npm-package/` | The MCP server as an npm package (the same tools, calling hproxy.com's API). |
 
@@ -36,10 +36,10 @@ Installers built on a machine land in `finished-installers/`, which is never com
 | Platform | Where | Notes |
 | --- | --- | --- |
 | Windows 10 and 11 | **[The installer on hproxy.com](https://hproxy.com/downloads/desktop/hproxy-windows-x64-setup.exe)**, or the **[Microsoft Store](https://apps.microsoft.com/detail/9NPDSV0K3J1X)** | The installer is not yet code-signed, so SmartScreen shows "Windows protected your PC" the first time. Click "More info", then "Run anyway". Updates after that come from hproxy.com and are checked by the app itself; the Store keeps its own copy up to date. |
-| Android 7 and later | **[Google Play](https://play.google.com/store/apps/details?id=com.hproxy.app)** | The checker runs fully; Connect gives you the Wi-Fi proxy settings to type in, because a phone's proxy cannot be switched by an app. Google Play keeps it up to date. |
+| Android 7 and later | **[Google Play](https://play.google.com/store/apps/details?id=com.hproxy.app)** | Connect sends the whole phone through your proxy with Android's VPN service (your own proxy, or a tested free one by country), with the checker, fraud scores and support chat. Google Play keeps it up to date. |
 | macOS 12 and later (Apple Silicon and Intel) | not yet | Published once it is signed and notarized with Apple, so that it opens without a warning. |
 | Linux (x86_64) | not yet | `.AppImage` and `.deb`, built by the same release pipeline as the other systems. |
-| iOS | not yet | Needs an Apple developer account for a device build. The code compiles for iOS in CI. |
+| iOS | not yet | Needs an Apple developer account. |
 | Servers, scripts and AI agents | `curl -fsSL https://hproxy.com/install.sh \| sh` (macOS, Linux) or `irm https://hproxy.com/install.ps1 \| iex` (Windows) | The same engine and connector with no window: one file for every system and processor, checked against its SHA-256 before it is installed. The files are also on the **[Releases page](https://github.com/hproxy-com/proxy-all-in-one-tool/releases)**. See [Command line](#command-line) and [For AI assistants](#for-ai-assistants-mcp). |
 
 ## Features
@@ -71,7 +71,7 @@ Installers built on a machine land in `finished-installers/`, which is never com
 - **Export**: copy the working list, or save as `.txt`, `.csv` or `.json`.
 - **Checks from your own machine by default**, which is the only way to test a
   proxy that is locked to your IP address. HProxy's servers can take part of the
-  work when you choose it. See [Where checking runs](#where-checking-runs).
+  work when you choose it. See [Check from](#check-from).
 - **Gentle on your network, without guessing**: your concurrency setting is a
   ceiling rather than a target. The engine starts low and climbs while a direct
   connection to our own judge says your line has headroom, then backs off the
@@ -82,9 +82,10 @@ Installers built on a machine land in `finished-installers/`, which is never com
   HTTP and SOCKS5 on one port, that forwards through the proxy you chose with its
   login attached. See [Connect](#connect).
 - **Fraud scores**: how risky sites will take an address to be, from FFraud's
-  free lookup with no key, or from IPQualityScore, Scamalytics, proxycheck.io or
-  AbuseIPDB with your own key. For every working proxy at once in Check, and
-  for the address you appear as in Connect.
+  free lookup with no key, and from IPQualityScore, Scamalytics, proxycheck.io or
+  AbuseIPDB with your own key, several at once (the highest score shows, every
+  answer is named beside it). For every working proxy at once in the Checker,
+  and for the address you appear as in Connect.
 - **No account, no telemetry**: there is no signup, no analytics and no usage
   tracking of any kind. See [What leaves your machine](#what-leaves-your-machine).
 - **Updates itself, safely**: the app checks at launch and every six hours,
@@ -137,12 +138,20 @@ everything to the proxy you chose, login attached, so every program can use it,
 including the ones with no login box and the operating systems that cannot speak
 SOCKS5. The same port answers HTTP and SOCKS5, so it does not matter which kind
 a program asks for. The line you type is checked for real before you connect.
-Three sources: your own proxy, your own list rotated by a rule (every
-connection, every N, random, or only when one dies), or a free exit from the
-HProxy pool by country. While connected, a card shows the address the world sees
-you from, the round trip, uptime and traffic, checked through the relay every
-twenty seconds against our judge or any server you pick in Settings.
-Disconnecting puts the system proxy setting back exactly as found.
+Three sources: your own proxy, your own list moved through by a rule (the same
+proxy until it dies, which is what a new group starts with; a new one every N
+minutes; every connection; every N connections; or at random), or a free exit
+from the HProxy pool by country. While connected, a card shows the address the
+world sees you from, the round trip, uptime and traffic, checked through the
+relay every twenty seconds against our judge or any server you pick in Settings.
+
+Switching to another place while connected happens inside the running relay:
+the port stays, the system proxy setting is not touched, and no program goes
+out on your own address in between. The connections that are open end with the
+switch, so a browser opens new ones at once through the new place instead of
+keeping the old address on its open tabs. **Next IP** does the same within a
+list or the free pool. Disconnecting ends the open connections too and puts the
+system proxy setting back exactly as found.
 
 A proxy that goes silent is given up on after 10 seconds without a connection
 and 30 seconds without an answer, so a list or the free pool moves to the next
@@ -159,9 +168,27 @@ hproxy check --file proxies.txt --json > rows.jsonl         # one JSON object pe
 hproxy list --protocol socks5 | hproxy check --first 5 --alive   # 5 free SOCKS5 that work here
 hproxy connect host:port:user:pass                          # 127.0.0.1:8080, no password
 hproxy connect --file proxies.txt --rotate every:10 --listen 127.0.0.1:0 --json
+hproxy connect --file sessions.txt --rotate every:10m      # a new proxy every 10 minutes
 hproxy free --country DE                                    # a free exit, swapped when it dies
+hproxy places california                                    # what you saved in the app, no passwords
+hproxy connect --place "US sessions" --member 3             # one of them, by name
 hproxy ip 8.8.8.8                                           # where an address is
 ```
+
+### Your saved proxies
+
+The desktop app keeps the proxies and groups you save in its own data folder
+(`%APPDATA%\com.hproxy.checker` on Windows, sealed with your Windows login;
+`~/Library/Application Support/com.hproxy.checker` on macOS;
+`$XDG_DATA_HOME/com.hproxy.checker` or `~/.local/share/com.hproxy.checker`
+elsewhere, readable by your account only). `hproxy places` lists them: names,
+addresses, what each one targets, how it did when last checked, never a
+password or a login. `hproxy connect --place NAME` connects through one by its
+name or id; a group keeps the rule it was saved with, and `--member N` starts it
+on its Nth proxy. The tool only reads them: the app is the one place they
+change. A background connection is handed the place's name and reads it itself,
+so no password ever sits in the list of running processes. `HPROXY_PLACES_DIR`
+moves the folder, which is what the tests use.
 
 ### Behind you
 
@@ -201,13 +228,20 @@ unreadable input, a service out of reach).
 
 `hproxy mcp` serves the checker and the connector to any assistant that speaks
 the Model Context Protocol, over stdio, from the same single file. Tools:
-`proxy_check`, `proxy_list`, `ip_lookup`, `proxy_connect`, `proxy_status`,
-`proxy_new_ip`, `proxy_disconnect`, and `app_open`, which opens the desktop
-app's window for the person or wakes it in the tray (`hproxy app` in a
-terminal).
+`proxy_check`, `proxy_list`, `ip_lookup`, `proxy_places`, `proxy_connect`,
+`proxy_status`, `proxy_new_ip`, `proxy_disconnect`, and `app_open`, which opens
+the desktop app's window for the person or wakes it in the tray (`hproxy app` in
+a terminal).
+
+`proxy_places` lists what you saved in the desktop app, without a password or a
+login, and `proxy_connect {place: "Shop"}` connects through one by name, so you
+can tell your assistant "use my California sessions" and it never sees a line.
+`proxy_new_ip {member: 7}` moves a group to its seventh proxy.
 
 With the desktop app there is nothing to download: its Use with AI tab hands
-the assistant a ready setup to copy and paste, nothing else. On Windows the app
+the assistant one ready text to copy and paste, nothing else. The text has the
+assistant first save how to use HProxy to its permanent memory, then add the
+server to its own settings. On Windows the app
 keeps its own copy of itself outside the install folder (`hproxy.exe` in the
 app's data folder) and puts that folder on your user PATH once, so the setup
 simply says `hproxy`, the same on every computer; the uninstaller takes it off
@@ -254,15 +288,15 @@ What makes it fit for an agent:
   `hproxy stop` ends it. The server notices within half a second and tells the
   model the connection is gone rather than pointing it at a dead port.
 
-## Where checking runs
+## Check from
 
-**Settings, Where checking runs** decides whose connection opens the thousands
+**Settings, Check from** decides whose connection opens the thousands
 of sockets a list needs. The default is **This computer**.
 
 | Mode | What happens |
 | --- | --- |
 | **This computer** (default) | Every connection is opened from your machine. Nothing about your proxies is transmitted, every row has the full detail, and proxies locked to your IP address are judged correctly. |
-| **Both at once** | The list is shared between HProxy's servers and your machine over one queue, so whichever side is quicker gets through more of it. Anything our servers cannot answer is re-checked locally, so nothing is dropped. |
+| **Both** | The list is shared between HProxy's servers and your machine over one queue, so whichever side is quicker gets through more of it. Anything our servers cannot answer is re-checked locally, so nothing is dropped. |
 | **HProxy's servers** | Everything runs on our hardware. Your machine makes one request and reads a stream. |
 
 Why you might pick one of the other two: your own address is then not the one
@@ -290,7 +324,7 @@ and with what, is in [PRIVACY.md](./PRIVACY.md). The short version:
 | Your results | Nowhere. Not uploaded, not saved server-side, in any mode. |
 | The **IP addresses** you check | Sent to `hproxy.com/api/ip` to look up location and ASN, in batches. Nothing else about them is sent: not ports, not credentials, not results. The command-line tool only does this with `--geo`. |
 | Anonymity grading | Your machine asks a "judge" endpoint, through the proxy, what it saw. That is how anonymity detection works in every proxy checker. |
-| Fraud scores | Only the address being scored, from your machine straight to the service picked in Settings: `api.ffraud.com` by default (no key), or the one whose key you gave. In Check only when you ask; in Connect for the address you appear as, unless you turn it off. Your key goes to its own service only. |
+| Fraud scores | Only the address being scored, from your machine straight to each service ticked in Settings: `api.ffraud.com` by default (no key), and any whose key you gave. In the Checker only when you ask; in Connect for the address you appear as, unless you turn it off. Each key goes to its own service only. |
 
 To send **nothing at all**: keep checking on "This computer", turn
 geolocation off in Settings, and do not ask for fraud scores. The location and
@@ -310,11 +344,19 @@ cd ..
 cargo build --release -p hproxy-cli   # the command-line tool: target/release/hproxy
 ```
 
-Android needs the Android SDK and NDK (`ANDROID_HOME`, `NDK_HOME`) and Java 17;
-then, in `desktop-app`, `npm run tauri android build --apk`. The release build
-signs with the keystore named in `desktop-app/src-tauri/gen/android/keystore.properties`,
-which is not in the repository; without it the APK is unsigned. iOS needs a Mac
-with Xcode: in `desktop-app`, `npm run tauri ios init`, then `npm run tauri ios build`.
+The Android app (`phone-android/`) needs the Android SDK with NDK 27.1.12297006,
+Java 17 and Rust's Android targets (`rustup target add aarch64-linux-android
+armv7-linux-androideabi`, and `x86_64-linux-android` for an emulator). Gradle
+builds the engine with cargo for each chip type:
+
+```bash
+cd phone-android
+./gradlew :app:assembleDebug                 # arm64 and 32-bit ARM phones
+./gradlew :app:assembleDebug -Pabis=x86_64   # an emulator
+```
+
+A debug build installs as "HProxy Dev" beside the Play copy. A release build signs
+with the upload key named in `keystore.properties`, which is not in the repository.
 
 ## Tech stack
 
@@ -323,7 +365,9 @@ with Xcode: in `desktop-app`, `npm run tauri ios init`, then `npm run tauri ios 
   (`proxy-engine/hproxy-relay`), the system proxy glue (`proxy-engine/hproxy-system`) and the
   client for our public API (`proxy-engine/hproxy-api`), built on `tokio`, `rustls`
   and `tokio-socks`.
-- **React, TypeScript and Tailwind CSS**: the interface.
+- **React, TypeScript and Tailwind CSS**: the computer app's interface.
+- **Kotlin and Jetpack Compose**: the Android app, on the Rust engine through
+  `proxy-engine/hproxy-mobile`.
 
 ## License
 
