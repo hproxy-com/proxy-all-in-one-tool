@@ -39,3 +39,6 @@ desktop-app/store/marketing/*.png
 # Google Play pictures: the raw app screens are drawn again by
 # desktop-app/scripts/store-play-images.mjs; only the finished pictures are kept
 desktop-app/store/google-play/listing/raw-*.png
+# The Android app's raw store screens (phone-android/tools/store-pictures.mjs draws the
+# finished pictures from them; only those are kept)
+phone-android/store/google-play/raw/
