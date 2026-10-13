@@ -8,105 +8,104 @@
     <title>HProxy</title>
   </head>
   <!--
-    The popup: the desktop app's Connect card, made for the toolbar
-    (2026-09-24). The same language as the app: the state in words, the
-    switch top right, the route from this browser through the H to the exit,
-    and the H itself a button that connects. Under it the two places to go:
-    your own proxies, and free ones by country.
+    The popup, a proxy connector (2026-10-12): on top the power button, the
+    one control, with the state in words and where you appear under it; while
+    connected, the checks of that connection in one line that opens; then
+    your own proxies first, the free ones second. Until 1.0.3 a large card
+    with the route through the H stood on top and Free came first.
 
     popup.js reads and commands; the connection itself lives in
     background.js. The ids are the ones popup.js drives: anything it looks
     up and does not find, it leaves alone.
   -->
   <body>
-    <section class="conn" id="conn" data-phase="off">
-      <div class="card" id="status">
-        <div class="top">
-          <div class="words">
-            <span class="live"><i id="statusDot"></i><span id="statusTitle">Not connected</span></span>
-            <div class="head" id="statusHead">Your own address</div>
-            <div class="sub" id="statusSub">Sites see where you really are</div>
-          </div>
-          <button type="button" class="switch" id="connSwitch" role="switch" aria-checked="false" aria-label="Connection" title="Connect">
-            <span class="knob">
-              <svg viewBox="0 0 22 26" aria-hidden="true">
-                <path d="M0 0V0C3.98547 0 7.21633 3.23086 7.21633 7.21633V26H0V0Z" />
-                <rect x="14.2188" width="7.21633" height="26" />
-                <path d="M7.2349 26H0V15.9714C0 12.4548 2.85076 9.60408 6.36735 9.60408H14.2204V0H21.4367V10.4531C21.4367 13.9696 18.586 16.8204 15.0694 16.8204H7.2349V26Z" />
-              </svg>
-            </span>
-          </button>
-        </div>
-
-        <div class="route">
-          <span class="end" title="This browser">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 9h18" /><path d="M6.5 6.5h.01M9 6.5h.01" /></svg>
-            <span class="name">This browser</span>
+    <!-- The power button: the one control, as a VPN app has it. Its look
+         follows data-phase (off, connecting, on, rotating) and data-failing,
+         which popup.js sets; every move is CSS (popup.css, "THE POWER
+         BUTTON"). On, the blue floods the whole top from the button out
+         (.hero-flood). Under the button the state in words, then where it
+         connects to (off) or where you appear (on). -->
+    <section class="hero" id="conn" data-phase="off">
+      <i class="hero-flood" aria-hidden="true"></i>
+      <span class="brand" aria-label="HProxy">
+        <svg viewBox="0 0 22 26" aria-hidden="true">
+          <path d="M0 0V0C3.98547 0 7.21633 3.23086 7.21633 7.21633V26H0V0Z" />
+          <rect x="14.2188" width="7.21633" height="26" />
+          <path d="M7.2349 26H0V15.9714C0 12.4548 2.85076 9.60408 6.36735 9.60408H14.2204V0H21.4367V10.4531C21.4367 13.9696 18.586 16.8204 15.0694 16.8204H7.2349V26Z" />
+        </svg>
+        <b>Proxy</b><i>.</i>
+      </span>
+      <button type="button" class="power" id="connSwitch" role="switch" aria-checked="false" aria-label="Connection" title="Connect">
+        <i class="power-wave" aria-hidden="true"></i>
+        <svg class="power-ring" viewBox="0 0 132 132" aria-hidden="true">
+          <circle class="power-arc" cx="66" cy="66" r="63" pathLength="100" />
+        </svg>
+        <!-- The power mark twice: in ink on the disc, and in blue on the
+             fill, which is cut by a growing circle, so the mark turns blue
+             exactly where that circle reaches it. -->
+        <span class="power-face" aria-hidden="true">
+          <svg class="power-glyph" viewBox="0 0 24 24"><path d="M12 3.2v8.3" /><path d="M6.7 6.6a7.7 7.7 0 1 0 10.6 0" /></svg>
+          <span class="power-fill">
+            <svg class="power-glyph" viewBox="0 0 24 24"><path d="M12 3.2v8.3" /><path d="M6.7 6.6a7.7 7.7 0 1 0 10.6 0" /></svg>
           </span>
-          <span class="wire left"><i></i><b></b></span>
-          <span class="hbutton">
-            <button type="button" class="hface" id="hbutton" aria-pressed="false" aria-label="Connection" title="Connect">
-              <span class="fill"></span>
-              <span class="edge"></span>
-              <span class="wave"></span>
-              <span class="ping"></span>
-              <svg viewBox="0 0 22 26" aria-hidden="true">
-                <path d="M0 0V0C3.98547 0 7.21633 3.23086 7.21633 7.21633V26H0V0Z" />
-                <rect x="14.2188" width="7.21633" height="26" />
-                <path d="M7.2349 26H0V15.9714C0 12.4548 2.85076 9.60408 6.36735 9.60408H14.2204V0H21.4367V10.4531C21.4367 13.9696 18.586 16.8204 15.0694 16.8204H7.2349V26Z" />
-              </svg>
-            </button>
-          </span>
-          <span class="wire right"><i></i><b></b></span>
-          <span class="end exit" id="routeExit">
-            <span class="exit-flag" id="routeFlag"></span>
-            <span class="name" id="routeName">Fastest free exit</span>
-          </span>
-        </div>
-
-        <div class="card-foot">
-          <span class="foot-text" id="footState">Nothing in this browser changes until you connect</span>
-          <button type="button" id="newIpBtn" class="link-btn" hidden>New IP</button>
-        </div>
+        </span>
+      </button>
+      <p class="hero-state"><i id="statusDot"></i><span id="statusTitle">Not connected</span></p>
+      <p class="hero-hint" id="heroHint"></p>
+      <!-- While connected or connecting: where you appear. -->
+      <div class="now-line" id="now" hidden>
+        <span class="now-flag" id="nowFlag"></span>
+        <span class="now-main" id="statusSub">
+          <span class="now-ip" id="subIp" hidden></span>
+          <span class="now-words" id="subWords"></span>
+        </span>
+        <button type="button" id="newIpBtn" class="link-btn" hidden>New IP</button>
       </div>
     </section>
 
-    <nav class="seg" id="surfaces" role="tablist">
-      <button type="button" class="seg-btn is-on" data-surface="proxies">My proxies</button>
-      <button type="button" class="seg-btn" data-surface="vpn">Free</button>
-    </nav>
+    <!-- The checks of this connection (analyzer.js), one line that opens. -->
+    <!-- data-state: "running" while the checks run, "done" once they have
+         settled for the connection as it is (tests wait for it); absent
+         until then. -->
+    <section class="checks" id="analyze" hidden>
+        <button type="button" class="checks-head" id="checksToggle" aria-expanded="false" aria-controls="analyzeList">
+          <span class="verdict" id="verdict" data-status="skip">
+            <i class="verdict-mark" aria-hidden="true"></i>
+            <span id="verdictHead">Checking this connection</span>
+          </span>
+          <span class="checks-count" id="checksCount"></span>
+          <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+        </button>
+      <div class="checks-body" id="checksBody" hidden>
+        <div class="checks-list" id="analyzeList"></div>
+        <button type="button" id="reanalyze" class="link-btn">Check again</button>
+      </div>
+    </section>
 
-    <div class="search">
-      <input id="countrySearch" class="input" placeholder="Search countries and saved proxies" autocomplete="off" spellcheck="false" />
-    </div>
+    <!-- Words on a hairline, the current one with the H's crossbar under it
+         (the computer app's Proxies page). -->
+    <nav class="tabs" id="surfaces" role="tablist" aria-label="Where to connect">
+      <button type="button" class="tab is-on" data-surface="proxies" role="tab" aria-selected="true">
+        My proxies<span class="count" id="savedCount" hidden></span>
+      </button>
+      <button type="button" class="tab" data-surface="vpn" role="tab" aria-selected="false">Free</button>
+      <i class="tabs-bar" id="tabsBar" aria-hidden="true"></i>
+    </nav>
 
     <section class="panel" id="surface-proxies">
       <!-- One field, one button. Which protocol the proxy speaks is found by
            testing it in this browser (background.js, pinFind); the line and
-           its login never leave it. Connecting runs the checks below. -->
-      <span class="field-label">Connect a proxy</span>
-      <div class="connect-row">
-        <input id="byoInput" class="input" placeholder="host:port  or  user:pass@host:port" autocomplete="off" spellcheck="false" />
+           its login never leave it. -->
+      <div class="add">
+        <input id="byoInput" class="input" placeholder="Like 198.51.100.7:8080:user:pass" autocomplete="off" spellcheck="false" aria-label="Paste a proxy to connect" />
         <button type="button" id="byoConnect" class="btn btn--primary">Connect</button>
       </div>
       <div id="byoMsg" class="msg" hidden></div>
 
-      <div class="list-head">
-        <span class="list-title">Saved</span>
+      <div class="search" id="savedSearchBox" hidden>
+        <input id="savedSearch" class="input input--search" placeholder="Search your proxies" autocomplete="off" spellcheck="false" aria-label="Search your proxies" />
       </div>
       <div id="byoList" class="list"></div>
-
-      <section class="analyze" id="analyze">
-        <div class="list-head">
-          <span class="list-title">This connection</span>
-          <button type="button" id="reanalyze" class="link-btn">Run again</button>
-        </div>
-        <div class="verdict" id="verdict" data-status="skip">
-          <span class="verdict-head" id="verdictHead">Not connected</span>
-          <span class="verdict-sub" id="verdictSub">Connect a proxy and it gets checked straight away.</span>
-        </div>
-        <div id="analyzeList"></div>
-      </section>
 
       <!-- Hidden until "Sign in with HProxy" has its server route (popup.js,
            PLANS_LIVE). The markup stays so switching it on is one line. -->
@@ -119,16 +118,21 @@
     </section>
 
     <section class="panel" id="surface-vpn" hidden>
-      <button type="button" id="quickBtn" class="quick-btn">
-        <span class="quick-bolt" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" /></svg>
-        </span>
-        <span class="quick-text">
-          <span class="quick-main" id="quickMain">Quick Connect</span>
-          <span class="quick-sub" id="quickSub">The best free exit, tested first</span>
-        </span>
-        <span class="crow-go" aria-hidden="true">→</span>
-      </button>
+      <div class="search">
+        <input id="countrySearch" class="input input--search" placeholder="Search a country" autocomplete="off" spellcheck="false" aria-label="Search a country" />
+      </div>
+      <div class="list">
+        <div id="quickBtn" class="row row--quick" role="button" tabindex="0">
+          <span class="row-lead" aria-hidden="true">
+            <svg class="solid" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" /></svg>
+          </span>
+          <span class="row-main">
+            <span class="row-name" id="quickMain">Fastest free proxy</span>
+            <span class="row-meta" id="quickSub">Any country, tested before you use it</span>
+          </span>
+          <span class="row-go" id="quickGo" aria-hidden="true">Connect</span>
+        </div>
+      </div>
 
       <div class="list-head" id="favHead" hidden>
         <span class="list-title">Favorites</span>
@@ -142,6 +146,7 @@
       <div id="countryList" class="list">
         <p class="hint">Loading countries</p>
       </div>
+      <p class="hint hint--note">Free public proxies, tested here before any page goes through them. Never sign in or pay through one.</p>
     </section>
 
     <p class="hand-loaded" id="handLoaded" hidden>
