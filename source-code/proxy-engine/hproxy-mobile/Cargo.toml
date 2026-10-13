@@ -1,0 +1,42 @@
+[package]
+name = "hproxy-mobile"
+description = "The engine of the native phone app (phone-android): places, the connection, the phone's VPN tunnel with its firewall, and the checker, called from Kotlin through JNI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# libhproxy_mobile.so for the phone app; the rlib lets the tests in this
+# crate run on a computer. Not named plain "hproxy": on Windows that would
+# write the same hproxy.pdb as the command-line tool beside it.
+[lib]
+name = "hproxy_mobile"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hproxy-probe = { workspace = true }
+hproxy-relay = { workspace = true }
+hproxy-places = { workspace = true }
+hproxy-api = { workspace = true }
+hproxy-tunnel = { workspace = true }
+hproxy-connection = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# The bridge to Kotlin: plain JNI, the one version the workspace already
+# carries (Tauri's Android side reads it too). No code generator and no JNA:
+# the app calls a handful of functions with JSON, so the glue is a few dozen
+# lines that can be read whole (src/jni_glue.rs).
+jni = { version = "0.21", default-features = false }
+# The support chat (src/chat.rs): WebSocket framing only. Its TLS is the
+# engine's own rustls with ring (the versions reqwest already brings), so no
+# second TLS stack and no aws-lc, which the phone's build cannot carry.
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
