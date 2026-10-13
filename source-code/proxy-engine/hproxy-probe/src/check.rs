@@ -416,14 +416,39 @@ impl Checker {
             }
         }
 
+        // The SOCKS probes climb the PLAIN ladder (the judges most proxies
+        // reach), so they never carry TLS and cannot tell whether the proxy
+        // reads it. When one answered and the CONNECT probe has not already
+        // settled the question, one more pass through the same kind of tunnel
+        // to the TLS judges does. Found 2026-10-10: six free SOCKS5 proxies were
+        // graded "Working · Hides you" while Connect through them met a forged
+        // certificate (issuer "Example Inc. CA"). One more connection per
+        // working SOCKS proxy, never for a dead one.
+        let settled = https_p.alive && https_p.tls_genuine.is_some();
+        let socks_tls = if settled {
+            Probe::default()
+        } else if s5_p.alive {
+            transport::socks5(target, &self.ladder.tls, cx).await
+        } else if s4_p.alive {
+            let mut rungs = Vec::new();
+            for j in &self.ladder.tls {
+                if let Some(sa) = self.v4_of(j).await {
+                    rungs.push((j.clone(), sa));
+                }
+            }
+            if rungs.is_empty() {
+                Probe::default()
+            } else {
+                transport::socks4(target, &rungs, cx).await
+            }
+        } else {
+            Probe::default()
+        };
+
         // A tunnel that carried our TLS with somebody else's certificate belongs
         // to a proxy that re-signs HTTPS and can read it. Still alive: it
         // relays. But nobody should log in through it, and the row says so.
-        result.tls_intercepted = [&https_p, &s5_p, &s4_p]
-            .iter()
-            .filter(|p| p.alive)
-            .find_map(|p| p.tls_genuine)
-            .map(|genuine| !genuine);
+        result.tls_intercepted = intercepted_from(&[&https_p, &socks_tls, &s5_p, &s4_p]);
 
         // Only tunnels answered. A tunnel cannot add a header, so nothing can
         // have leaked and elite is the correct grade, with one exception: if
@@ -465,6 +490,12 @@ impl Checker {
             } else {
                 false
             });
+        }
+
+        // What the row means for connecting. After everything the verdict
+        // reads (protocols, exit, grade, interception) is settled.
+        if result.status != Status::Unchecked {
+            result.usable = Some(crate::usable::usable(&result, line.scheme, own.as_deref()));
         }
 
         // Speed, through whichever tunnel answered.
@@ -517,10 +548,54 @@ fn rotating(echo: &EchoResponse, pasted_host: &str, peer: Option<SocketAddr>) ->
     peer.map(|p| p.ip() != exit)
 }
 
+/// Does the proxy read HTTPS? Read off the first ALIVE probe, in the order
+/// given, that carried TLS: `Some(true)` when the certificate that came back was
+/// not the judge's real one, `Some(false)` when it was, `None` when no alive
+/// probe carried TLS. A dead probe is never evidence, and no TLS is never a guess.
+fn intercepted_from(probes: &[&Probe]) -> Option<bool> {
+    probes
+        .iter()
+        .filter(|p| p.alive)
+        .find_map(|p| p.tls_genuine)
+        .map(|genuine| !genuine)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap as Map;
+
+    #[test]
+    fn interception_comes_from_the_first_alive_probe_that_carried_tls() {
+        let tls = |alive: bool, genuine: Option<bool>| Probe {
+            alive,
+            tls_genuine: genuine,
+            ..Default::default()
+        };
+        let none = Probe::default();
+        // A SOCKS proxy: the CONNECT probe died, the plain SOCKS probe carried
+        // no TLS, so the follow-up through the tunnel decides, both ways.
+        assert_eq!(
+            intercepted_from(&[&none, &tls(true, Some(false)), &tls(true, None), &none]),
+            Some(true)
+        );
+        assert_eq!(
+            intercepted_from(&[&none, &tls(true, Some(true)), &tls(true, None), &none]),
+            Some(false)
+        );
+        // An HTTP proxy's CONNECT probe already settled it.
+        assert_eq!(
+            intercepted_from(&[&tls(true, Some(true)), &none, &none, &none]),
+            Some(false)
+        );
+        // A dead probe's certificate is never evidence.
+        assert_eq!(intercepted_from(&[&tls(false, Some(false)), &none, &none, &none]), None);
+        // Alive, but nothing carried TLS: unknown.
+        assert_eq!(
+            intercepted_from(&[&none, &none, &tls(true, None), &tls(true, None)]),
+            None
+        );
+    }
 
     fn echo_with(ip: &str) -> EchoResponse {
         EchoResponse {

@@ -333,6 +333,11 @@ pub struct CheckResult {
     pub judge: Option<String>,
     /// Which machine did the checking: `local` or `api`.
     pub source: Option<String>,
+    /// What the row means for connecting through it (see [`crate::usable`]).
+    /// Filled by the engine's own checks; a row from elsewhere (the API) leaves
+    /// it to the door that shows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usable: Option<crate::usable::Usable>,
 }
 
 /// One transport's failure, so a reader can see that HTTP was refused in 38 ms

@@ -203,7 +203,50 @@ impl Ladder {
     pub fn primary(&self) -> &Judge {
         &self.plain[0]
     }
+
+    /// Cloudflare's own trace on its own domain, for a person who would
+    /// rather the proxies they check never ask HProxy anything (the phone's
+    /// checker, 2026-10-11: "they can change the judge, but that's about
+    /// it"). It names the exit (`ip=`) and reflects the User-Agent only, so a
+    /// grade stops at anonymous. Answers plain HTTP with no redirect
+    /// (measured 2026-10-11), which a plain-HTTP proxy needs.
+    pub fn cloudflare() -> Self {
+        let plain = Judge::trace(CLOUDFLARE_TRACE_PLAIN).expect("the Cloudflare trace URL parses");
+        let tls = Judge::trace(CLOUDFLARE_TRACE_TLS).expect("the Cloudflare trace URL parses");
+        Ladder {
+            plain: vec![plain.clone()],
+            tls: vec![tls],
+            own_address: plain,
+        }
+    }
+
+    /// A judge of the person's own: an address that answers like HProxy's
+    /// echo, or like Cloudflare's trace (a path ending in `/cdn-cgi/trace`).
+    /// An `http://` address judges the plain rungs and an `https://` one the
+    /// TLS rungs; the other side keeps the public judges, so a proxy is never
+    /// judged on a transport the address cannot be reached over.
+    pub fn custom(url: &str) -> Option<Self> {
+        let url = url.trim();
+        let kind = if url.trim_end_matches('/').ends_with("/cdn-cgi/trace") {
+            JudgeKind::Trace
+        } else {
+            JudgeKind::Echo
+        };
+        let judge = Judge::from_url(kind, url)?;
+        let mut ladder = Self::public();
+        if judge.tls {
+            ladder.tls = vec![judge];
+        } else {
+            ladder.plain = vec![judge.clone()];
+            ladder.own_address = judge;
+        }
+        Some(ladder)
+    }
 }
+
+/// Cloudflare's trace on its own domain (`Ladder::cloudflare`).
+pub const CLOUDFLARE_TRACE_PLAIN: &str = "http://www.cloudflare.com/cdn-cgi/trace";
+pub const CLOUDFLARE_TRACE_TLS: &str = "https://www.cloudflare.com/cdn-cgi/trace";
 
 #[cfg(test)]
 mod tests {
@@ -275,5 +318,33 @@ mod tests {
         let l = Ladder::from_urls("http://e.example:4505/echo", "https://e.example/echo", "", "").unwrap();
         assert_eq!(l.plain.len(), 1);
         assert_eq!(l.tls.len(), 1);
+    }
+
+    #[test]
+    fn the_judge_can_be_cloudflare_or_the_persons_own() {
+        let cf = Ladder::cloudflare();
+        assert_eq!((cf.plain.len(), cf.tls.len()), (1, 1));
+        assert_eq!(cf.plain[0].kind, JudgeKind::Trace);
+        assert!(!cf.plain[0].tls && cf.tls[0].tls);
+        assert_eq!(cf.own_address.host, "www.cloudflare.com");
+
+        let own = Ladder::custom(" http://judge.example:8080/echo ").unwrap();
+        assert_eq!(own.plain, vec![Judge::echo("http://judge.example:8080/echo").unwrap()]);
+        assert_eq!(own.own_address.host, "judge.example");
+        assert_eq!(
+            own.tls,
+            Ladder::public().tls,
+            "an http:// judge leaves the TLS rungs ours"
+        );
+
+        let trace = Ladder::custom("https://example.com/cdn-cgi/trace/").unwrap();
+        assert_eq!(trace.tls[0].kind, JudgeKind::Trace);
+        assert_eq!(
+            trace.plain,
+            Ladder::public().plain,
+            "an https:// judge leaves the plain rungs ours"
+        );
+
+        assert!(Ladder::custom("judge.example/echo").is_none(), "no scheme, no judge");
     }
 }

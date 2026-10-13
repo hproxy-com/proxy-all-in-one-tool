@@ -23,6 +23,8 @@
 //!    plain-HTTP echo only, because a tunnel cannot add a header.
 //! 6. [`check::Checker`] merges the four answers into one [`result::CheckResult`],
 //!    and [`batch::Batch`] runs a whole list under the adaptive [`governor`].
+//! 7. [`usable::usable`] reads that row for whoever is about to connect: does it
+//!    carry a tunnel, how to speak to it, and what a person should hear first.
 //!
 //! No database, no web framework, no UI, no third-party service: the only
 //! network endpoints are the judges, which are ours.
@@ -41,6 +43,7 @@ pub mod result;
 pub mod speed;
 pub mod transport;
 pub mod udp;
+pub mod usable;
 
 pub use batch::{Batch, BatchOptions, Done, Progress};
 pub use check::{CheckOptions, Checker, ProtocolSet};
@@ -51,3 +54,4 @@ pub use result::{
     sustainable_concurrency, CheckResult, Failure, FailureDetail, LeakedHeader, Phase, ProtocolTiming, Status, Timings,
     DEFAULT_CONCURRENCY, MAX_CONCURRENCY,
 };
+pub use usable::{usable, Note, Tone, Usable, Way};
