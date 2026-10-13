@@ -1,0 +1,25 @@
+[package]
+name = "hproxy-tunnel"
+description = "Every app on a phone through the relay: turns the packets of the phone's VPN back into connections and hands each one to the local relay."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "hproxy_tunnel"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { workspace = true }
+log = { workspace = true }
+# The TCP/IP stack: packets in, ordinary byte streams out. Pinned to the exact
+# version that was read before it was added (2026-10-05): its build script only
+# writes a few size constants, and it pulls in six small crates. Only what a
+# phone's VPN needs is switched on: IP packets (no Ethernet), IPv4, IPv6, TCP.
+smoltcp = { version = "=0.14.0", default-features = false, features = ["std", "log", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp"] }
+
+# The VPN's file descriptor, on Android (and any other unix).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
