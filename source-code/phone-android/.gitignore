@@ -1,0 +1,12 @@
+*.iml
+.gradle
+.kotlin
+/local.properties
+/.idea
+.DS_Store
+build
+/captures
+.externalNativeBuild
+.cxx
+# The upload key's place and password: on the maintainers' computer only.
+keystore.properties
