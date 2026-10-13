@@ -1,0 +1,25 @@
+[package]
+name = "hproxy-connection"
+description = "One connection, for every door: a saved place becomes the relay's source, the relay runs and switches in place, and probes through it say whether traffic really gets through and where it comes out."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "hproxy_connection"
+path = "src/lib.rs"
+
+[dependencies]
+hproxy-probe = { workspace = true }
+hproxy-relay = { workspace = true }
+hproxy-places = { workspace = true }
+hproxy-api = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+# The probe, the speed test and the site checks are HTTPS requests through the
+# relay or a proxy: the same client and features the relay already carries.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "socks"] }
