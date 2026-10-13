@@ -63,24 +63,33 @@ pub fn made_up_name() -> String {
     if getrandom::getrandom(&mut bytes).is_err() {
         // No system randomness at all: the clock still makes a name nobody
         // else is using at this moment.
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
         for (i, b) in bytes.iter_mut().enumerate() {
             *b = (nanos >> ((i % 16) * 8)) as u8 ^ (i as u8).wrapping_mul(37);
         }
     }
     // 256 is not a multiple of 36, so the first letters are a hair likelier;
     // that is nothing next to 36^20 names.
-    bytes.iter().map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char).collect()
+    bytes
+        .iter()
+        .map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char)
+        .collect()
 }
 
 /// Run the test through `proxy_url` (e.g. `http://127.0.0.1:8080`, the relay).
 /// `door` asks hproxy.com; it may go direct or through the same proxy.
 pub async fn dns_leak(proxy_url: &str, door: &reqwest::Client) -> DnsLeak {
     let name = made_up_name();
-    let through = match reqwest::Proxy::all(proxy_url)
-        .map_err(|e| e.to_string())
-        .and_then(|p| reqwest::Client::builder().proxy(p).timeout(LOOKUP_TIMEOUT).build().map_err(|e| e.to_string()))
-    {
+    let through = match reqwest::Proxy::all(proxy_url).map_err(|e| e.to_string()).and_then(|p| {
+        reqwest::Client::builder()
+            .proxy(p)
+            .timeout(LOOKUP_TIMEOUT)
+            .build()
+            .map_err(|e| e.to_string())
+    }) {
         Ok(c) => c,
         Err(e) => return DnsLeak::Unavailable(format!("could not reach the proxy: {e}")),
     };

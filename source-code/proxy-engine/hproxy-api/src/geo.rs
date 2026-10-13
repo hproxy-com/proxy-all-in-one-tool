@@ -67,6 +67,12 @@ pub struct GeoData {
     /// there would have its clock set to (the Connect panel's time zone check).
     #[serde(default)]
     pub timezone: Option<String>,
+    /// Where the address is: the city when the API knows it, else the middle
+    /// of the country (the Connect map puts a dot there).
+    #[serde(default)]
+    pub latitude: Option<f64>,
+    #[serde(default)]
+    pub longitude: Option<f64>,
 }
 
 impl GeoData {
@@ -91,6 +97,8 @@ pub struct GeoLabel {
     pub asn_org: Option<String>,
     pub is_datacenter: Option<bool>,
     pub timezone: Option<String>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
 }
 
 impl GeoLabel {
@@ -104,6 +112,8 @@ impl GeoLabel {
             asn_org: g.asn_org.clone(),
             is_datacenter: g.is_datacenter,
             timezone: g.timezone.clone(),
+            latitude: g.latitude,
+            longitude: g.longitude,
         }
     }
 }
@@ -598,9 +608,17 @@ mod tests {
                 asn_org: Some("Akamai Technologies, Inc.".into()),
                 is_datacenter: Some(true),
                 timezone: Some("America/Chicago".into()),
+                latitude: Some(32.78),
+                longitude: Some(-96.8),
             },
         );
-        assert_eq!(geo.label("198.51.100.44").and_then(|l| l.timezone).as_deref(), Some("America/Chicago"));
+        assert_eq!(
+            geo.label("198.51.100.44").and_then(|l| l.timezone).as_deref(),
+            Some("America/Chicago")
+        );
+        // The map's dot (DotMap.tsx) comes from here.
+        let label = geo.label("198.51.100.44").unwrap();
+        assert_eq!((label.latitude, label.longitude), (Some(32.78), Some(-96.8)));
         let mut r = CheckResult::default();
         geo.enrich("198.51.100.44", &mut r);
         assert_eq!(r.country_code.as_deref(), Some("US"));
@@ -620,7 +638,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(g.timezone.as_deref(), Some("America/Chicago"));
-        assert_eq!(GeoLabel::new("8.8.8.8", &g).timezone.as_deref(), Some("America/Chicago"));
+        assert_eq!(
+            GeoLabel::new("8.8.8.8", &g).timezone.as_deref(),
+            Some("America/Chicago")
+        );
     }
 
     /// The engine's resolved address wins over the pasted host, so a proxy given
