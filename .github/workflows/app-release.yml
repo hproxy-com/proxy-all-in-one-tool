@@ -49,6 +49,8 @@ jobs:
           - os: ubuntu-22.04
             name: linux-x86_64
     runs-on: ${{ matrix.os }}
+    # A build takes 6 to 15 minutes; one that hangs ends here, not after GitHub's six hours.
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -149,8 +151,13 @@ jobs:
           grep -q "Signature=adhoc" signature.txt
           codesign --verify --deep --strict "$app"
           # It starts and names its version: given a command, the app runs as the command-line tool
-          # and opens no window (src-tauri/src/main.rs).
-          "$bin" --version | tee said.txt
+          # and opens no window (src-tauri/src/main.rs). Into a file and given 30 seconds: through a
+          # pipe, the Mac kept the pipe open after the answer and the step waited for ever.
+          "$bin" --version > said.txt 2>&1 &
+          pid=$!
+          for _ in $(seq 1 30); do kill -0 "$pid" 2> /dev/null || break; sleep 1; done
+          kill -9 "$pid" 2> /dev/null || true
+          cat said.txt
           grep -qx "hproxy $version" said.txt
           tar -czf ../hproxy-macos-universal.app.tar.gz -C "$(dirname "$app")" "$(basename "$app")"
           cp "$dmg" ../hproxy-macos-universal.dmg
@@ -165,8 +172,13 @@ jobs:
           if [ "$said" != "$version" ]; then echo "::error::the .deb says $said, not $version"; exit 1; fi
           file "$image" | tee kind.txt
           grep -q "ELF 64-bit" kind.txt
-          # It starts and names its version, without a window (src-tauri/src/main.rs).
-          target/release/hproxy-checker --version | tee said.txt
+          # It starts and names its version, without a window (src-tauri/src/main.rs), into a file
+          # and within 30 seconds, as on the Mac.
+          target/release/hproxy-checker --version > said.txt 2>&1 &
+          pid=$!
+          for _ in $(seq 1 30); do kill -0 "$pid" 2> /dev/null || break; sleep 1; done
+          kill -9 "$pid" 2> /dev/null || true
+          cat said.txt
           grep -qx "hproxy $version" said.txt
           cp "$image" ../hproxy-linux-x86_64.AppImage
           cp "$deb" ../hproxy-linux-x86_64.deb
@@ -181,6 +193,7 @@ jobs:
     needs: build
     if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     permissions:
       contents: write
       id-token: write
