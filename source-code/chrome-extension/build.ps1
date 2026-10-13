@@ -38,7 +38,7 @@ $zip      = Join-Path $dist "hproxy-extension-v$version.zip"
 # review versions and their switcher are gone, as a live version picker is a
 # development affordance, not a feature.
 $include = @(
-  'manifest.json', 'background.js', 'tokens.css', 'popup.css', 'popup.js', 'analyzer.js', 'line.js',
+  'manifest.json', 'background.js', 'tokens.css', 'popup.css', 'popup.js', 'analyzer.js', 'line.js', 'motion.js', 'gateways.js',
   'popup.html',
   'icons', 'fonts', 'flags/LICENSE'
 )
