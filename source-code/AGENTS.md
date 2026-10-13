@@ -11,7 +11,8 @@ agent, read the README's "Command line" and "For AI assistants (MCP)" sections.
 | `proxy-engine/hproxy-relay` | The connector: a local HTTP and SOCKS5 proxy with no password that forwards through a real proxy with its login attached. Fixed line, rotating list, or the free pool. |
 | `proxy-engine/hproxy-system` | Read, set and restore the operating system's proxy setting. |
 | `proxy-engine/hproxy-api` | The client for hproxy.com's free doors: IP locations, API-mode checking, the free list. |
-| `command-line-tool` | `hproxy`: check, connect, free, list, ip, and `mcp` (the MCP server). |
+| `proxy-engine/hproxy-places` | The places a person keeps (saved proxies, groups, the pick), sealed in the app's own data folder, and what each one is: the targeting a provider puts in a username (country, region, city, session), read back. |
+| `command-line-tool` | `hproxy`: check, connect, free, places, list, ip, and `mcp` (the MCP server). `src/places.rs` turns a saved place into the relay's source for every door, the desktop app's too. |
 | `desktop-app/src-tauri` | The desktop app's Rust side: commands and events around the crates. |
 | `src` | The desktop app's window (React, TypeScript, Tailwind). |
 
@@ -75,6 +76,13 @@ Everything in this repository, and every commit message, can be read by anyone.
   apart, so it raises `Published` (`publish_and_mark`) and the watcher reads
   that flag. Waiting for the file to appear instead is a race: a `stop` that
   lands in the gap is then waited out forever.
+- **The saved places are the app's.** The desktop app is the one program that
+  writes the library (`hproxy-places`, in `store::app_dir`); the command line
+  and the MCP server read it and never write it, so a connection started there
+  counts no use and picks nothing. What leaves for a screen or a model is a
+  view (names, addresses, targeting, the last check), never a line. A
+  background copy is handed the place's NAME and reads it itself: a line in
+  its arguments would put a password in the list of running processes.
 - **A detached child must inherit nothing.** On Windows, handles are inherited
   per handle, not per stream, so a background copy is started only after
   `keep_our_streams_out_of_the_child` clears the inherit flag on this process's
