@@ -17,12 +17,15 @@
    here for. Settings can flip it, and the popup remembers where you
    were unless you pin one.
 
-   ── ONE POPUP, THE APP'S LOOK ───────────────────────────────────────
-   popup.html is the desktop app's Connect card made for the toolbar
-   (2026-09-24): the state in words, the switch, and the route from this
-   browser through the H to the exit, with the H itself a button. Under
-   it, the two places to connect to. (Until then three design versions
-   shared this file; the look that replaced them is the app's.)
+   ── A PROXY CONNECTOR, NOT A FREE VPN (2026-10-12) ───────────────────
+   The popup connects your own proxies first; the free exits are the extra.
+   popup.html: on top the power button, the one control, as a VPN app has
+   it, with the state in words and where you appear under it; while
+   connected, the checks in one line that opens; then the tabs, My proxies
+   first, as words with the H's crossbar. A saved proxy, a country or the fastest free one is a
+   row you connect with one click. Until 1.0.3 the desktop app's Connect card
+   stood on top: the switch, the route from this browser through the H, the
+   H itself a button.
 
    Every element lookup still goes through `el()`, which returns null for
    anything the markup does not render, and every write checks first, so
@@ -34,6 +37,8 @@
 
 import { analyze } from "./analyzer.js";
 import { parseLine } from "./line.js";
+import { httpTwinPort } from "./gateways.js";
+import { riseIn, rollDigits, slideIn, unfold } from "./motion.js";
 
 const API = "https://hproxy.com";
 
@@ -52,10 +57,10 @@ function el(id) {
   if (!cache.has(id)) cache.set(id, document.getElementById(id));
   return cache.get(id);
 }
-/** Write text only if this skin rendered the element. */
+/** Write text only if the markup has the element, and only when it changes (markRow says why). */
 function text(id, value) {
   const node = el(id);
-  if (node) node.textContent = value;
+  if (node && node.textContent !== value) node.textContent = value;
 }
 /** Show or hide only if this skin rendered the element. */
 function show(id, visible) {
@@ -71,17 +76,24 @@ function on(id, event, handler) {
 let countries = [];
 let favCountries = [];
 let countryFilter = "";
+let savedFilter = "";
 let connectingCC = null;
+/* Quick Connect was pressed and has not answered yet. */
+let connectingQuick = false;
+/* The saved proxy pressed last, until the worker answers ("host:port"). */
+let connectingKey = null;
 let active = null;
 /* The worker is testing an exit or a proxy right now (from the last status). */
 let busyNow = false;
-/* Where the switch and the H go when pressed: the last place connected to. */
+/* The worker is testing free exits right now (from the last status). */
+let searchingNow = false;
+/* Where the switch goes when pressed: the last place connected to. */
 let lastTarget = null;
-let phaseNow = "off";
 let surface = "proxies";
 let settings = { firstSurface: "proxies", pinSurface: false };
 let analyzing = false;
-let lastRows = [];
+/* The last status had a connection whose checks mean something (refreshStatus). */
+let wasCheckable = false;
 
 /* ── storage ────────────────────────────────────────────────────────── */
 
@@ -131,51 +143,63 @@ function escapeHtml(s) {
   );
 }
 
-/* ── the connection card ────────────────────────────────────────────── */
+/* ── the power button and where you appear ──────────────────────────── */
 
-/** Write text and, when it changed, replay the element's fade-up. */
-function textFresh(id, value) {
+/** Write text and, when it changed, let the new words rise in (motion.js). */
+function textRise(id, value) {
   const node = el(id);
   if (!node || node.textContent === value) return;
   node.textContent = value;
-  node.classList.remove("is-new");
-  void node.offsetWidth; // restart the animation
-  node.classList.add("is-new");
+  riseIn(node);
 }
 
+/* The line under the header while connected. With an address it reads
+   "203.0.113.24 · United States · your proxy": a new address keeps its place
+   and its digits roll over (New IP), new words rise in beside it, and a line
+   that gains or loses its address rises in whole. The address shown last is
+   remembered, so the next one rolls from it. */
+function setSub(words, ip = "") {
+  const box = el("statusSub");
+  const ipNode = el("subIp");
+  const wordsNode = el("subWords");
+  if (!box || !ipNode || !wordsNode) return;
+  // A no-break space: a box of words drops a plain space at its start.
+  const line = ip ? `\u00a0· ${words}` : words;
+  const hadIp = box.dataset.ip === "1";
+  const wordsChanged = wordsNode.textContent !== line;
+  box.dataset.ip = ip ? "1" : "0";
+  ipNode.hidden = !ip;
+  if (ip) rollDigits(ipNode, ip);
+  wordsNode.textContent = line;
+  if (hadIp !== !!ip) riseIn(box);
+  else if (wordsChanged) riseIn(wordsNode);
+}
+
+/* The house's marks (square ends, like the H), drawn inline. */
 const GLOBE_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg>`;
-const BOLT_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" /></svg>`;
+const KEY_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4" /><path d="m11 12 8-8m-3 3 2.5 2.5M13.5 9.5 16 12" /></svg>`;
+const CROSS_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11" /></svg>`;
+const STAR_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.8 6.6 19.7l1.1-6.1-4.5-4.2 6.1-.8z" /></svg>`;
+const H_SVG = `<svg class="solid" viewBox="0 0 22 26" aria-hidden="true"><path d="M0 0V0C3.98547 0 7.21633 3.23086 7.21633 7.21633V26H0V0Z" /><rect x="14.2188" width="7.21633" height="26" /><path d="M7.2349 26H0V15.9714C0 12.4548 2.85076 9.60408 6.36735 9.60408H14.2204V0H21.4367V10.4531C21.4367 13.9696 18.586 16.8204 15.0694 16.8204H7.2349V26Z" /></svg>`;
 
-/** The route's far end: where traffic comes out, or where the H will go. */
-function setExit(cc, name, icon) {
-  const flag = el("routeFlag");
-  if (flag) flag.innerHTML = cc ? flagImg(cc) : icon || "";
-  text("routeName", name);
-  const exit = el("routeExit");
-  if (exit) exit.title = name;
+/** Where you appear: the exit's flag, or a globe when its country is not known yet. */
+function setNowFlag(cc) {
+  const node = el("nowFlag");
+  if (!node || node.dataset.cc === cc) return;
+  node.dataset.cc = cc;
+  node.innerHTML = cc ? flagImg(cc) : GLOBE_SVG;
 }
 
-/* The blue card spreads from the H's middle, wherever the layout put it. */
-function measureHub() {
-  const card = el("status");
-  const h = el("hbutton");
-  if (!card || !h) return;
-  const c = card.getBoundingClientRect();
-  const b = h.getBoundingClientRect();
-  card.style.setProperty("--hub-x", `${Math.round(b.left + b.width / 2 - c.left)}px`);
-  card.style.setProperty("--hub-y", `${Math.round(b.top + b.height / 2 - c.top)}px`);
-}
-
-/* The place the switch and the H connect to: kept after every connect. */
+/* The place the switch connects to: kept after every connect. */
 const LAST_KEY = "hproxy_last_target";
 async function rememberTarget(target) {
   lastTarget = target;
   await store.set("local", LAST_KEY, target);
 }
 
-/* The switch and the H do the same thing. Connected, or still connecting:
-   back to your own address. Otherwise: the last place used, or the fastest
-   free exit when there is none yet. */
+/* The switch. Connected, or still connecting: back to your own address.
+   Otherwise: the last place used, or the fastest free exit when there is
+   none yet. */
 async function toggleConnection() {
   if (active || busyNow) return doDisconnect();
   if (lastTarget?.kind === "vpn" && lastTarget.country) return connectCountry(lastTarget.country);
@@ -212,136 +236,148 @@ async function refreshStatus({ rerunAnalysis = false } = {}) {
   const silent = on_ && active.mode === "pin" && active.verified === false;
   const warn = on_ && (failing || hijacked || policy || refused || silent);
   busyNow = searching || testing;
+  searchingNow = searching;
 
-  /* The card's phase, as the app names them: the look hangs on it. */
+  /* The header's phase, as the app names them: the look hangs on it. */
   const phase = on_ ? (searching ? "rotating" : "on") : busyNow ? "connecting" : "off";
   const conn = el("conn");
   if (conn) {
     conn.dataset.phase = phase;
     conn.toggleAttribute("data-failing", warn);
   }
+  /* The power button: on while connected or connecting. Off, the line under
+     it says where it goes: the last place used, or the fastest free proxy
+     when there is none yet. */
   const lit = on_ || busyNow;
-  const title = lit ? "Disconnect" : "Connect";
+  const next =
+    lastTarget?.kind === "pin" ? lastTarget.key : lastTarget?.kind === "vpn" && lastTarget.country ? ccName(lastTarget.country) : "the fastest free proxy";
   const sw = el("connSwitch");
   if (sw) {
-    sw.classList.toggle("is-on", lit);
-    sw.classList.toggle("is-busy", busyNow);
     sw.setAttribute("aria-checked", String(lit));
-    sw.title = title;
+    sw.title = lit ? "Disconnect" : `Connect to ${next}`;
   }
-  const h = el("hbutton");
-  if (h) {
-    h.setAttribute("aria-pressed", String(lit));
-    h.title = title;
-  }
+  show("heroHint", !lit);
+  text("heroHint", `Connects to ${next}`);
 
-  /* The headline says where you appear; the far end of the route says where
-     traffic comes out, or where the switch will take it. */
-  if (on_) {
-    const cc = active.country ? String(active.country).toUpperCase() : "";
-    const where = cc ? ccName(cc) : active.mode === "pin" ? `${active.host}:${active.port}` : active.exitIp || active.host;
-    textFresh("statusHead", where);
-    setExit(cc, cc ? ccName(cc) : active.host, GLOBE_SVG);
-    text("footState", warn ? "Disconnect to go back to your own address." : "All of Chrome goes through it.");
-  } else if (busyNow) {
-    textFresh("statusHead", searching ? "Finding a free exit" : "Testing your proxy");
-    text("footState", searching ? "Testing free exits. Your pages stay where they are until one passes." : "Only the test goes through it until it answers.");
-  } else {
-    textFresh("statusHead", "Your own address");
-    if (lastTarget?.kind === "vpn" && lastTarget.country) setExit(lastTarget.country, ccName(lastTarget.country));
-    else if (lastTarget?.kind === "pin") setExit("", lastTarget.key, GLOBE_SVG);
-    else setExit("", "Fastest free exit", BOLT_SVG);
-    text("footState", "Nothing in this browser changes until you connect.");
-  }
-  if (phase === "on" && phaseNow !== "on") {
-    const flag = el("routeFlag");
-    flag?.classList.remove("arrived");
-    void flag?.offsetWidth;
-    flag?.classList.add("arrived");
-  }
-  phaseNow = phase;
-  measureHub();
+  /* Where you appear, while there is a connection. Its checks only while
+     there is something of it to measure: a proxy that refuses the login, has
+     not answered, or is not the one in effect (a policy, another extension)
+     carries nothing to check, and the line above already says why (its
+     checks once said "Not carrying traffic" under "Waiting for an answer",
+     over six rows of "could not measure"). */
+  show("now", lit);
+  const checkable = on_ && !policy && !hijacked && !refused && !silent;
+  show("analyze", checkable);
+  const cc = on_ && active.country ? String(active.country).toUpperCase() : "";
+  setNowFlag(cc);
+  const where = cc ? ccName(cc) : "";
 
   if (on_ && policy) {
-    text("statusTitle", "Your organisation sets the proxy");
-    text("statusSub", "A policy controls this browser's proxy, so no extension can change it.");
-    show("disconnectBtn", true);
+    textRise("statusTitle", "Set by your organisation");
+    setSub("A policy controls this browser's proxy, so no extension can change it.");
     show("newIpBtn", false);
   } else if (on_ && hijacked) {
-    text("statusTitle", "Another extension is in control");
-    text("statusSub", "Disable your other proxy or VPN extension, then reconnect.");
-    show("disconnectBtn", true);
+    textRise("statusTitle", "Another extension is in control");
+    setSub("Disable your other proxy or VPN extension, then reconnect.");
     show("newIpBtn", false);
   } else if (on_ && refused) {
     /* Reads exactly like a dead proxy otherwise, and the fix is the password. */
-    text("statusTitle", "The proxy refused the login");
-    text("statusSub", "Check the username and password for this proxy.");
-    show("disconnectBtn", true);
+    textRise("statusTitle", "Login refused");
+    setSub("The proxy refused the login. Check the username and password.");
     show("newIpBtn", false);
   } else if (silent) {
-    text("statusTitle", "Connected, no answer yet");
-    text("statusSub", "Nothing came back through this proxy. Check the address and the login.");
-    show("disconnectBtn", true);
+    /* No answer yet: while the worker still asks it again (background.js,
+       pinRecheck), say so; "check the address" only once it stopped asking.
+       A new phone or home line can take a while to answer the first time. */
+    textRise("statusTitle", active.rechecking ? "Waiting for an answer" : "No answer yet");
+    setSub(
+      active.rechecking
+        ? "Nothing came back yet. Asking it again."
+        : "Nothing came back through this proxy. Check the address and the login.",
+    );
     show("newIpBtn", false);
   } else if (on_) {
-    text("statusTitle", failing ? "This exit stopped working" : "Connected");
-    textFresh(
-      "statusSub",
-      searching
-        ? "Finding a working exit"
-        : testing
-          ? "Testing the connection"
-          : failing
-            ? "Try New IP, another country, or Disconnect."
-            : `${active.exitIp || active.host} · ${active.mode === "vpn" ? "free exit" : "your proxy"}`,
-    );
-    show("disconnectBtn", true);
+    textRise("statusTitle", failing ? "Stopped working" : "Connected");
+    const ip = active.exitIp || active.host;
+    const kind = active.mode === "vpn" ? "free proxy" : "your proxy";
+    const said = [where, kind].filter(Boolean).join(" · ");
+    if (searching) setSub("finding a new exit", ip);
+    else if (testing) setSub("testing the connection", ip);
+    else if (failing) setSub("This exit stopped working. Try New IP or another one.");
+    else setSub(said, ip);
     show("newIpBtn", active.mode === "vpn");
   } else if (busyNow) {
-    text("statusTitle", "Connecting");
-    textFresh("statusSub", searching ? "The best free exit, tested first" : "Finding out which protocol it speaks");
-    show("disconnectBtn", true);
+    textRise("statusTitle", "Connecting");
+    setSub(searching ? "Your pages stay where they are until one passes." : "Finding out which protocol it speaks");
     show("newIpBtn", false);
   } else {
-    text("statusTitle", "Not connected");
-    textFresh("statusSub", "Sites see where you really are");
-    show("disconnectBtn", false);
+    textRise("statusTitle", "Not connected");
     show("newIpBtn", false);
   }
 
-  const vpnOn = on_ && active.mode === "vpn";
-  el("quickBtn")?.classList.toggle("is-connected", vpnOn && !failing && !searching);
-  el("quickBtn")?.classList.toggle("is-busy", searching);
-  text("quickMain", vpnOn ? "Disconnect" : searching ? "Connecting" : "Quick Connect");
-  text(
-    "quickSub",
-    searching
-      ? "Finding a working exit"
-      : vpnOn
-        ? failing
-          ? "This exit stopped working"
-          : `Connected · ${active.country ? ccName(active.country) : active.exitIp}`
-        : "The best free exit, tested first",
-  );
-
+  markQuick();
   markCountryStates();
+  markSavedStates();
+  followWaiting();
 
-  /* Re-analyze when the exit actually changed, not on every poll. The
-     status poll runs every 2.5s and the analysis makes network calls. */
-  if (rerunAnalysis || was !== active?.exitIp) runAnalysis();
+  /* Checked again when asked, when the exit changed, or when the connection
+     just became one to check (a proxy that answered late); not on every
+     status, as the checks make network calls. With nothing connected the run
+     only clears the last verdict. */
+  const due = rerunAnalysis || was !== active?.exitIp || (checkable && !wasCheckable);
+  wasCheckable = checkable;
+  if (due && (checkable || !on_)) runAnalysis();
+  // A connection with nothing to check (a refused login, no answer yet) has settled as it is.
+  else if (on_ && !checkable && !analyzing) el("analyze")?.setAttribute("data-state", "done");
 }
 
-/* ── the analyzer ───────────────────────────────────────────────────── */
+/* ── the analyzer: the checks of this connection ───────────────────────
+   One line under where you appear: the verdict with its mark and how many
+   checks ran; pressed, it opens to one line per check, the sentence behind a
+   check only where there is something to act on (since 2026-10-12; it was a
+   list of seven rows with a sentence each, always open, and read as a wall
+   of text). It opens by itself on a leak. Nothing runs while nothing is
+   connected. */
 
 const STATUS_WORD = { ok: "Clear", warn: "Check", bad: "Leaking", unknown: "Unknown", skip: "Idle" };
 
+/** Open or close the checks' list: it unfolds, and what is under it moves down with it. */
+function openChecks(open) {
+  const head = el("checksToggle");
+  if (!head || (head.getAttribute("aria-expanded") === "true") === open) return;
+  head.setAttribute("aria-expanded", String(open));
+  // Not while the whole section is hidden: nothing to see move.
+  if (el("analyze")?.hidden) show("checksBody", open);
+  else unfold(el("checksBody"), open);
+}
+
+/* A run asked for while one is going: it runs right after, on the connection
+   as it is then, so the newest state always has the last word (a run on a
+   proxy that had not answered yet once finished after it answered and left
+   "Not carrying traffic" on screen). */
+let analysisAgain = false;
+
 async function runAnalysis() {
   const list = el("analyzeList");
-  if (!list || analyzing) return;
+  if (!list) return;
+  if (analyzing) {
+    analysisAgain = true;
+    return;
+  }
+  if (!active) {
+    list.textContent = "";
+    setVerdict({ status: "skip", headline: "Not connected", detail: "" });
+    text("checksCount", "");
+    openChecks(false);
+    // Settled: with nothing connected there is nothing to check.
+    el("analyze")?.setAttribute("data-state", "done");
+    return;
+  }
   analyzing = true;
 
   el("analyze")?.setAttribute("data-state", "running");
-  setVerdict({ status: "unknown", headline: "Checking", detail: "Running the connection checks." });
+  setVerdict({ status: "unknown", headline: "Checking this connection", detail: "" });
+  text("checksCount", "");
 
   /* Rows are painted as they arrive rather than at the end. Two checks
      make network calls and one does not; making the six fast answers
@@ -364,14 +400,24 @@ async function runAnalysis() {
       seen.set(row.id, row);
       paint();
     });
-    lastRows = rows;
     setVerdict(verdict);
+    const ran = rows.filter((r) => r.status !== "skip").length;
+    text("checksCount", ran ? `${ran} checks` : "");
+    /* A leak, or a proxy carrying nothing, opens the list by itself. A time
+       zone or a language that does not match the exit stays one line: it is
+       so with almost every proxy abroad, and a list that opens every time is
+       one people stop reading. */
+    if (verdict.status === "bad") openChecks(true);
   } catch (e) {
     setVerdict({ status: "unknown", headline: "The check did not finish", detail: e?.message || String(e) });
   } finally {
     // Always released: a stuck flag would silently end every later check.
     el("analyze")?.setAttribute("data-state", "done");
     analyzing = false;
+  }
+  if (analysisAgain) {
+    analysisAgain = false;
+    runAnalysis();
   }
 }
 
@@ -380,12 +426,16 @@ async function runAnalysis() {
    between runs and make the panel feel unreliable. */
 const ORDER = ["exit", "transparency", "dns", "webrtc", "timezone", "locale", "latency"];
 
+/* The verdict's own sentence names the checks the list shows right under it
+   ("Exit address, Header leaks"), or says the headline again ("Nothing is
+   leaking"): it is the line's tooltip, not a line of its own. */
 function setVerdict(v) {
   const node = el("verdict");
   if (!node) return;
   node.dataset.status = v.status;
   text("verdictHead", v.headline);
-  text("verdictSub", v.detail || "");
+  const head = el("checksToggle");
+  if (head) head.title = v.detail || "";
 }
 
 function analyzeRow(row) {
@@ -394,23 +444,21 @@ function analyzeRow(row) {
   node.dataset.status = row.status;
   const state = STATUS_WORD[row.status] || "";
 
-  /* ⚠️ Label, detail, value and state are DIRECT children on purpose.
-     They were wrapped in an .arow-main span at first, and `grid-area`
-     only applies to direct grid children, so the wrapper swallowed both
-     and the label ran straight into the detail on one line.
+  /* ⚠️ Label, value and detail are DIRECT children on purpose: grid
+     placement only applies to direct grid children (a wrapper once
+     swallowed them and the label ran into the detail on one line).
 
-     The state word is rendered only when there is something to act on.
-     "CLEAR" repeated down a column of healthy rows is noise, and noise
-     is how a security panel teaches people to stop reading it. The dot
-     still carries the status for everyone, because it is labelled. */
+     No state word: the mark carries the status for everyone (it is
+     labelled), and "CLEAR" repeated down a column of healthy rows is the
+     noise that teaches people to stop reading a security panel. */
+  /* One line: its mark, its name, what it found. The sentence behind it is
+     its tooltip when all is clear, and its second line when it is not. */
+  node.title = row.detail || "";
   node.innerHTML =
     `<span class="arow-dot" role="img" aria-label="${escapeHtml(state)}"></span>` +
     `<span class="arow-label">${escapeHtml(row.label)}</span>` +
     `<span class="arow-value">${escapeHtml(row.headline || "")}</span>` +
-    `<span class="arow-detail" title="${escapeHtml(row.detail || "")}">${escapeHtml(row.detail || "")}</span>` +
-    (row.status === "ok" || row.status === "skip"
-      ? ""
-      : `<span class="arow-state">${escapeHtml(state)}</span>`);
+    `<span class="arow-detail">${escapeHtml(row.detail || "")}</span>`;
 
   /* A finding the user cannot act on is a complaint. When a check knows
      how to fix itself, the row carries the button. */
@@ -437,13 +485,37 @@ async function applyFix(id, btn) {
 
 /* ── surfaces ───────────────────────────────────────────────────────── */
 
-function setSurface(next) {
+/* The tabs are the computer app's Proxies parts (2026-10-12): words on a
+   hairline, the current one in ink with the H's crossbar under it, which
+   slides to the one you press, and the page under it comes in from that
+   tab's side. Until then they were a track with a sliding blue pill. The
+   order of the tabs decides the side. */
+const SURFACES = ["proxies", "vpn"];
+
+/** Put the crossbar under the current tab: at once, or sliding there. */
+function placeBar(slide) {
+  const bar = el("tabsBar");
+  const on = document.querySelector("#surfaces > .tab.is-on");
+  if (!bar || !on) return;
+  if (!slide) bar.dataset.still = "";
+  bar.style.transform = `translateX(${on.offsetLeft}px)`;
+  bar.style.width = `${on.offsetWidth}px`;
+  if (!slide) requestAnimationFrame(() => requestAnimationFrame(() => delete bar.dataset.still));
+}
+
+function setSurface(next, still = false) {
+  const from = SURFACES.indexOf(next) > SURFACES.indexOf(surface) ? "right" : "left";
+  const moved = next !== surface;
   surface = next;
-  document.querySelectorAll("[data-surface]").forEach((btn) => {
-    btn.classList.toggle("is-on", btn.dataset.surface === next);
+  document.querySelectorAll("#surfaces > [data-surface]").forEach((btn) => {
+    const on = btn.dataset.surface === next;
+    btn.classList.toggle("is-on", on);
+    btn.setAttribute("aria-selected", String(on));
   });
+  placeBar(moved && !still);
   show("surface-proxies", next === "proxies");
   show("surface-vpn", next === "vpn");
+  if (moved && !still) slideIn(el(`surface-${next}`), from);
   if (!settings.pinSurface) store.set("local", "hproxy_last_surface", next);
 }
 
@@ -486,10 +558,9 @@ function renderCountries() {
   const list = el("countryList");
   if (!list) return;
   const q = countryFilter.trim().toLowerCase();
-  text("footNote", countries.length ? `${countries.length} countries` : "");
   list.textContent = "";
   if (!countries.length) {
-    list.innerHTML = `<p class="hint">No locations available right now. Hit Refresh.</p>`;
+    list.innerHTML = `<p class="hint">No countries right now. Press Refresh.</p>`;
     return;
   }
   const matches = countries.filter(
@@ -499,14 +570,14 @@ function renderCountries() {
       c.country_code.toLowerCase().includes(q),
   );
   if (!matches.length) {
-    list.innerHTML = `<p class="hint">No country matches "${escapeHtml(countryFilter)}".</p>`;
+    list.innerHTML = `<p class="hint">No country matches "${escapeHtml(countryFilter.trim())}".</p>`;
     return;
   }
   const favSet = new Set(favCountries.map((c) => c.toUpperCase()));
-  matches.forEach((c, i) => {
+  for (const c of matches) {
     const cc = c.country_code.toUpperCase();
-    list.appendChild(countryRow(cc, c.count, favSet.has(cc), i));
-  });
+    list.appendChild(countryRow(cc, c.count, favSet.has(cc)));
+  }
   markCountryStates();
 }
 
@@ -517,66 +588,146 @@ function ipCount(count) {
   return `${n.toLocaleString("en-US")} IP${n === 1 ? "" : "s"}`;
 }
 
-function countryRow(cc, count, faved, index) {
-  const row = document.createElement("div");
-  row.className = "crow";
-  row.dataset.cc = cc;
-  row.style.setProperty("--i", index % 16);
+/* ── the rows you connect through ──────────────────────────────────────
+   A saved proxy, a country and the fastest free proxy are the same kind of
+   row: what it is on the left, how it stands on the right. Pressing one
+   connects it; pressing the one in use disconnects. At rest a row is only
+   its name and its second line; pointed at, it says Connect (popup.css). */
+
+const SPIN = `<span class="spin"></span>`;
+
+/* The last press that did not connect: its row says why in place of its
+   second line, until the next press. `at` is "quick", a country code, or a
+   saved proxy's "host:port". */
+let failedAt = null;
+
+/** A press that went nowhere: remember why, for its row to say. */
+function noteFailure(at, r) {
+  failedAt = r && r.ok === false ? { at, error: r.error || "Could not connect. Try again." } : null;
+}
+
+/** How a row stands: connecting, in use, in use but broken, failed, or none. */
+function markRow(row, { turning, inUse, broken, failed, brokenWord = "Stopped" }) {
+  row.classList.toggle("is-connecting", turning);
+  row.classList.toggle("is-active", inUse && !turning && !broken);
+  row.classList.toggle("is-warn", inUse && !turning && broken);
+  row.classList.toggle("is-failed", failed && !turning && !inUse);
+  /* Written only when it changes: every status refresh passes here, and a
+     row whose words are rewritten under a still mouse loses its hover (its
+     Connect and its × vanish) until the mouse moves again. */
+  const go = row.querySelector(".row-go");
+  const goNow = turning ? SPIN : inUse && broken ? brokenWord : inUse ? "Connected" : "Connect";
+  if (go && go.innerHTML !== goNow) go.innerHTML = goNow;
+  const meta = row.querySelector(".row-meta");
+  if (meta && row.dataset.meta !== undefined) {
+    const metaNow = failed && !turning && !inUse ? failedAt.error : row.dataset.meta;
+    if (meta.textContent !== metaNow) meta.textContent = metaNow;
+  }
+}
+
+/** Enter or Space on a focused row presses it, as a click does. */
+function pressable(row, press) {
   row.setAttribute("role", "button");
   row.tabIndex = 0;
-  row.innerHTML =
-    `${flagImg(cc)}` +
-    `<span class="crow-main">` +
-    `<span class="crow-name">${escapeHtml(ccName(cc))}</span>` +
-    `<span class="crow-meta">${ipCount(count)}</span>` +
-    `</span>` +
-    `<span class="crow-star star${faved ? " on" : ""}" title="Favorite">${faved ? "★" : "☆"}</span>` +
-    `<span class="crow-go" aria-hidden="true">→</span>`;
-  row.addEventListener("click", () => connectCountry(cc));
+  row.addEventListener("click", press);
   row.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      connectCountry(cc);
-    }
+    if (e.target !== row || (e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault();
+    press();
   });
-  row.querySelector(".crow-star").addEventListener("click", (e) => {
+}
+
+/* A press elsewhere is waiting for its answer: until it comes, the row in
+   use stays in use (pages stay where they are until the new one passes) and
+   is not the one connecting. */
+const pressedElsewhere = (self) =>
+  (self !== "quick" && connectingQuick) || (!!connectingCC && connectingCC !== self) || (!!connectingKey && connectingKey !== self);
+
+/* A country: its flag, its name, how many free IPs it has, and a star to
+   keep it on top. */
+function countryRow(cc, count, faved) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.dataset.cc = cc;
+  row.dataset.meta = ipCount(count);
+  row.innerHTML =
+    `<span class="row-lead">${flagImg(cc)}</span>` +
+    `<span class="row-main">` +
+    `<span class="row-name">${escapeHtml(ccName(cc))}</span>` +
+    `<span class="row-meta">${escapeHtml(row.dataset.meta)}</span>` +
+    `</span>` +
+    `<button type="button" class="row-star${faved ? " on" : ""}" title="${faved ? "Remove from favorites" : "Keep it on top"}" aria-pressed="${faved}">${STAR_SVG}</button>` +
+    `<span class="row-go">Connect</span>`;
+  pressable(row, () => connectCountry(cc));
+  row.querySelector(".row-star").addEventListener("click", (e) => {
     e.stopPropagation();
     toggleFavCountry(cc);
   });
   return row;
 }
 
+/* The country you picked says so. A Quick Connect that lands in a country
+   marks its own row, not that country's: one row in use, never two. */
+function pickedCountry() {
+  return active && active.mode === "vpn" && lastTarget?.kind === "vpn" && lastTarget.country
+    ? String(lastTarget.country).toUpperCase()
+    : null;
+}
+
 function markCountryStates() {
-  const activeCC =
-    active && active.mode === "vpn" && active.country ? String(active.country).toUpperCase() : null;
-  document.querySelectorAll(".crow[data-cc]").forEach((row) => {
+  const picked = pickedCountry();
+  document.querySelectorAll(".row[data-cc]").forEach((row) => {
     const cc = row.dataset.cc;
-    const isActive = activeCC && cc === activeCC && !active.failing;
-    const isConnecting = connectingCC === cc || (active && active.failing && cc === activeCC);
-    row.classList.toggle("crow--active", !!isActive);
-    row.classList.toggle("crow--connecting", !!isConnecting);
-    const go = row.querySelector(".crow-go");
-    if (go) go.innerHTML = isConnecting ? `<span class="spin"></span>` : isActive ? "✓" : "→";
+    const inUse = picked === cc;
+    markRow(row, {
+      turning: connectingCC === cc || (inUse && searchingNow && !pressedElsewhere(cc)),
+      inUse,
+      broken: inUse && !!active.failing,
+      failed: failedAt?.at === cc,
+    });
   });
+}
+
+/* The fastest free proxy: any country, the first exit that passes. Its
+   second line says where it landed. */
+function markQuick() {
+  const row = el("quickBtn");
+  if (!row) return;
+  const inUse = !!active && active.mode === "vpn" && lastTarget?.kind === "vpn" && !lastTarget.country;
+  const turning = connectingQuick || (inUse && searchingNow && !pressedElsewhere("quick"));
+  const broken = inUse && !!active.failing;
+  const failed = failedAt?.at === "quick";
+  markRow(row, { turning, inUse, broken, failed });
+  const where = inUse && active.country ? ccName(String(active.country).toUpperCase()) : "";
+  text(
+    "quickSub",
+    turning
+      ? "Testing free proxies"
+      : inUse
+        ? broken
+          ? "This exit stopped working"
+          : where
+            ? `Now in ${where}`
+            : `Now on ${active.exitIp}`
+        : failed
+          ? failedAt.error
+          : "Any country, tested before you use it",
+  );
 }
 
 async function connectCountry(cc) {
   cc = cc.toUpperCase();
-  if (active?.mode === "vpn" && String(active.country).toUpperCase() === cc && !active.failing) {
-    await doDisconnect();
-    return;
-  }
+  if (pickedCountry() === cc && !active.failing) return doDisconnect();
+  show("byoMsg", false);
   connectingCC = cc;
+  failedAt = null;
+  markQuick();
   markCountryStates();
   const r = await send({ type: "vpnConnect", country: cc, protocol: "" });
   connectingCC = null;
+  noteFailure(cc, r);
   if (r?.ok) await rememberTarget({ kind: "vpn", country: cc });
   await refreshStatus({ rerunAnalysis: true });
-  if (r && r.ok === false) {
-    const go = document.querySelector(`.crow[data-cc="${cc}"] .crow-go`);
-    if (go) go.textContent = "✕";
-    text("quickSub", r.error || "Could not connect. Try again.");
-  }
 }
 
 async function toggleFavCountry(cc) {
@@ -597,29 +748,28 @@ function renderFavs() {
   list.textContent = "";
   if (!favCountries.length) return;
   const counts = new Map(countries.map((c) => [c.country_code.toUpperCase(), c.count]));
-  favCountries.forEach((cc, i) => {
-    cc = cc.toUpperCase();
-    list.appendChild(countryRow(cc, counts.get(cc) ?? 0, true, i));
-  });
+  for (const fav of favCountries) {
+    const cc = fav.toUpperCase();
+    list.appendChild(countryRow(cc, counts.get(cc) ?? 0, true));
+  }
   markCountryStates();
 }
 
 /* ── connect actions ────────────────────────────────────────────────── */
 
 async function quickConnect() {
-  if (active?.mode === "vpn") {
-    await doDisconnect();
-    return;
-  }
-  el("quickBtn")?.classList.add("is-busy");
-  text("quickMain", "Connecting");
-  text("quickSub", "Finding a working exit");
+  const inUse = !!active && active.mode === "vpn" && lastTarget?.kind === "vpn" && !lastTarget.country;
+  if (inUse && !active.failing) return doDisconnect();
+  show("byoMsg", false);
+  connectingQuick = true;
+  failedAt = null;
+  markQuick();
+  markCountryStates();
   const r = await send({ type: "vpnConnect", country: "", protocol: "" });
-  el("quickBtn")?.classList.remove("is-busy");
+  connectingQuick = false;
+  noteFailure("quick", r);
   if (r?.ok) await rememberTarget({ kind: "vpn", country: "" });
   await refreshStatus({ rerunAnalysis: true });
-  // After the refresh, or the refresh would overwrite the reason.
-  if (r && r.ok === false) text("quickSub", r.error || "Could not connect. Try again.");
 }
 
 async function newIp() {
@@ -635,8 +785,8 @@ async function newIp() {
   }
   await refreshStatus({ rerunAnalysis: true });
   // "Nothing else passed, you are still on X" is an answer, not a failure.
-  if (r?.active?.note) text("statusSub", r.active.note);
-  else if (r && r.ok === false) text("statusSub", r.error || "Could not change the exit.");
+  if (r?.active?.note) setSub(r.active.note);
+  else if (r && r.ok === false) setSub(r.error || "Could not change the exit.");
 }
 
 async function doDisconnect() {
@@ -699,17 +849,37 @@ function schemesToTry(hint, hasAuth) {
   return [...new Set([hint, ...order].filter(Boolean))].slice(0, 3);
 }
 
-function byoMsg(message, kind) {
+
+/* The note under the field speaks of the proxy pasted last ("host:port"):
+   it goes once another one is in use, once nothing is (after it said
+   Connected), or when a row is pressed. Never while the paste is still
+   connecting (`pasting`): the session then is still the one before. */
+let byoNoteKey = null;
+let pasting = false;
+
+function byoMsg(message, kind, key = null) {
   const node = el("byoMsg");
   if (!node) return;
+  byoNoteKey = key;
   node.hidden = false;
   node.className = `msg ${kind || "info"}`;
   node.textContent = message;
 }
 
 async function byoConnectNow() {
+  if (pasting) return;
+  pasting = true;
+  try {
+    await pasteConnect();
+  } finally {
+    pasting = false;
+  }
+}
+
+async function pasteConnect() {
   const parsed = parseByo(el("byoInput")?.value);
   if (parsed.error) return byoMsg(`${parsed.error}`, "bad");
+  failedAt = null;
 
   const btn = el("byoConnect");
   const done = () => {
@@ -725,7 +895,16 @@ async function byoConnectNow() {
   byoMsg("Testing it in this browser. Your pages stay where they are until it answers.", "info");
 
   const hasAuth = !!parsed.username;
-  const tried = schemesToTry(parsed.scheme, hasAuth);
+  /* A SOCKS5 line of ours with a login: the same gateway's HTTP port instead
+     (gateways.js), said in the message below. */
+  const twin = hasAuth ? httpTwinPort(parsed.host, parsed.port) : null;
+  if (twin) {
+    parsed.port = twin;
+    parsed.scheme = "http";
+  }
+  const key = `${parsed.host}:${parsed.port}`;
+  const twinNote = twin ? ` Chrome cannot log in over SOCKS5, so it goes through the same line's HTTP port ${twin}.` : "";
+  const tried = twin ? ["http"] : schemesToTry(parsed.scheme, hasAuth);
   const test = await send({
     type: "pinFind",
     proxy: { host: parsed.host, port: parsed.port, username: parsed.username, password: parsed.password },
@@ -758,9 +937,10 @@ async function byoConnectNow() {
     : "";
   byoMsg(
     found
-      ? `It answered over ${proxy.scheme.toUpperCase()}. Connecting.${socksNote}`
-      : `Nothing answered the test. Connecting over ${proxy.scheme.toUpperCase()} anyway, in case it only refused our test address.${socksNote}`,
+      ? `It answered over ${proxy.scheme.toUpperCase()}. Connecting.${twinNote}${socksNote}`
+      : `No answer yet. Connecting over ${proxy.scheme.toUpperCase()} and asking it again.${twinNote}${socksNote}`,
     "info",
+    key,
   );
   const r = await send({
     type: "pinConnect",
@@ -768,31 +948,66 @@ async function byoConnectNow() {
     label: `${proxy.host}:${proxy.port}`,
     exitIp: found?.exitIp || proxy.host,
     country: found?.country || "",
+    // Kept in the saved list by the worker if it answers later (background.js, keepSaved).
+    keep: true,
   });
   done();
 
   if (!r?.ok) {
-    byoMsg(`Could not connect: ${r?.error || "no route to that proxy"}`, "bad");
+    byoMsg(`Could not connect: ${r?.error || "no route to that proxy"}`, "bad", key);
     return;
   }
 
   /* A proxy that works is one you want kept: saving is a consequence of
-     connecting, never a second decision. One that refused the login or
-     answered nothing is not saved: it would only sit in the list looking
-     usable. */
+     connecting, never a second decision. One that answered at once is saved
+     here; one that answers a little later is saved by the worker the moment
+     it does (and this message follows, see refreshStatus). One that refused
+     the login, or never answers, is not saved: it would only sit in the list
+     looking usable. */
   const how = proxy.scheme.toUpperCase();
   const refused = !!r.active?.loginRefused;
   const answered = r.active?.verified !== false;
+  const country = r.active?.country || found?.country || "";
   if (!refused && answered) {
-    await saveByo({ ...proxy, country: found?.country || "" });
+    await saveByo({ ...proxy, country });
     await rememberTarget({ kind: "pin", key: `${proxy.host}:${proxy.port}` });
   }
-  const where = found?.country ? ` · ${ccName(found.country)}` : "";
-  if (refused) byoMsg("The proxy refused the login. Check the username and password. Not saved.", "bad");
-  else if (!answered) byoMsg(`Connected over ${how}, but nothing came back through it.${socksNote} Check the address and the login. Not saved.`, "bad");
-  else byoMsg(`Connected over ${how}${where}. Saved.`, "ok");
+  const where = country ? ` · ${ccName(country)}` : "";
+  waitingFor = null;
+  if (refused) byoMsg("The proxy refused the login. Check the username and password. Not saved.", "bad", key);
+  else if (!answered) {
+    waitingFor = { key: `${proxy.host}:${proxy.port}`, how };
+    byoMsg(`Connected over ${how}. Nothing came back yet, so it is asked again in a moment and saved once it answers.${socksNote}`, "info", key);
+  } else {
+    byoMsg(`Connected over ${how}${where}. Saved.${twinNote}`, "ok", key);
+    // It lives in the list now: the field is free for the next one.
+    const input = el("byoInput");
+    if (input) input.value = "";
+  }
   await refreshStatus({ rerunAnalysis: true });
-  renderByoList();
+}
+
+/* A proxy connected without an answer: the message under the field follows
+   it, so "asked again" turns into "Connected · Netherlands. Saved." the
+   moment the worker hears back, or into the plain truth once it stops
+   asking. */
+let waitingFor = null;
+function followWaiting() {
+  if (!waitingFor) return;
+  const key = waitingFor.key;
+  const same = !!active && active.mode === "pin" && `${active.host}:${active.port}` === key;
+  if (!same) {
+    waitingFor = null;
+    return;
+  }
+  if (active.verified === true) {
+    const where = active.country ? ` · ${ccName(active.country)}` : "";
+    byoMsg(`Connected over ${waitingFor.how}${where}. It answered, and it is saved.`, "ok", key);
+    waitingFor = null;
+  } else if (!active.rechecking) {
+    byoMsg(`Connected over ${waitingFor.how}, but nothing came back through it. Check the address and the login. Not saved.`, "bad", key);
+    waitingFor = null;
+  }
 }
 
 /** Store a proxy in the saved list, newest first, no duplicates. */
@@ -805,66 +1020,132 @@ async function saveByo(proxy) {
 
 /** Connect to a saved proxy, and make it the place the switch goes back to. */
 async function connectSaved(x) {
+  const key = `${x.host}:${x.port}`;
+  show("byoMsg", false);
+  connectingKey = key;
+  failedAt = null;
+  markSavedStates();
+  markQuick();
+  markCountryStates();
   const r = await send({
     type: "pinConnect",
     proxy: { scheme: x.scheme, host: x.host, port: x.port, username: x.username, password: x.password },
-    label: `${x.host}:${x.port}`,
+    label: key,
     exitIp: x.host,
     country: x.country || "",
   });
-  if (r?.ok) await rememberTarget({ kind: "pin", key: `${x.host}:${x.port}` });
+  connectingKey = null;
+  noteFailure(key, r);
+  if (r?.ok) await rememberTarget({ kind: "pin", key });
   await refreshStatus({ rerunAnalysis: true });
-  renderByoList();
 }
+
+/** Whether the session running now is this saved proxy. */
+function isSavedOn(x) {
+  return !!active && String(active.host) === String(x.host) && String(active.port) === String(x.port);
+}
+
+/* The saved rows follow the session the way the country rows do
+   (markCountryStates): refreshStatus calls this on every change, so a
+   disconnect from the switch or the worker never leaves a row saying
+   Connected. A proxy in use that refused the login or has not answered says
+   so on its row as the header does. The note "Connected over …" goes with
+   the session it described. */
+function markSavedStates() {
+  document.querySelectorAll("#byoList .row[data-key]").forEach((row) => {
+    const key = row.dataset.key;
+    const inUse = !!active && `${active.host}:${active.port}` === key;
+    const silent = inUse && active.mode === "pin" && active.verified === false;
+    markRow(row, {
+      turning: connectingKey === key || (inUse && silent && !!active.rechecking && !pressedElsewhere(key)),
+      inUse,
+      broken: inUse && (!!active.loginRefused || silent),
+      brokenWord: inUse && active.loginRefused ? "Login refused" : "No answer",
+      failed: failedAt?.at === key,
+    });
+  });
+  const note = el("byoMsg");
+  if (note && !note.hidden && !pasting) {
+    const onKey = active ? `${active.host}:${active.port}` : null;
+    const elsewhere = !!byoNoteKey && !!onKey && onKey !== byoNoteKey;
+    if (elsewhere || (!active && !busyNow && note.classList.contains("ok"))) note.hidden = true;
+  }
+}
+
+/* A saved proxy: its country's flag (a globe until it is known), its address,
+   a key when it carries a login, and what it speaks. Pointed at, it offers
+   Connect and the × that removes it. */
+function savedRow(x) {
+  const key = `${x.host}:${x.port}`;
+  const cc = /^[A-Za-z]{2}$/.test(x.country || "") ? String(x.country).toUpperCase() : "";
+  const row = document.createElement("div");
+  row.className = "row";
+  row.dataset.key = key;
+  row.dataset.meta = [cc ? ccName(cc) : "", (x.scheme || "http").toUpperCase()].filter(Boolean).join(" · ");
+  row.innerHTML =
+    `<span class="row-lead">${cc ? flagImg(cc) : GLOBE_SVG}</span>` +
+    `<span class="row-main">` +
+    `<span class="row-name">${escapeHtml(x.host)}<span class="port">:${escapeHtml(String(x.port))}</span>` +
+    (x.username ? `<span class="mark" title="With a login">${KEY_SVG}</span>` : "") +
+    `</span>` +
+    `<span class="row-meta">${escapeHtml(row.dataset.meta)}</span>` +
+    `</span>` +
+    `<span class="row-go">Connect</span>` +
+    `<button type="button" class="row-del" title="Remove" aria-label="Remove ${escapeHtml(key)}">${CROSS_SVG}</button>`;
+  // Decided when pressed, not when drawn: the session may have changed since.
+  pressable(row, () => (isSavedOn(x) ? doDisconnect() : connectSaved(x)));
+  row.querySelector(".row-del").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const current = await store.get("local", "hproxy_byo", []);
+    await store.set(
+      "local",
+      "hproxy_byo",
+      current.filter((y) => !(y.host === x.host && String(y.port) === String(x.port))),
+    );
+    // The storage listener draws the list again.
+  });
+  return row;
+}
+
+/* Every proxy that worked, newest first. The tab counts them; past six a
+   search box finds one. */
+let savedList = [];
 
 async function renderByoList() {
-  const list = el("byoList");
-  if (!list) return;
-  const saved = await store.get("local", "hproxy_byo", []);
-  list.textContent = "";
-  if (!saved.length) {
-    list.innerHTML = `<p class="hint">Save a proxy to reuse it with one click.</p>`;
-    return;
+  savedList = await store.get("local", "hproxy_byo", []);
+  const count = el("savedCount");
+  if (count) {
+    count.textContent = savedList.length ? String(savedList.length) : "";
+    count.hidden = !savedList.length;
+    placeBar(false);
   }
-  for (const x of saved) {
-    const row = document.createElement("div");
-    row.className = "row";
-    const isOn = active && String(active.host) === String(x.host) && String(active.port) === String(x.port);
-    row.classList.toggle("is-active", !!isOn);
-    row.innerHTML =
-      `<div class="row-main"><div class="row-addr">${escapeHtml(x.host)}<span class="port">:${escapeHtml(String(x.port))}</span></div>` +
-      `<div class="row-meta"><span class="tag">${escapeHtml((x.scheme || "http").toUpperCase())}</span>${x.username ? `<span>auth</span>` : ""}</div></div>` +
-      `<div class="row-acts"><button class="btn btn--ghost btn--sm js-del">Delete</button>` +
-      `<button class="btn btn--primary btn--sm js-connect">${isOn ? "Disconnect" : "Connect"}</button></div>`;
-    row.querySelector(".js-connect").addEventListener("click", async () => {
-      if (isOn) return doDisconnect();
-      await connectSaved(x);
-    });
-    row.querySelector(".js-del").addEventListener("click", async () => {
-      const current = await store.get("local", "hproxy_byo", []);
-      await store.set(
-        "local",
-        "hproxy_byo",
-        current.filter((y) => !(y.host === x.host && String(y.port) === String(x.port))),
-      );
-      renderByoList();
-    });
-    list.appendChild(row);
-  }
+  show("savedSearchBox", savedList.length > 6);
+  drawSaved();
 }
 
-/* One search box for both surfaces. Version C puts a single command bar
-   above everything, so the same query has to reach the saved proxies and
-   not only the country list. Applied here rather than in the C skin,
-   because "the search finds things" is behaviour, not decoration, and a
-   skin that owns behaviour stops being a skin. */
-function filterSaved() {
-  const q = countryFilter.trim().toLowerCase();
-  el("byoList")
-    ?.querySelectorAll(".row")
-    .forEach((row) => {
-      row.hidden = !!q && !row.textContent.toLowerCase().includes(q);
-    });
+/* Drawn from the list each time, matches only: a row hidden in place would
+   leave its hairline above the next one. Searched by address, country or
+   protocol. */
+function drawSaved() {
+  const list = el("byoList");
+  if (!list) return;
+  list.textContent = "";
+  if (!savedList.length) {
+    list.innerHTML =
+      `<p class="hint">Paste a proxy above. Each one that works is kept here.</p>` +
+      `<p class="hint">No proxy yet? <button type="button" class="link-btn" id="tryFree">Try a free one</button></p>`;
+    list.querySelector("#tryFree").addEventListener("click", () => setSurface("vpn"));
+    return;
+  }
+  const q = savedFilter.trim().toLowerCase();
+  const words = (x) => `${x.host}:${x.port} ${x.country ? ccName(x.country) : ""} ${x.scheme || "http"}`.toLowerCase();
+  const matches = savedList.filter((x) => !q || words(x).includes(q));
+  if (!matches.length) {
+    list.innerHTML = `<p class="hint">None of your proxies matches "${escapeHtml(savedFilter.trim())}".</p>`;
+    return;
+  }
+  for (const x of matches) list.appendChild(savedRow(x));
+  markSavedStates();
 }
 
 /* ── Proxies: your HProxy plans ─────────────────────────────────────── */
@@ -985,18 +1266,19 @@ function renderPlans(plans) {
     renderPlansMessage("No active plans on this account.", false);
     return;
   }
+  /* A plan is a row like a saved proxy: the H, the product, what is left. */
   for (const plan of plans) {
     const row = document.createElement("div");
     row.className = "row";
-    const gb =
-      plan.dataGbRemaining != null
-        ? `<span class="tag">${Math.round(Number(plan.dataGbRemaining) * 100) / 100} GB left</span>`
-        : "";
+    const left = plan.dataGbRemaining != null ? `${Math.round(Number(plan.dataGbRemaining) * 100) / 100} GB left` : "";
     row.innerHTML =
-      `<div class="row-main"><div class="row-addr">${escapeHtml(prettyProduct(plan.product))}</div>` +
-      `<div class="row-meta">${gb}</div></div>` +
-      `<div class="row-acts"><button class="btn btn--primary btn--sm js-connect">Connect</button></div>`;
-    row.querySelector(".js-connect").addEventListener("click", (e) => connectPlan(plan, row, e.currentTarget));
+      `<span class="row-lead">${H_SVG}</span>` +
+      `<span class="row-main">` +
+      `<span class="row-name">${escapeHtml(prettyProduct(plan.product))}</span>` +
+      `<span class="row-meta">${escapeHtml(left)}</span>` +
+      `</span>` +
+      `<span class="row-go">Connect</span>`;
+    pressable(row, () => connectPlan(plan, row));
     list.appendChild(row);
   }
   const out = document.createElement("button");
@@ -1006,15 +1288,14 @@ function renderPlans(plans) {
   list.appendChild(out);
 }
 
-async function connectPlan(plan, row, btn) {
-  let out = row.querySelector(".check-out");
-  if (!out) {
-    out = document.createElement("div");
-    out.className = "check-out row-meta";
-    row.querySelector(".row-main").appendChild(out);
-  }
-  out.textContent = "Generating a proxy";
-  btn.disabled = true;
+async function connectPlan(plan, row) {
+  if (row.classList.contains("is-connecting")) return;
+  const out = row.querySelector(".row-meta");
+  const go = row.querySelector(".row-go");
+  row.classList.remove("is-failed");
+  row.classList.add("is-connecting");
+  go.innerHTML = SPIN;
+  out.textContent = "Making a proxy line";
   try {
     const key = await store.get("local", API_KEY_STORE, "");
     const res = await fetch(`${API}/api/v1/plans/${encodeURIComponent(plan.id)}/generate`, {
@@ -1031,55 +1312,48 @@ async function connectPlan(plan, row, btn) {
     const proxy = { scheme: "http", host: p.host, port: p.port, username: p.username, password: p.password };
     const r = await send({ type: "pinConnect", proxy, label: prettyProduct(plan.product), exitIp: proxy.host });
     if (!r?.ok) throw new Error(r?.error || "connect failed");
-    out.textContent = `Connected · ${proxy.host}:${proxy.port}`;
-    out.style.color = "var(--ok)";
+    out.textContent = `${proxy.host}:${proxy.port}`;
     await refreshStatus({ rerunAnalysis: true });
   } catch (e) {
-    out.textContent = `Failed: ${e.message || e}`;
-    out.style.color = "var(--danger)";
+    row.classList.add("is-failed");
+    out.textContent = `Could not connect: ${e.message || e}`;
   } finally {
-    btn.disabled = false;
+    row.classList.remove("is-connecting");
+    go.textContent = "Connect";
   }
 }
 
 /* ── settings ───────────────────────────────────────────────────────── */
 
+/* Which tab opens first, as an earlier version let people set it (kept in
+   sync storage): My proxies unless they chose otherwise. */
 async function loadSettings() {
   settings = {
     firstSurface: await store.get("sync", "hproxy_first_surface", "proxies"),
     pinSurface: await store.get("sync", "hproxy_pin_surface", false),
   };
-  document.querySelectorAll("[data-first-surface]").forEach((btn) => {
-    btn.classList.toggle("is-on", btn.dataset.firstSurface === settings.firstSurface);
-  });
-}
-
-async function setFirstSurface(value) {
-  settings.firstSurface = value;
-  await store.set("sync", "hproxy_first_surface", value);
-  await loadSettings();
 }
 
 /* ── wiring ─────────────────────────────────────────────────────────── */
 
-document.querySelectorAll("[data-surface]").forEach((btn) =>
+document.querySelectorAll("#surfaces > [data-surface]").forEach((btn) =>
   btn.addEventListener("click", () => setSurface(btn.dataset.surface)),
-);
-document.querySelectorAll("[data-first-surface]").forEach((btn) =>
-  btn.addEventListener("click", () => setFirstSurface(btn.dataset.firstSurface)),
 );
 
 on("connSwitch", "click", toggleConnection);
-on("hbutton", "click", toggleConnection);
-on("disconnectBtn", "click", doDisconnect);
 on("newIpBtn", "click", newIp);
-on("quickBtn", "click", quickConnect);
+const quickRow = el("quickBtn");
+if (quickRow) pressable(quickRow, quickConnect);
 on("reloadCountries", "click", loadCountries);
+on("checksToggle", "click", () => openChecks(el("checksToggle").getAttribute("aria-expanded") !== "true"));
 on("reanalyze", "click", () => runAnalysis());
 on("countrySearch", "input", () => {
   countryFilter = el("countrySearch").value;
   renderCountries();
-  filterSaved();
+});
+on("savedSearch", "input", () => {
+  savedFilter = el("savedSearch").value;
+  drawSaved();
 });
 on("byoConnect", "click", byoConnectNow);
 on("byoInput", "keydown", (e) => {
@@ -1102,12 +1376,16 @@ async function flagHandLoadedCopy() {
 
 async function init() {
   void flagHandLoadedCopy();
+  text("footNote", `Version ${chrome.runtime.getManifest().version}`);
   await loadSettings();
   favCountries = await store.get("sync", "hproxy_fav_countries", []);
   lastTarget = await store.get("local", LAST_KEY, null);
 
   const last = await store.get("local", "hproxy_last_surface", null);
-  setSurface(settings.pinSurface || !last ? settings.firstSurface : last);
+  // Where the popup opens is not a move: the page and the crossbar are just there.
+  setSurface(settings.pinSurface || !last ? settings.firstSurface : last, true);
+  // Inter arriving changes the tabs' widths: the crossbar follows, without a slide.
+  document.fonts?.ready.then(() => placeBar(false)).catch(() => {});
 
   renderFavs();
   renderByoList();
@@ -1118,6 +1396,8 @@ async function init() {
   // In parallel with the connection checks, not after them.
   loadCountries();
   await refreshStatus({ rerunAnalysis: true });
+  // Opened on a proxy that has not answered yet: the worker asks it now (background.js, recheckOnLook).
+  void send({ type: "look" });
 
   /* Refreshed when something changes, never on a timer. The worker says when
      a session starts, ends, fails over or has its login refused; Chrome says
@@ -1126,6 +1406,11 @@ async function init() {
     if (msg?.type === "statusChanged") refreshStatus();
   });
   chrome.proxy?.settings?.onChange?.addListener(() => refreshStatus());
+  // The worker saves a proxy that answered late (background.js, keepSaved): the list follows.
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (area === "local" && changes.hproxy_byo) renderByoList();
+    if (area === "local" && changes.hproxy_last_target) lastTarget = changes.hproxy_last_target.newValue || null;
+  });
 }
 
 init();
