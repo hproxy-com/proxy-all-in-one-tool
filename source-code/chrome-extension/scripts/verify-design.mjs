@@ -3,7 +3,7 @@
 
      node scripts/verify-design.mjs
 
-   Five checks, each one earned by a bug that actually happened rather
+   Six checks, each one earned by a bug that actually happened rather
    than by a style preference:
 
      1. tokens.css is current            the palette drifted for two days
@@ -18,6 +18,11 @@
      5. font sizes are on the ruler      36 distinct sizes against 13
                                          documented roles, measured on the
                                          website 2026-07-31
+     6. nothing see-through              the house rule since 2026-09-26
+                                         (the website's DESIGN.md "Nothing
+                                         see-through, ever"); the popup
+                                         still had fifteen such fills on
+                                         2026-10-10
 
    White is exempt from 2 and 3. #fff is not a brand decision, it is the
    absence of one, and the popup is light-only so it cannot theme.
@@ -26,6 +31,15 @@
    in a comment. Exceptions then live in the diff and get counted in the
    report, instead of accumulating silently. A comment cannot fail a
    build, so the comment is the declaration and this file is the check.
+
+   Check 6 is the website's scripts/check-see-through.mjs for this popup: a
+   fill is blue, ink or white at full strength. A background made with a
+   colour below full strength (rgba(..., 0.07)) or mixed into another
+   (color-mix(), a pale tint that reads exactly like see-through blue) fails,
+   and so does partial opacity at rest, which turns a blue button into a pale
+   one. Lines and words may fade (borders, shadows, text colours), and so may
+   anything for the length of an animation (@keyframes). A line that truly
+   must is declared like the ruler: `see-through: allowed: <why>`.
    ============================================================ */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -95,6 +109,10 @@ function stripComments(src) {
 }
 
 const WHITE_HEX = /^#(fff|ffffff)$/i;
+/* A colour below full strength: rgba(1, 2, 3, 0.4), rgba(var(--x-rgb), .07),
+   rgb(1 2 3 / 0.4), an 8-digit hex. One level of nested parentheses, for var().
+   Alpha 0 is no fill at all (a gradient's clear stop), so it passes. */
+const TRANSLUCENT = /rgba?\((?:[^()]|\([^()]*\))*[,/]\s*0?\.\d+\s*\)|#[0-9a-f]{8}\b/i;
 
 for (const name of [...SHEETS, ...SCRIPTS]) {
   const path = join(EXT, name);
@@ -111,6 +129,10 @@ for (const name of [...SHEETS, ...SCRIPTS]) {
      declaration before the check can see it, and every exemption then fails. */
   const raw = source.split(/\r?\n/);
   const lines = stripComments(source).split(/\r?\n/);
+  /* Check 6 lets motion through: how deep the braces are, and the depth an
+     @keyframes block opened at while inside one. */
+  let depth = 0;
+  let keyframesDepth = null;
 
   lines.forEach((line, i) => {
     const n = i + 1;
@@ -138,6 +160,26 @@ for (const name of [...SHEETS, ...SCRIPTS]) {
       const token = m[1];
       if (DEFINED.has(token)) continue;
       fail(name, n, `var(${token}) is defined nowhere — it renders as nothing, silently`);
+    }
+
+    /* ── 6. nothing see-through (stylesheets only) ── */
+    if (isSheet) {
+      const allowed = /see-through: allowed/.test(raw[i] ?? "");
+      if (/^\s*@keyframes\b/.test(line)) keyframesDepth = depth;
+      const fill = line.match(/background(?:-color|-image)?\s*:\s*([^;]+)/);
+      if (fill && !allowed && (TRANSLUCENT.test(fill[1]) || /color-mix\(/.test(fill[1]))) {
+        fail(name, n, "see-through fill — a fill is blue, ink or white at full strength: a solid token, or a hairline instead");
+      } else if (/color-mix\(/.test(line) && !allowed) {
+        fail(name, n, "color-mix() — a mixed colour is a pale tint, which reads as see-through: name a solid token");
+      }
+      const faded = line.match(/(?:^|[\s;{])opacity\s*:\s*(0?\.\d+)/);
+      if (faded && keyframesDepth === null && !allowed) {
+        fail(name, n, `opacity ${faded[1]} at rest makes whatever it covers see-through — use a solid colour (words: --ink-soft)`);
+      }
+      for (const ch of line) {
+        if (ch === "{") depth++;
+        else if (ch === "}" && --depth === keyframesDepth) keyframesDepth = null;
+      }
     }
 
     /* ── 5. type ruler (stylesheets only) ── */
