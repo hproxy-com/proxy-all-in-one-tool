@@ -276,6 +276,134 @@ fn what_the_assistant_opened_is_visible_and_stoppable_from_a_terminal() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// What the person saved in the HProxy app reaches the assistant by name: the
+/// list of places carries no password or login, a connection by name carries
+/// the login to the upstream and never into an answer, a saved group starts
+/// on the member asked for, and a terminal sees which place a connection uses.
+#[test]
+fn a_saved_place_is_listed_and_connected_by_name_and_its_password_stays_out() {
+    let dir = std::env::temp_dir().join(format!("hproxy-mcp-places-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (places, state) = (dir.join("places"), dir.join("state"));
+    std::fs::create_dir_all(&state).unwrap();
+    let origin = spawn_origin();
+    let (upstream, seen) = spawn_upstream();
+    let good = format!("127.0.0.1:{upstream}:{USER}:{PASS}");
+    // A group whose first member answers nothing, its second the good upstream.
+    let dead = format!("127.0.0.1:1:{USER}:{PASS}");
+
+    let mut lib = hproxy_places::Library::default();
+    let ids = lib.add_proxies(std::slice::from_ref(&good), 1);
+    lib.rename_proxy(&ids[0], "Shop");
+    lib.save_group(
+        hproxy_places::GroupInput {
+            id: None,
+            name: "Pair".into(),
+            lines: vec![dead, good],
+            rule: hproxy_places::Rule::OnFailure,
+            n: None,
+        },
+        2,
+    )
+    .unwrap();
+    hproxy_places::store::save(&places, &lib).unwrap();
+
+    let env = [
+        ("HPROXY_PLACES_DIR", places.to_str().unwrap()),
+        ("HPROXY_STATE_DIR", state.to_str().unwrap()),
+    ];
+    let mut s = Session::start(&env);
+
+    let (body, is_error) = s.tool(1, "proxy_places", json!({}));
+    assert!(!is_error, "{body}");
+    let text = body.to_string();
+    assert!(text.contains("\"Shop\"") && text.contains("\"Pair\""), "{text}");
+    assert!(
+        !text.contains(PASS) && !text.contains(USER),
+        "a password or login reached the model: {text}"
+    );
+
+    let (body, is_error) = s.tool(2, "proxy_connect", json!({"place": "shop", "verify": false}));
+    assert!(!is_error, "{body}");
+    assert_eq!(body["place"], "Shop", "{body}");
+    assert!(
+        !body.to_string().contains(PASS),
+        "the password reached the model: {body}"
+    );
+    let local = body["http_proxy"]
+        .as_str()
+        .unwrap()
+        .trim_start_matches("http://")
+        .to_string();
+    assert!(fetch(&local, origin, "/by-name").contains("ORIGIN-OK /by-name"));
+    assert!(
+        seen.lock().unwrap().iter().any(|h| h == EXPECTED_AUTH),
+        "the upstream never got the login"
+    );
+
+    // A terminal sees which saved place the assistant's connection uses.
+    let out = Command::new(env!("CARGO_BIN_EXE_hproxy"))
+        .args(["status", "--json"])
+        .envs(env)
+        .output()
+        .unwrap();
+    let row: Value = serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).expect("one JSON line");
+    assert_eq!(row["place"], "Shop", "{row}");
+
+    let (body, is_error) = s.tool(
+        3,
+        "proxy_connect",
+        json!({"place": "Pair", "member": 2, "verify": false}),
+    );
+    assert!(!is_error, "{body}");
+    assert_eq!(
+        (body["member"].as_u64(), body["members"].as_u64()),
+        (Some(2), Some(2)),
+        "{body}"
+    );
+    let local = body["http_proxy"]
+        .as_str()
+        .unwrap()
+        .trim_start_matches("http://")
+        .to_string();
+    assert!(
+        fetch(&local, origin, "/second").contains("ORIGIN-OK /second"),
+        "member 2 is the one that works"
+    );
+
+    let (body, is_error) = s.tool(4, "proxy_connect", json!({"place": "Nowhere", "verify": false}));
+    assert!(is_error, "{body}");
+    assert!(body.to_string().contains("nothing saved is called"), "{body}");
+
+    // And the command line lists the same places, for a script.
+    let out = Command::new(env!("CARGO_BIN_EXE_hproxy"))
+        .args(["places", "--json"])
+        .envs(env)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let listed = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(listed.lines().count(), 2, "one line each: {listed}");
+    assert!(!listed.contains(PASS) && !listed.contains(USER), "{listed}");
+
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// One plain GET through the local proxy, with no credentials at all.
+fn fetch(local: &str, origin: u16, path: &str) -> String {
+    let mut c = TcpStream::connect(local).unwrap();
+    c.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    write!(
+        c,
+        "GET http://127.0.0.1:{origin}{path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut resp = String::new();
+    let _ = c.read_to_string(&mut resp);
+    resp
+}
+
 fn hproxy(state: &std::path::Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_hproxy"))
         .args(args)
