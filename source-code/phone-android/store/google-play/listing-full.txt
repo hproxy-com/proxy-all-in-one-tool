@@ -1,0 +1,28 @@
+HProxy connects your phone through a proxy, and checks proxy lists. Free, with no account and no ads.
+
+Connect
+One switch connects the whole phone. HProxy uses Android's VPN service (VpnService) to send your apps' traffic through the proxy you pick, so there's nothing to set in your Wi-Fi settings. Android asks you once before the VPN starts, and the key icon shows while it runs. The map flies to the city you appear in, with the address sites see, the round trip and the traffic.
+
+Where you appear
+Use one of your own proxies, a group, or a free proxy in the country you want. A group keeps you on one proxy until it stops answering, then moves to the next. Paste your proxies, load them from a file, or scan the code on your HProxy dashboard. Proxies shared from another app open in HProxy, ready to add.
+
+Which apps
+Choose the apps that go through the proxy, or let every app go through. Block an app on Wi-Fi or on mobile data, get a notice when a blocked app tries, and keep new apps blocked until you allow them.
+
+If the proxy drops
+By default your apps wait until the proxy answers again, so your own address never shows. You can switch that to use your own internet instead.
+
+Check
+Paste a list in any format, one proxy per line. HProxy checks every line from your phone: whether it works, which protocols it speaks (HTTP, HTTPS, SOCKS4, SOCKS5), how fast it answers, the address it comes out of and where that is. The cards flip over as the answers come in and sort themselves, fastest first. Copy the working ones in the format you need.
+
+What sites see
+While you're connected, see what a site learns about you: your IP, your DNS, WebRTC and your time zone, with what to fix if something gives you away. A speed test of about 3 MB is one tap away.
+
+On your phone
+Connect on startup, Android's Always-on VPN and a quick settings tile. Updating from the earlier version? Your saved proxies come along by themselves.
+
+Free proxies
+The free proxies are public proxies run by strangers. Each one is proven to relay before you get it and is swapped when it stops answering. They're fine for seeing a site from another country and wrong for anything with a login.
+
+Privacy
+There's no tracking in the app. HProxy keeps no record of what your apps send: the VPN only carries it to the proxy you picked. Your saved proxies and their passwords stay on your phone and are left out of Android backups. The privacy policy lists every server the app talks to and what our servers keep.
