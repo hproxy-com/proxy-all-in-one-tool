@@ -148,6 +148,10 @@ jobs:
           codesign -dv "$app" 2>&1 | tee signature.txt
           grep -q "Signature=adhoc" signature.txt
           codesign --verify --deep --strict "$app"
+          # It starts and names its version: given a command, the app runs as the command-line tool
+          # and opens no window (src-tauri/src/main.rs).
+          "$bin" --version | tee said.txt
+          grep -qx "hproxy $version" said.txt
           tar -czf ../hproxy-macos-universal.app.tar.gz -C "$(dirname "$app")" "$(basename "$app")"
           cp "$dmg" ../hproxy-macos-universal.dmg
 
@@ -161,6 +165,9 @@ jobs:
           if [ "$said" != "$version" ]; then echo "::error::the .deb says $said, not $version"; exit 1; fi
           file "$image" | tee kind.txt
           grep -q "ELF 64-bit" kind.txt
+          # It starts and names its version, without a window (src-tauri/src/main.rs).
+          target/release/hproxy-checker --version | tee said.txt
+          grep -qx "hproxy $version" said.txt
           cp "$image" ../hproxy-linux-x86_64.AppImage
           cp "$deb" ../hproxy-linux-x86_64.deb
 
@@ -202,7 +209,7 @@ jobs:
           cat > notes.md <<EOF
           HProxy ${version} for macOS and Linux: check proxies, see where each one comes out, and connect your whole computer through the one you pick.
 
-          The downloads are on hproxy.com, where the app also updates itself from (the update files there are these, signed by the maintainers): https://hproxy.com/downloads. These are the same files as built here, unsigned for the updater.
+          Download it from hproxy.com, where it also updates itself from: [macOS](https://hproxy.com/downloads/desktop/hproxy-macos-universal.dmg), [Linux AppImage](https://hproxy.com/downloads/desktop/hproxy-linux-x86_64.AppImage), [Linux .deb](https://hproxy.com/downloads/desktop/hproxy-linux-x86_64.deb). Those are the files below, and the update files there carry the maintainers' signature. More: https://hproxy.com/proxy-checker
 
           Built by this repository's workflow from \`source-code/\` at this commit, with no secret involved. Check a file against \`SHA256SUMS\`, or its build record with \`gh attestation verify <file> --repo hproxy-com/proxy-all-in-one-tool\`.
 
