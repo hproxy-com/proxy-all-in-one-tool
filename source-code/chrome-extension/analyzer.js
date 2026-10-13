@@ -200,13 +200,14 @@ async function checkExit(ctx) {
   const where = [g.country_name || g.country, g.isp || g.asn_org].filter(Boolean).join(" · ");
   const dialled = String(ctx.active.host || "");
   const elsewhere = (isIPv4(dialled) || isIPv6(dialled)) && dialled !== f.exit;
+  const located = where || "Located, but the network was not named.";
+  const note = elsewhere ? "Leaves by another address than the one dialled, as a rotating gateway does." : "";
   return {
     ...base,
     status: "ok",
     headline: f.exit,
-    detail: [where || "Located, but the network was not named.", elsewhere ? "Leaves by another address than the one dialled, as a rotating gateway does." : ""]
-      .filter(Boolean)
-      .join(" "),
+    // Two sentences when both are there: "France · <network>. Leaves by ..." (they ran together until 1.0.2).
+    detail: note ? `${located.replace(/\.?$/, ".")} ${note}` : located,
     meta: { country: g.country || "", asn: g.asn ? `AS${g.asn}` : "", datacenter: !!g.is_datacenter },
   };
 }
