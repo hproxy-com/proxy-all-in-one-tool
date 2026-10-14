@@ -29,5 +29,5 @@ curl -fsSL https://hproxy.com/install.sh | sh
 
 It picks the file for your Mac and lands in `~/.local/bin` after a check against its SHA-256,
 without sudo. The files are on
-[the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.2.8). The
+[the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.3.8). The
 commands are in [source-code/README.md](../source-code/README.md#command-line).

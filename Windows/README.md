@@ -31,5 +31,5 @@ irm https://hproxy.com/install.ps1 | iex
 It picks the file for your processor, checks it against its SHA-256 and puts it in
 `%LOCALAPPDATA%\hproxy`, which it adds to your PATH, without administrator rights. Nothing has to be
 installed beside it: the file carries its own runtime. The files are on
-[the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.2.8). The
+[the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.3.8). The
 commands are in [source-code/README.md](../source-code/README.md#command-line).

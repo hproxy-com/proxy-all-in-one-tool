@@ -49,7 +49,7 @@ irm https://hproxy.com/install.ps1 | iex
 The installer picks the file for your system and processor. It lands in `~/.local/bin` (Windows:
 `%LOCALAPPDATA%\hproxy`, added to your PATH) after a check against its SHA-256, with no
 administrator rights, and nothing has to be installed beside it. Every file, its sum and its build
-record are on [the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.2.8),
+record are on [the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.3.8),
 built by this repository's own workflow from [source-code](source-code/). Then:
 
 ```sh
