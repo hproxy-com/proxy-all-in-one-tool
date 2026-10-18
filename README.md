@@ -14,6 +14,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-0158FF?style=flat-square&labelColor=0B1220" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/Price-free-0158FF?style=flat-square&labelColor=0B1220" alt="Price: free">
   <img src="https://img.shields.io/badge/Account-none_needed-0158FF?style=flat-square&labelColor=0B1220" alt="No account needed">
+  <img src="https://img.shields.io/badge/Ads-none-0158FF?style=flat-square&labelColor=0B1220" alt="No ads">
+  <img src="https://img.shields.io/badge/Features-all_unlocked-0158FF?style=flat-square&labelColor=0B1220" alt="Every feature unlocked">
   <a href="source-code/README.md#for-ai-assistants-mcp"><img src="https://img.shields.io/badge/AI_assistants-MCP_server-0158FF?style=flat-square&labelColor=0B1220" alt="MCP server for AI assistants"></a>
 </p>
 
