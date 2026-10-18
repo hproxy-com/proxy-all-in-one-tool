@@ -32,6 +32,13 @@ export const Icon = {
       <path d="M8 8.5h8M8 12h5" />
     </svg>
   ),
+  /** Paste: a clipboard, its clip on top, two lines of what was copied. */
+  clipboard: ({ className }: IconProps) => (
+    <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
+      <path d="M9 4.5H6.5A1.5 1.5 0 0 0 5 6v13.5A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H15" />
+      <path d="M9 3h6v3H9ZM8.5 11h7M8.5 15h5" />
+    </svg>
+  ),
   /** Send: an arrow to a wall, the message leaving. */
   send: ({ className }: IconProps) => (
     <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">

@@ -197,11 +197,14 @@ export function ConnectionProvider({
     );
   const leaving = new Set(removing?.ids ?? []);
   const listed = leaving.size ? proxies.filter((x) => !leaving.has(x.id)) : proxies;
-  /* What the switch connects to: the pick (unless it is waiting to be removed), else the first
-     of yours, so the card always names what a press does. With none of yours, nothing: never a
-     free proxy by itself (2026-10-17: "the H button shouldn't be for free proxies, ignore the
-     free proxies"). */
-  const pickStays = picked && !(picked.kind === "proxy" && leaving.has(picked.id)) ? picked : null;
+  /* What the switch connects to: the place connected last (a connect makes its place the pick;
+     adding proxies leaves the pick alone), unless that was a free proxy or it is gone; else the
+     place used last, else the one added last. The card names it, so a press never surprises.
+     With none of yours, nothing: never a free proxy by itself (2026-10-17: "the H button
+     shouldn't be for free proxies"; 2026-10-18: "when someone wants to connect it connects to
+     his recently connected proxy, it should have nothing to do with free proxies"). The tray's
+     Connect follows the same rule (hproxy-places, `switch_place`). */
+  const pickStays = picked && picked.kind !== "free" && knows(picked, listed, groups) ? picked : null;
   const chosen: Place | null = pickStays ?? firstPlace(listed, groups);
 
   /* The list opens on My proxies, whatever was picked last: the app is for
@@ -402,8 +405,6 @@ export function ConnectionProvider({
     setTimeout(() => setCopied(false), 1200);
   };
 
-  /** Make a place the pick without connecting: the switch connects to it. */
-  const pickPlace = (place: Place) => placesStore.pick(place).catch((e: unknown) => setPlacesProblem(String(e)));
   const connectTo = (place: Place) => void start(place);
 
   /* The switch: on → disconnect; off → the place chosen (the pick, else the first of yours);
@@ -428,10 +429,10 @@ export function ConnectionProvider({
     if (id) void start({ kind: "proxy", id });
   };
 
-  /** Save lines as proxies and pick the first; says so when some did not fit.
-      `details` (a last day, a note) go on every one of them; `name`, numbered, on
-      the ones new to the list (a proxy you had keeps its name). The ids saved now,
-      in the order given. */
+  /** Save lines as proxies; says so when some did not fit. `details` (a last day, a
+      note) go on every one of them; `name`, numbered, on the ones new to the list (a
+      proxy you had keeps its name). The pick is left alone: the switch stays on the
+      place connected last (2026-10-18). The ids saved now, in the order given. */
   const saveProxies = async (lines: string[], details?: Details, name?: string): Promise<string[]> => {
     // A remove that waits is done first, so the room counted is the room there is.
     await removes.current?.flush();
@@ -443,7 +444,6 @@ export function ConnectionProvider({
       if (details && ids.length) await placesStore.describe(ids, details);
       const fresh = ids.filter((id) => !had.has(id));
       if (name?.trim() && fresh.length) await placesStore.nameEach(fresh, numberedNames(name, fresh.length));
-      if (ids[0]) await pickPlace({ kind: "proxy", id: ids[0] });
       return ids;
     } catch (e) {
       setPlacesProblem(String(e));
@@ -472,7 +472,7 @@ export function ConnectionProvider({
     }
   };
 
-  /** The paste field's Add: save the line and pick it (and connect it, when the switch asked). */
+  /** The paste field's Add: save the line (and connect it, when the switch asked). */
   const addLine = async () => {
     const t = line.trim();
     if (!lineCheck.parsed || !t) return;
@@ -493,13 +493,12 @@ export function ConnectionProvider({
     void start({ kind: "proxy", id });
   };
 
-  /** Lines kept as one new group, named after `base` and the day, and picked. */
+  /** Lines kept as one new group, named after `base` and the day. */
   const makeGroup = async (base: string, lines: string[], details?: Details): Promise<boolean> => {
     try {
       const id = await placesStore.saveGroup({ name: freeGroupName(groups, `${base} ${today()}`), lines, rule: DEFAULT_ROTATION });
       if (details) await placesStore.describeGroup(id, details);
       setPlacesProblem(null);
-      await pickPlace({ kind: "group", id });
       // Made after the switch asked for proxies: the group connects, as a list of proxies would.
       if (thenConnect.current) {
         thenConnect.current = false;
@@ -512,14 +511,12 @@ export function ConnectionProvider({
     }
   };
 
-  /** A group saved from its editor, and picked; with `connect`, connected
-      through at once. Rejects with the app's words, which the editor shows. */
+  /** A group saved from its editor; with `connect`, connected through at once.
+      Rejects with the app's words, which the editor shows. */
   const saveGroup = async (input: GroupInput, connect = false) => {
     const id = await placesStore.saveGroup(input);
     setPlacesProblem(null);
-    const place: Place = { kind: "group", id };
-    if (connect) void start(place);
-    else await pickPlace(place);
+    if (connect) void start({ kind: "group", id });
   };
 
 
@@ -551,9 +548,10 @@ export function ConnectionProvider({
       setView("connect");
       void start({ kind: "proxy", id });
     });
+  // The new group on Groups, one click from connecting (the switch stays on the place connected last).
   const saveAsGroup = (lines: string[]) =>
     void makeGroup("Working", lines).then((made) => {
-      if (made) setView("connect");
+      if (made) open("groups");
     });
   const keepLines = async (lines: string[]) => void (await saveProxies(lines));
   const [checkSeed, setCheckSeed] = useState<{ text: string; at: number } | null>(null);

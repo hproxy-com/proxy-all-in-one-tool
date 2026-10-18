@@ -104,10 +104,14 @@ describe("changePlaces", () => {
 });
 
 describe("firstPlace", () => {
-  it("is the fastest working proxy, else the one used or added last, never a free one", () => {
-    expect(firstPlace([checked("slow", 300), checked("fast", 40)], [])).toEqual({ kind: "proxy", id: "fast" });
-    expect(firstPlace([checked("dead", null)], [])).toEqual({ kind: "proxy", id: "dead" });
-    expect(firstPlace([], [group("G", 1, 5)])).toEqual({ kind: "group", id: "G" });
+  it("is the place used last, whatever its speed", () => {
+    const proxies = [checked("fast", 40), { ...checked("used", 900), uses: 2, lastUsedAt: 50 }];
+    expect(firstPlace(proxies, [])).toEqual({ kind: "proxy", id: "used" });
+    expect(firstPlace(proxies, [group("G", 1, 60)])).toEqual({ kind: "group", id: "G" });
+  });
+
+  it("with none used, the one added last (the top of its batch); with none of yours, nothing", () => {
+    expect(firstPlace([proxy("new", 9, 0, 0), proxy("new2", 9, 0, 0), proxy("old", 1, 0, 0)], [])).toEqual({ kind: "proxy", id: "new" });
     expect(firstPlace([], [])).toBeNull();
   });
 });

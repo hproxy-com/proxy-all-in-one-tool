@@ -255,12 +255,19 @@ export function changePlaces(
   return { places: places.slice(0, Math.max(0, max)), working: working.length };
 }
 
-/** What the switch connects to when nothing is picked: the first place Change would offer, else
-    the place used or added last (its connect says what went wrong). Never a free proxy: the
-    switch connects yours, and with none of yours it asks you to add them (2026-10-15/16). */
+/** What the switch connects to when the pick is no help (none, a free one, or one that is gone):
+    the place used last, else the proxy or group added last (2026-10-18: "when someone wants to
+    connect it connects to his recently connected proxy, it should have nothing to do with free
+    proxies"). Never a free proxy: with none of yours it asks you to add them. The app's library
+    says the same for the tray (proxy-engine/hproxy-places, `switch_place`). */
 export function firstPlace(proxies: ProxyView[], groups: GroupView[]): Place | null {
-  const offered = changePlaces(proxies, groups, null, 1).places[0] ?? quickPlaces(proxies, groups, 1)[0];
-  return offered ? placeOfChange(offered) : null;
+  type At = { at: number; place: Place };
+  // The newest; on a tie the first in the list, which is the newer (lists keep the newest on top).
+  const newest = (items: At[]) => items.reduce<At | null>((best, x) => (best && best.at >= x.at ? best : x), null)?.place ?? null;
+  const proxy = (p: ProxyView, at: number): At => ({ at, place: { kind: "proxy", id: p.id } });
+  const group = (g: GroupView, at: number): At => ({ at, place: { kind: "group", id: g.id } });
+  const used = [...proxies.filter((p) => p.uses > 0).map((p) => proxy(p, p.lastUsedAt)), ...groups.filter((g) => g.uses > 0).map((g) => group(g, g.lastUsedAt))];
+  return newest(used) ?? newest([...proxies.map((p) => proxy(p, p.addedAt)), ...groups.map((g) => group(g, g.addedAt))]);
 }
 
 /** Of proxies just saved (their ids in the order given), the one to connect: the first that

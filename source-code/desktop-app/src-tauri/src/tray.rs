@@ -142,9 +142,10 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// The menu's middle item: disconnect, or connect to the place the person
-/// picked last. Nothing picked yet, or the connect failed: the window opens,
-/// where the place can be picked and the reason is on its card.
+/// The menu's middle item: disconnect, or connect to the place the window's
+/// switch would connect (yours used last, never a free proxy). None of yours
+/// yet, or the connect failed: the window opens, where proxies are added and
+/// the reason is on the card.
 #[cfg(desktop)]
 fn toggle_connection(app: &AppHandle) {
     let connected = app

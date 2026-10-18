@@ -155,6 +155,21 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            // The window, made here from its config (tauri.conf.json, "create": false) rather than
+            // by Tauri before this runs, so the page may read what you copied: My proxies' Paste
+            // reads the clipboard (AddProxies.tsx), and without this the system webview asks
+            // first or refuses (WebView2, WebKitGTK; a Mac allows it already).
+            let main = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|w| w.label == "main")
+                .cloned()
+                .ok_or("tauri.conf.json has no main window")?;
+            tauri::WebviewWindowBuilder::from_config(app.handle(), &main)?
+                .enable_clipboard_access()
+                .build()?;
             app.manage(AppState::new());
             // The places before anything that connects: the tray and a
             // connection read them (places.rs).

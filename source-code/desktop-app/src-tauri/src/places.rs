@@ -189,6 +189,11 @@ impl PlacesState {
         self.lock().picked.clone()
     }
 
+    /// What the switch connects to: yours used last, never a free proxy (`Library::switch_place`).
+    pub fn switch_place(&self) -> Option<Place> {
+        self.lock().switch_place()
+    }
+
     /// The library as a screen sees it (the reminders read the days from it).
     pub fn view(&self) -> LibraryView {
         self.lock().view()

@@ -1,4 +1,4 @@
-HProxy connects your phone through a proxy, and checks proxy lists. Free, with no account and no ads.
+HProxy connects your phone through a proxy and checks proxy lists. Free, with no ads and no account, and every feature unlocked from the first start.
 
 Connect
 One switch connects the whole phone. HProxy uses Android's VPN service (VpnService) to send your apps' traffic through the proxy you pick, so there's nothing to set in your Wi-Fi settings. Android asks you once before the VPN starts, and the key icon shows while it runs. The map flies to the city you appear in, with the address sites see, the round trip and the traffic.

@@ -463,14 +463,15 @@ pub async fn connect_start(
 }
 
 /// Connect from outside the window (the tray, the phone's quick tile): the
-/// place picked last, with the system proxy set (on a phone, the VPN) and the
-/// probe the window asked for last. Nothing picked yet: an error that says so,
-/// and the tray opens the window to pick one.
+/// place the window's switch would connect, your own used last and never a
+/// free proxy (hproxy-places, `switch_place`), with the system proxy set (on a
+/// phone, the VPN) and the probe the window asked for last. None of yours: an
+/// error that says so, and the tray opens the window to add them.
 pub async fn connect_picked(app: &AppHandle) -> Result<ConnectStatus, String> {
     let place = app
         .state::<PlacesState>()
-        .picked()
-        .ok_or("pick a place in HProxy first")?;
+        .switch_place()
+        .ok_or("add your proxies in HProxy first")?;
     start_place(app, place, None, true, None, None).await
 }
 

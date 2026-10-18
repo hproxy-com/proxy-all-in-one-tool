@@ -71,7 +71,7 @@ import {
   type ParsedLine,
 } from "../../lib/tauri";
 import { useBack } from "../../lib/back";
-import { ADD_FIRST } from "../../lib/connectionView";
+import { AddProxies, TypeOne } from "./AddProxies";
 import { UNDO_MS, type PendingRemove } from "../../lib/undoRemove";
 import { pasteOneHere } from "../../lib/proxyExamples";
 import { useReadable } from "./lineReading";
@@ -277,6 +277,9 @@ function ProxiesPane(p: DestinationsProps) {
   // The saved proxy whose name, expiry and note are open, by id.
   const [describing, setDescribing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  // "Type one" open, the paste field in its card; and why the last way in found nothing.
+  const [typing, setTyping] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
   const [typed, setTyped] = useState("");
   const [sort, setSortState] = useState<SavedSort>(loadSort);
   const setSort = (s: SavedSort) => {
@@ -290,36 +293,49 @@ function ProxiesPane(p: DestinationsProps) {
     setPasted(lines);
     return true;
   };
+  /** Type one, open, with `line` in its field when one came (one proxy pasted, dropped or read). */
+  const typeOne = (line?: string) => {
+    if (line !== undefined) p.setLine(line);
+    setProblem(null);
+    setTyping(true);
+    setTimeout(() => p.lineRef.current?.focus(), 30);
+  };
+  const closeType = () => {
+    setTyping(false);
+    p.setLine("");
+  };
   // Pasted or dropped anywhere on the page.
   useEffect(() => {
     if (!p.incoming) return;
     setAdding(true);
-    if (!takePaste(p.incoming.text)) {
-      p.setLine(p.incoming.text.trim());
-      p.lineRef.current?.focus();
-    }
+    if (!takePaste(p.incoming.text)) typeOne(p.incoming.text.trim());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.incoming]);
 
+  // Paste: what was copied. A list opens the review, one proxy goes into Type one; a clipboard the
+  // window may not read leaves Type one open, where Ctrl+V works.
   const pasteList = () =>
     void navigator.clipboard
       .readText()
       .then((t) => {
-        if (!takePaste(t)) p.lineRef.current?.focus();
+        if (!t.trim()) return setProblem("Nothing is copied yet: copy your proxies, then press Paste.");
+        setProblem(null);
+        if (!takePaste(t)) typeOne(t.trim());
       })
-      .catch(() => p.lineRef.current?.focus());
-  // A file of proxies: a list opens the review, one proxy goes into the field.
+      .catch(() => typeOne());
+  // A file of proxies: a list opens the review, one proxy goes into Type one.
   const uploadList = () =>
     void importProxyFile()
       .then((t) => {
-        if (!t?.trim() || takePaste(t)) return;
-        p.setLine(t.trim());
-        p.lineRef.current?.focus();
+        if (!t?.trim()) return;
+        setProblem(null);
+        if (!takePaste(t)) typeOne(t.trim());
       })
       .catch(() => {});
   const openAdd = () => {
     setAdding(true);
-    setTimeout(() => p.lineRef.current?.focus(), 30);
+    setTyping(false);
+    setProblem(null);
   };
 
   if (pasted) {
@@ -368,49 +384,39 @@ function ProxiesPane(p: DestinationsProps) {
 
       <DeadLine p={p} />
 
-      {(adding || empty) && (
-        <div className="ux-addbox">
-          {empty &&
-            (p.asked ? (
-              // Sent here by the switch: why, popping in again on each press.
-              <div key={p.asked} className="rise-in flex flex-col gap-0.5 px-1 pb-1" role="status">
-                <p className="text-[15px] font-bold text-ink">{ADD_FIRST}</p>
-                <p className="text-[13px] font-medium text-ink-mute">Paste one, or a whole list. As soon as they&rsquo;re in, you&rsquo;re connected.</p>
-              </div>
-            ) : (
-              <p className="px-1 pb-1 text-[15px] font-bold text-ink">Add your proxies</p>
-            ))}
-          <LineField
-            p={p}
-            inputRef={p.lineRef}
-            solid={empty}
-            placeholder={pasteOneHere(isMobile())}
-            onMany={takePaste}
-            onEscape={() => !empty && setAdding(false)}
-            after={
-              <>
-                <Button variant="text" onClick={pasteList} title="Every line of the list in your clipboard becomes its own saved proxy">
-                  Paste a list
-                </Button>
-                <Button variant="text" onClick={uploadList} title="A .txt or .csv file with your proxies, in any format">
-                  Upload a file
-                </Button>
-                {!empty && (
-                  <Button variant="text" onClick={() => setAdding(false)} title="Close (Escape)">
-                    Close
+      {/* Adding: the big place to start (AddProxies.tsx), or Type one's card with the field. */}
+      {(adding || empty) &&
+        (typing ? (
+          <TypeOne
+            field={
+              <LineField
+                p={p}
+                inputRef={p.lineRef}
+                solid
+                placeholder={pasteOneHere(isMobile())}
+                onMany={takePaste}
+                onEscape={closeType}
+                after={
+                  <Button variant="text" onClick={closeType} title="Back (Escape)">
+                    Cancel
                   </Button>
-                )}
-              </>
+                }
+              />
             }
           />
-        </div>
-      )}
+        ) : (
+          <AddProxies
+            asked={empty ? p.asked : 0}
+            compact={!empty}
+            problem={problem}
+            onPaste={pasteList}
+            onUpload={uploadList}
+            onType={() => typeOne()}
+            onClose={empty ? undefined : () => setAdding(false)}
+          />
+        ))}
 
-      {empty ? (
-        <button type="button" className="ux-link self-start px-1" onClick={() => p.setTab("free")}>
-          Or use a free one <Icon.arrowRight className="h-3.5 w-3.5" />
-        </button>
-      ) : !some ? null : shown.length === 0 ? (
+      {!some ? null : shown.length === 0 ? (
         <p className="px-1 text-[13.5px] font-medium text-ink-mute">None of your proxies matches &ldquo;{typed.trim()}&rdquo;.</p>
       ) : (
         <div className="ux-places" role="list" aria-label="Your proxies">

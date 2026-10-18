@@ -947,6 +947,56 @@ impl Library {
         Ok(())
     }
 
+    /// What the switch connects to, the app's big button and the tray's Connect alike
+    /// (2026-10-18: "when someone wants to connect it connects to his recently connected proxy,
+    /// it should have nothing to do with free proxies"): the pick, when it is one of yours and
+    /// still here (a connect makes its place the pick); else the place used last; else the proxy
+    /// or group added last. Never a free proxy: with none of yours, nothing, and the app asks
+    /// for proxies first. desktop-app/src/lib/places.ts (`firstPlace`) says the same for the window.
+    pub fn switch_place(&self) -> Option<Place> {
+        match &self.picked {
+            Some(Place::Proxy { id }) if self.proxy(id).is_some() => return self.picked.clone(),
+            Some(Place::Group { id }) if self.group(id).is_some() => return self.picked.clone(),
+            _ => {}
+        }
+        // The newest by `at`; on a tie the first in the list, which is the newer (lists keep
+        // the newest on top).
+        let newest = |places: Vec<(u64, Place)>| {
+            places
+                .into_iter()
+                .fold(None::<(u64, Place)>, |best, (at, place)| match best {
+                    Some((b, _)) if b >= at => best,
+                    _ => Some((at, place)),
+                })
+                .map(|(_, place)| place)
+        };
+        let used: Vec<(u64, Place)> = self
+            .proxies
+            .iter()
+            .filter(|p| p.uses > 0)
+            .map(|p| (p.last_used_at, Place::Proxy { id: p.id.clone() }))
+            .chain(
+                self.groups
+                    .iter()
+                    .filter(|g| g.uses > 0)
+                    .map(|g| (g.last_used_at, Place::Group { id: g.id.clone() })),
+            )
+            .collect();
+        newest(used).or_else(|| {
+            let added: Vec<(u64, Place)> = self
+                .proxies
+                .iter()
+                .map(|p| (p.added_at, Place::Proxy { id: p.id.clone() }))
+                .chain(
+                    self.groups
+                        .iter()
+                        .map(|g| (g.added_at, Place::Group { id: g.id.clone() })),
+                )
+                .collect();
+            newest(added)
+        })
+    }
+
     /// Move the window's old storage in, once. Its proxies keep their names,
     /// counts and last checks, in its order; its groups their ids and rules;
     /// its pick becomes the library's. A line it kept that the engine cannot
@@ -1231,6 +1281,57 @@ mod tests {
         assert_eq!(ids.len(), 2, "two readable, distinct lines");
         let order: Vec<&str> = lib.proxies.iter().map(|p| p.line.as_str()).collect();
         assert_eq!(order, [B, A]);
+    }
+
+    #[test]
+    fn the_switch_connects_the_place_used_last_never_a_free_one() {
+        let mut lib = Library::default();
+        assert_eq!(lib.switch_place(), None, "nothing of yours: nothing");
+        lib.add_proxies(&lines(&[A]), 1);
+        lib.add_proxies(&lines(&[B, "198.51.100.3:8080"]), 2);
+        let (a, b) = (proxy_id(A), proxy_id(B));
+        let proxy = |id: &str| Some(Place::Proxy { id: id.to_string() });
+        assert_eq!(
+            lib.switch_place(),
+            proxy(&b),
+            "none used yet: the first of the batch added last"
+        );
+        lib.proxy_used(&a, 5);
+        assert_eq!(lib.switch_place(), proxy(&a), "the one used last");
+        let free = Place::Free {
+            country: String::new(),
+            socks5: false,
+            exit: None,
+            exit_country: None,
+        };
+        lib.pick(Some(free)).unwrap();
+        assert_eq!(lib.switch_place(), proxy(&a), "a free pick is passed over");
+        let g = lib
+            .save_group(
+                GroupInput {
+                    id: None,
+                    name: "G".into(),
+                    lines: lines(&[B]),
+                    rule: Rule::OnFailure,
+                    n: None,
+                },
+                6,
+            )
+            .unwrap();
+        lib.group_used(&g, 7);
+        assert_eq!(
+            lib.switch_place(),
+            Some(Place::Group { id: g.clone() }),
+            "a group used later wins"
+        );
+        lib.pick(proxy(&b)).unwrap();
+        assert_eq!(lib.switch_place(), proxy(&b), "the pick, one of yours, comes first");
+        lib.forget_proxy(&b);
+        assert_eq!(
+            lib.switch_place(),
+            Some(Place::Group { id: g }),
+            "a pick that is gone is passed over"
+        );
     }
 
     #[test]
