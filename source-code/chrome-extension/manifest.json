@@ -10,7 +10,8 @@
     "storage",
     "webRequest",
     "webRequestAuthProvider",
-    "privacy"
+    "privacy",
+    "alarms"
   ],
   "host_permissions": [
     "<all_urls>"

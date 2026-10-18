@@ -5,6 +5,7 @@ import android.content.Context
 import android.util.Log
 import com.hproxy.app.engine.Engine
 import com.hproxy.app.engine.EngineError
+import com.hproxy.app.engine.Expiry
 import com.hproxy.app.engine.Health
 import com.hproxy.app.engine.Library
 import com.hproxy.app.engine.PlaceRef
@@ -191,9 +192,17 @@ object AppState {
     /**
      * Connect to [place] (a group starting on [member]), or switch to it while connected. The
      * VPN permission must have been given already (MainActivity asks; the tile and the boot
-     * receiver only connect when it was).
+     * receiver only connect when it was). A saved proxy or group past its last day connects all
+     * the same (plans get extended) and says so.
      */
     fun connect(place: PlaceRef, member: Int? = null) {
+        val lib = libraryFlow.value
+        val lastDay = when (place) {
+            is PlaceRef.Proxy -> lib.proxies.find { it.id == place.id }?.expires
+            is PlaceRef.Group -> lib.groups.find { it.id == place.id }?.expires
+            is PlaceRef.Free -> null
+        }
+        Expiry.endedWords(lastDay)?.let(::toast)
         if (wanted && statusFlow.value.running) {
             switchTo(place, member)
             return

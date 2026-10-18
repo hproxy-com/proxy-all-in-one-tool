@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { formatAgo, formatBytes, formatDuration, formatRate, placeOf } from "../../lib/connect";
+import { ADD_FIRST } from "../../lib/connectionView";
 import type { FraudSet } from "../../lib/fraud";
 import type { LeakAction, LeakRow } from "../../lib/leaks";
 import type { ConnectLook, HubStyle } from "../../lib/look";
@@ -8,6 +9,7 @@ import { FraudChip } from "../FraudScore";
 import HLetter from "../HLetter";
 import { Button, Check, Flag, Icon, InfoTip, Input, Switch, Tile, cx, useTip } from "../ui";
 import DotMap from "./DotMap";
+import { ChangeButton } from "./QuickChange";
 
 /* The left half of Connect: the connection itself, like a VPN's main card.
 
@@ -72,6 +74,8 @@ export type ConnectionCardProps = {
   onCopy: () => void;
   copied: boolean;
   error: string | null;
+  /** The place connected to is past the day it expires: it is said, and it still works. */
+  ended?: string | null;
 
   useSystem: boolean;
   setUseSystem: (v: boolean) => void;
@@ -171,7 +175,8 @@ export function connectionWords(p: ConnectionCardProps) {
   // while switching) the place the switch goes to when it is a country.
   const mapCc = on || phase === "rotating" ? (exitCc ?? view?.cc) : view?.cc;
 
-  const toggleTitle = phase === "off" ? (p.canConnect ? "Connect" : "Pick a place to connect to first") : "Disconnect";
+  // With none of yours a press still answers: it opens Proxies, which says to add them first.
+  const toggleTitle = phase === "off" ? (p.canConnect ? "Connect" : ADD_FIRST) : "Disconnect";
   const lit = phase !== "off" && phase !== "leaving";
   // The word under the H button: what pressing it does now.
   // Grey while nothing is picked yet (the route names "Pick a place").
@@ -244,7 +249,7 @@ export function ConnStatus({ p, w }: ConnPart) {
             <Switch
               on={lit}
               busy={busyPhase(phase)}
-              disabled={p.busy || (phase === "off" && !p.canConnect)}
+              disabled={p.busy}
               onChange={p.onToggle}
               label="Connection"
               title={toggleTitle}
@@ -364,9 +369,8 @@ export function TargetRow({ p, w, routeShown = true }: ConnPart & { routeShown?:
             <Icon.refresh className="h-3.5 w-3.5" /> New IP
           </button>
         )}
-        <button type="button" className="ux-link" onClick={p.onChangeTarget}>
-          Change <Icon.arrowRight className="h-3.5 w-3.5" />
-        </button>
+        {/* A quick one right here, or the full list (QuickChange.tsx). */}
+        <ChangeButton />
       </div>
     </div>
   );
@@ -437,6 +441,7 @@ export function ConnMessages({ p }: { p: ConnectionCardProps }) {
   return (
     <>
       {p.error && <p className="ux-connrow text-[13.5px] font-semibold text-danger">{p.error}</p>}
+      {p.ended && <p className="ux-connrow text-[13.5px] font-semibold text-warn">{p.ended}</p>}
       {status?.notice && <p className="ux-connrow text-[13.5px] font-medium text-ink-mute">{status.notice}</p>}
     </>
   );

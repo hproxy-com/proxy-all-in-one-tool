@@ -12,7 +12,7 @@
 //! targets, never the password. A connection asks for a place by its id and
 //! the line is read here, on the side that dials it.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +30,8 @@ pub const MAX_GROUPS: usize = 1_000;
 pub const MAX_GROUP_LINES: usize = 100_000;
 /// The longest name a place keeps.
 pub const MAX_NAME: usize = 60;
+/// The longest note a proxy or a group keeps, in characters.
+pub const MAX_NOTE: usize = 500;
 
 /// What the last check or probe of a saved proxy found.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,6 +120,13 @@ pub struct Proxy {
     pub uses: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last: Option<Verdict>,
+    /// The last day it works, `YYYY-MM-DD`, as the person entered it: the end
+    /// of their plan. Past it the proxy is shown as expired and still works.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    /// Anything they keep with it ("Shop account 3").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// How a group moves through its members (the relay's rotation rules).
@@ -172,6 +181,12 @@ pub struct Group {
     pub uses: u64,
     #[serde(default)]
     pub summary: GroupSummary,
+    /// The last day its lines work (a plan of a thousand lines ends at once),
+    /// `YYYY-MM-DD`; as on a proxy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// The place the switch connects to.
@@ -241,6 +256,21 @@ pub struct GroupInput {
     pub rule: Rule,
     #[serde(default)]
     pub n: Option<u32>,
+}
+
+/// What a person says about a proxy or a group: its name, the last day it
+/// works and a note. A field left out stays as it is; an empty one is taken
+/// away (a group keeps its name).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Details {
+    #[serde(default)]
+    pub name: Option<String>,
+    /// `YYYY-MM-DD`.
+    #[serde(default)]
+    pub expires: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// What the window kept before the library existed, exactly as it kept it
@@ -365,6 +395,10 @@ pub struct ProxyView {
     pub uses: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last: Option<Verdict>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 impl ProxyView {
@@ -399,6 +433,10 @@ pub struct GroupView {
     pub last_used_at: u64,
     pub uses: u64,
     pub summary: GroupSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// One member of a group as a screen sees it.
@@ -462,6 +500,121 @@ fn group_id(now: u64) -> String {
 pub fn clean_name(name: &str) -> String {
     let joined = name.split_whitespace().collect::<Vec<_>>().join(" ");
     joined.chars().take(MAX_NAME).collect::<String>().trim().to_string()
+}
+
+/// A note the way it is kept: its lines as typed (line ends made `\n`),
+/// trimmed, capped at `MAX_NOTE` characters.
+pub fn clean_note(note: &str) -> String {
+    let lines = note.replace("\r\n", "\n").replace('\r', "\n");
+    lines
+        .trim()
+        .chars()
+        .take(MAX_NOTE)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
+}
+
+/// A day the way it is kept, `YYYY-MM-DD`, or `None` when `day` is not one
+/// day of the calendar written so (a plan ends in this century or the next,
+/// so the year is 2000 to 2199).
+pub fn clean_date(day: &str) -> Option<String> {
+    let (y, m, d) = ymd(day.trim())?;
+    Some(format!("{y:04}-{m:02}-{d:02}"))
+}
+
+fn ymd(day: &str) -> Option<(i64, u32, u32)> {
+    let b = day.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return None;
+    }
+    if !b
+        .iter()
+        .enumerate()
+        .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+    {
+        return None;
+    }
+    let (y, m, d): (i64, u32, u32) = (
+        day[0..4].parse().ok()?,
+        day[5..7].parse().ok()?,
+        day[8..10].parse().ok()?,
+    );
+    if !(2000..=2199).contains(&y) || !(1..=12).contains(&m) {
+        return None;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let last = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m as usize - 1];
+    (1..=last).contains(&d).then_some((y, m, d))
+}
+
+/// Days since 1970-01-01 of a day of the (proleptic Gregorian) calendar.
+fn day_number(y: i64, m: u32, d: u32) -> i64 {
+    // H. Hinnant's days_from_civil: a year that starts in March puts the leap day at its end.
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (i64::from(m) + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// How many days are left until `expires`, counted from `today` (both
+/// `YYYY-MM-DD`): 0 on its last day, negative once it has passed. `None` when
+/// either is not a day.
+pub fn days_left(expires: &str, today: &str) -> Option<i64> {
+    let (ey, em, ed) = ymd(expires.trim())?;
+    let (ty, tm, td) = ymd(today.trim())?;
+    Some(day_number(ey, em, ed) - day_number(ty, tm, td))
+}
+
+/// A day in words: "14 Nov", with its year when that is not `today`'s
+/// ("2 Jan 2027"). A day that is not one comes back as it was written.
+pub fn day_words(day: &str, today: &str) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let Some((y, m, d)) = ymd(day.trim()) else {
+        return day.to_string();
+    };
+    let month = MONTHS[m as usize - 1];
+    if ymd(today.trim()).is_some_and(|(ty, _, _)| ty == y) {
+        format!("{d} {month}")
+    } else {
+        format!("{d} {month} {y}")
+    }
+}
+
+/// A field of `Details` read for keeping: `None` = leave it, `Some(None)` =
+/// take it away, `Some(Some(v))` = set it.
+fn wanted<T>(
+    field: Option<&str>,
+    clean: impl Fn(&str) -> Result<Option<T>, String>,
+) -> Result<Option<Option<T>>, String> {
+    match field {
+        None => Ok(None),
+        Some(v) if v.trim().is_empty() => Ok(Some(None)),
+        Some(v) => clean(v).map(Some),
+    }
+}
+
+/// The three fields of `Details`, checked once for any number of places.
+type Described = (Option<Option<String>>, Option<Option<String>>, Option<Option<String>>);
+
+fn read_details(details: &Details) -> Result<Described, String> {
+    let name = wanted(details.name.as_deref(), |v| {
+        Ok(Some(clean_name(v)).filter(|n| !n.is_empty()))
+    })?;
+    let expires = wanted(details.expires.as_deref(), |v| {
+        clean_date(v)
+            .map(Some)
+            .ok_or_else(|| format!("\"{}\" is not a day: write it like 2026-11-14", v.trim()))
+    })?;
+    let note = wanted(details.note.as_deref(), |v| {
+        Ok(Some(clean_note(v)).filter(|n| !n.is_empty()))
+    })?;
+    Ok((name, expires, note))
 }
 
 /// The lines of a paste, trimmed, blanks and repeats dropped, in order.
@@ -581,6 +734,8 @@ impl Library {
                     last_used_at: 0,
                     uses: 0,
                     last: None,
+                    expires: None,
+                    note: None,
                 });
             }
             ids.push(id);
@@ -611,6 +766,21 @@ impl Library {
         }
     }
 
+    /// Name several saved proxies at once, each its own name: a paste named "Shop 1", "Shop 2" …
+    /// in one change. `named` pairs an id with its name; an empty name takes it away. Returns
+    /// how many of them are saved.
+    pub fn name_proxies(&mut self, named: &[(String, String)]) -> usize {
+        let wanted: HashMap<&str, String> = named.iter().map(|(id, name)| (id.as_str(), clean_name(name))).collect();
+        let mut found = 0;
+        for p in self.proxies.iter_mut() {
+            if let Some(name) = wanted.get(p.id.as_str()) {
+                p.name = (!name.is_empty()).then(|| name.clone());
+                found += 1;
+            }
+        }
+        found
+    }
+
     /// Give a group another name. A group always has one: an empty name
     /// leaves it as it is.
     pub fn rename_group(&mut self, id: &str, name: &str) -> bool {
@@ -625,6 +795,48 @@ impl Library {
             }
             None => false,
         }
+    }
+
+    /// Say what saved proxies are: one, or a whole paste at once (`ids`). A
+    /// field of `details` left out stays as it is, an empty one is taken
+    /// away. A date that is not a day changes nothing and says why. Returns
+    /// how many of `ids` are saved.
+    pub fn describe_proxies(&mut self, ids: &[String], details: &Details) -> Result<usize, String> {
+        let (name, expires, note) = read_details(details)?;
+        let ids: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let mut found = 0;
+        for p in self.proxies.iter_mut().filter(|p| ids.contains(p.id.as_str())) {
+            if let Some(v) = &name {
+                p.name = v.clone();
+            }
+            if let Some(v) = &expires {
+                p.expires = v.clone();
+            }
+            if let Some(v) = &note {
+                p.note = v.clone();
+            }
+            found += 1;
+        }
+        Ok(found)
+    }
+
+    /// The same for a group, which always keeps a name: an empty one leaves
+    /// it as it is.
+    pub fn describe_group(&mut self, id: &str, details: &Details) -> Result<bool, String> {
+        let (name, expires, note) = read_details(details)?;
+        let Some(g) = self.groups.iter_mut().find(|g| g.id == id) else {
+            return Ok(false);
+        };
+        if let Some(Some(v)) = name {
+            g.name = v;
+        }
+        if let Some(v) = expires {
+            g.expires = v;
+        }
+        if let Some(v) = note {
+            g.note = v;
+        }
+        Ok(true)
     }
 
     /// Forget a saved proxy, and the pick when it was this one.
@@ -692,6 +904,8 @@ impl Library {
                 last_used_at: 0,
                 uses: 0,
                 summary,
+                expires: None,
+                note: None,
             },
         );
         Ok(id)
@@ -762,6 +976,8 @@ impl Library {
                 last_used_at: p.last_used_at,
                 uses: p.uses,
                 last: p.last,
+                expires: None,
+                note: None,
             });
         }
         for l in old.lists {
@@ -792,6 +1008,8 @@ impl Library {
                 last_used_at: l.last_used_at,
                 uses: l.uses,
                 summary,
+                expires: None,
+                note: None,
             });
         }
         self.picked = match old.target {
@@ -835,6 +1053,8 @@ impl Library {
                         last_used_at: p.last_used_at,
                         uses: p.uses,
                         last: p.last.clone(),
+                        expires: p.expires.clone(),
+                        note: p.note.clone(),
                     }
                 })
                 .collect(),
@@ -851,6 +1071,8 @@ impl Library {
                     last_used_at: g.last_used_at,
                     uses: g.uses,
                     summary: g.summary.clone(),
+                    expires: g.expires.clone(),
+                    note: g.note.clone(),
                 })
                 .collect(),
             picked: self.picked.clone(),
@@ -974,6 +1196,31 @@ mod tests {
             "UTF-16, not bytes"
         );
         assert_eq!(proxy_id("  a:1  "), proxy_id("a:1"), "trimmed first");
+    }
+
+    #[test]
+    fn a_paste_is_named_each_its_own_in_one_change() {
+        let mut lib = Library::default();
+        lib.add_proxies(&lines(&[A, B]), 1);
+        let (a, b) = (proxy_id(A), proxy_id(B));
+        let named = [
+            (a.clone(), "  Shop   1 ".to_string()),
+            (b.clone(), "Shop 2".to_string()),
+            ("gone".to_string(), "Shop 3".to_string()),
+        ];
+        assert_eq!(lib.name_proxies(&named), 2, "the one not saved is left out");
+        assert_eq!(
+            lib.proxy(&a).and_then(|p| p.name.as_deref()),
+            Some("Shop 1"),
+            "cleaned as any name"
+        );
+        assert_eq!(lib.proxy(&b).and_then(|p| p.name.as_deref()), Some("Shop 2"));
+        lib.name_proxies(&[(a.clone(), " ".to_string())]);
+        assert_eq!(
+            lib.proxy(&a).and_then(|p| p.name.as_deref()),
+            None,
+            "an empty name takes it away"
+        );
     }
 
     #[test]
@@ -1270,6 +1517,164 @@ mod tests {
         );
         assert_eq!(lib.find("Nowhere"), Err("nothing saved is called \"Nowhere\"".into()));
         assert!(lib.find("  ").is_err());
+    }
+
+    #[test]
+    fn a_date_is_one_day_of_the_calendar_written_year_month_day() {
+        assert_eq!(clean_date("2026-11-14"), Some("2026-11-14".into()));
+        assert_eq!(
+            clean_date(" 2028-02-29 "),
+            Some("2028-02-29".into()),
+            "a leap year's 29 February"
+        );
+        assert_eq!(clean_date("2026-02-29"), None, "2026 is no leap year");
+        assert_eq!(
+            clean_date("2100-02-29"),
+            None,
+            "a century is a leap year only every 400 years"
+        );
+        assert_eq!(clean_date("2000-02-29"), Some("2000-02-29".into()));
+        for wrong in [
+            "2026-13-01",
+            "2026-04-31",
+            "2026-00-10",
+            "14.11.2026",
+            "2026-1-14",
+            "2026/11/14",
+            "+202-11-14",
+            "1999-12-31",
+            "",
+        ] {
+            assert_eq!(clean_date(wrong), None, "{wrong}");
+        }
+    }
+
+    #[test]
+    fn days_left_count_calendar_days_and_go_below_zero_once_past() {
+        assert_eq!(days_left("2026-11-14", "2026-11-14"), Some(0), "its last day");
+        assert_eq!(days_left("2026-11-14", "2026-11-11"), Some(3));
+        assert_eq!(days_left("2026-11-14", "2026-11-16"), Some(-2));
+        assert_eq!(days_left("2027-01-02", "2026-12-30"), Some(3), "across a new year");
+        assert_eq!(days_left("2028-03-01", "2028-02-28"), Some(2), "across a leap day");
+        assert_eq!(days_left("2026-03-01", "2026-02-28"), Some(1));
+        assert_eq!(days_left("2026-11-14", "someday"), None);
+    }
+
+    #[test]
+    fn many_proxies_take_a_date_and_a_note_at_once_and_a_field_left_out_stays() {
+        let mut lib = Library::default();
+        let c = "198.51.100.3:8080";
+        let ids = lib.add_proxies(&lines(&[A, B, c]), 1);
+        let both = vec![ids[0].clone(), ids[1].clone(), "not-saved".to_string()];
+        let set = Details {
+            name: None,
+            expires: Some("2026-11-14".into()),
+            note: Some("  Shop batch\r\nfrom October  ".into()),
+        };
+        assert_eq!(lib.describe_proxies(&both, &set), Ok(2), "only saved ids count");
+        let p = lib.proxy(&ids[0]).unwrap();
+        assert_eq!(
+            (p.expires.as_deref(), p.note.as_deref()),
+            (Some("2026-11-14"), Some("Shop batch\nfrom October"))
+        );
+        assert_eq!(
+            lib.proxy(&ids[2]).unwrap().expires,
+            None,
+            "a proxy not named keeps nothing"
+        );
+
+        // Only the note goes; the date stays; a name is given to one of them.
+        let clear = Details {
+            name: Some("Shop 1".into()),
+            expires: None,
+            note: Some(" ".into()),
+        };
+        assert_eq!(lib.describe_proxies(&ids[..1], &clear), Ok(1));
+        let p = lib.proxy(&ids[0]).unwrap();
+        assert_eq!(
+            (p.name.as_deref(), p.expires.as_deref(), p.note.as_deref()),
+            (Some("Shop 1"), Some("2026-11-14"), None)
+        );
+
+        // A date that is not a day changes nothing at all.
+        let wrong = Details {
+            name: Some("Changed".into()),
+            expires: Some("2026-02-30".into()),
+            note: None,
+        };
+        assert!(lib.describe_proxies(&ids, &wrong).unwrap_err().contains("2026-02-30"));
+        assert_eq!(lib.proxy(&ids[0]).unwrap().name.as_deref(), Some("Shop 1"));
+
+        // A note is kept up to MAX_NOTE characters; the view carries both; the file keeps both.
+        let long = Details {
+            note: Some("x".repeat(MAX_NOTE + 40)),
+            ..Details::default()
+        };
+        lib.describe_proxies(&ids[1..2], &long).unwrap();
+        let view = lib.view();
+        let shown = view.proxies.iter().find(|v| v.id == ids[1]).unwrap();
+        assert_eq!(shown.note.as_ref().map(|n| n.chars().count()), Some(MAX_NOTE));
+        assert_eq!(shown.expires.as_deref(), Some("2026-11-14"));
+        let back: Library = serde_json::from_value(serde_json::to_value(&lib).unwrap()).unwrap();
+        assert_eq!(back, lib);
+    }
+
+    #[test]
+    fn a_group_takes_a_date_and_a_note_and_keeps_its_name() {
+        let mut lib = Library::default();
+        let id = lib
+            .save_group(
+                GroupInput {
+                    id: None,
+                    name: "Shop batch".into(),
+                    lines: lines(&[A, B]),
+                    rule: Rule::OnFailure,
+                    n: None,
+                },
+                1,
+            )
+            .unwrap();
+        let d = Details {
+            name: Some(" ".into()),
+            expires: Some("2026-12-01".into()),
+            note: Some("300 lines".into()),
+        };
+        assert_eq!(lib.describe_group(&id, &d), Ok(true));
+        assert_eq!(lib.describe_group("g-none", &d), Ok(false));
+        let g = &lib.view().groups[0];
+        assert_eq!(
+            (g.name.as_str(), g.expires.as_deref(), g.note.as_deref()),
+            ("Shop batch", Some("2026-12-01"), Some("300 lines"))
+        );
+        // Saving the group again (new lines, a new rule) keeps what was said about it.
+        lib.save_group(
+            GroupInput {
+                id: Some(id.clone()),
+                name: "".into(),
+                lines: lines(&[A]),
+                rule: Rule::Random,
+                n: None,
+            },
+            2,
+        )
+        .unwrap();
+        assert_eq!(lib.group(&id).unwrap().expires.as_deref(), Some("2026-12-01"));
+    }
+
+    #[test]
+    fn a_library_from_before_dates_and_notes_reads_without_them() {
+        let old = serde_json::json!({
+            "version": 1,
+            "proxies": [{ "id": proxy_id(A), "line": A, "name": "Old one", "addedAt": 5, "lastUsedAt": 0, "uses": 0 }],
+            "groups": [{ "id": "g1", "name": "Old group", "lines": [B], "rule": "on_failure", "addedAt": 5, "lastUsedAt": 0, "uses": 0 }],
+            "movedFromWindow": true
+        });
+        let lib: Library = serde_json::from_value(old).unwrap();
+        assert_eq!(lib.proxies[0].expires, None);
+        assert_eq!(lib.groups[0].note, None);
+        // A library without dates writes no empty fields for them either.
+        let written = serde_json::to_string(&lib).unwrap();
+        assert!(!written.contains("expires") && !written.contains("note"), "{written}");
     }
 
     #[test]

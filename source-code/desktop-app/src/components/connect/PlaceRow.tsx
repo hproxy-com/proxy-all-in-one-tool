@@ -31,7 +31,11 @@ export type PlaceRowProps = {
   checking?: boolean;
   /** Words on the right where a speed would be: "1,612 free". */
   aside?: ReactNode;
+  /** A chip before the speed: how many days a place has left. */
+  tag?: ReactNode;
   state?: RowState;
+  /** The one the switch connects to while you are off (Quick change): a check on its right. */
+  chosen?: boolean;
   /** "bad": a place that failed its test, its mark in red. */
   tone?: "bad";
   /** The relay runs through another place: the click word is "Switch here". */
@@ -49,6 +53,9 @@ export type PlaceRowProps = {
   /** In the name's place while the name is being edited. A field inside the
       row's button is not allowed, so the row is not a button meanwhile. */
   editing?: ReactNode;
+  /** Under the row, while something about it is being edited (its name,
+      last day and note). */
+  below?: ReactNode;
 };
 
 export default function PlaceRow(p: PlaceRowProps) {
@@ -72,7 +79,20 @@ export default function PlaceRow(p: PlaceRowProps) {
       ) : (
         p.onConnect && !p.editing && <span className="word">{p.running ? "Switch here" : "Connect"}</span>
       )}
-      {p.checking ? <span className="speed num is-checking">Checking…</span> : p.ms != null ? <Speed ms={p.ms} /> : null}
+      {p.chosen && !on && state !== "connecting" && (
+        <span className="chosen" title="The switch connects this one">
+          <Icon.check />
+        </span>
+      )}
+      {p.tag != null && <span className="tag">{p.tag}</span>}
+      {p.checking ? (
+        <span className="speed num is-checking">Checking…</span>
+      ) : p.ms != null ? (
+        <Speed ms={p.ms} />
+      ) : p.tag != null ? (
+        // No speed to show: its room stays, so every row's chip stands in one column.
+        <span className="speed" aria-hidden="true" />
+      ) : null}
       {p.aside != null && <span className="aside num">{p.aside}</span>}
     </>
   );
@@ -109,6 +129,7 @@ export default function PlaceRow(p: PlaceRowProps) {
         )}
         {p.menu && p.menu.length > 0 && <RowMenu items={p.menu} title={typeof p.name === "string" ? p.name : undefined} />}
       </div>
+      {p.below && <div className="more">{p.below}</div>}
       {p.expand?.open && p.children && <div className="more">{p.children}</div>}
     </div>
   );

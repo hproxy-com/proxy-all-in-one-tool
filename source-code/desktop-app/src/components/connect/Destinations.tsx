@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import {
   DEFAULT_ROTATION,
   ROTATION_HINT,
@@ -8,7 +8,6 @@ import {
   formatAgo,
   groupWords,
   isSavedSort,
-  lineParts,
   listLines,
   matchSaved,
   proxyTitle,
@@ -41,12 +40,16 @@ import {
   type FreeRun,
 } from "../../lib/freeList";
 import {
+  dayWords,
+  expiryOf,
   freeGroupName,
   lastCheckWords,
   MAX_GROUP_LINES,
-  MAX_NAME,
+  MAX_NOTE,
   MAX_PROXIES,
   samePlace,
+  todayHere,
+  type Details,
   type GroupInput,
   type GroupView,
   type MemberView,
@@ -56,23 +59,24 @@ import {
 } from "../../lib/places";
 import {
   copyText,
-  describeLines,
   freeCountries,
   freeList,
   freeTest,
   importProxyFile,
   isMobile,
   openExternal,
-  parseLine,
   placesGroupLines,
   placesGroupMembers,
   thisDevice,
   type ParsedLine,
-  type Targeting,
 } from "../../lib/tauri";
 import { useBack } from "../../lib/back";
+import { ADD_FIRST } from "../../lib/connectionView";
+import { UNDO_MS, type PendingRemove } from "../../lib/undoRemove";
 import { pasteOneHere } from "../../lib/proxyExamples";
-import { BlockTitle, Button, ButtonGroup, Dropdown, Flag, Icon, InfoTip, Input, Tag, TextArea, cx } from "../ui";
+import { useReadable } from "./lineReading";
+import PasteReview from "./PasteReview";
+import { BlockTitle, Button, ButtonGroup, Dropdown, Flag, Icon, InfoTip, Input, Tag, TextArea } from "../ui";
 import PlaceRow, { type RowState } from "./PlaceRow";
 
 /* WHERE TO, read like a VPN's location list (the Proxies page since
@@ -143,20 +147,36 @@ export type DestinationsProps = {
   note: string | null;
 
   proxies: ProxyView[];
+  /** Saved proxies whose last check got no answer (never the one connected through): Remove
+      takes them out, Restore brings them back for 5 seconds (2026-10-18). */
+  dead: ProxyView[];
+  onRemoveDead: () => void;
+  /** A Remove waiting to happen: which ones, and since when. */
+  removing: PendingRemove | null;
+  onRestore: () => void;
   line: string;
   setLine: (v: string) => void;
   lineState: LineState;
+  /** When the switch was last pressed with none of yours (0: not since you came here): the
+      empty list says "Add your proxies first to start connecting!", popping in on each press,
+      and the first that works connects once they are in. */
+  asked: number;
   onAdd: () => void;
-  /** A pasted list, accepted: every readable line becomes a saved proxy. */
-  onAddMany: (lines: string[]) => void;
+  /** A pasted list, accepted: every line kept becomes a saved proxy, with `details` (a last
+      day, a note) on each of them and, with `name`, that name numbered on the new ones. */
+  onAddMany: (lines: string[], details?: Details, name?: string) => void;
   /** Connect's paste field: save the line and connect through it at once. */
   onAddAndConnect: () => void;
   /** The same lines as one group instead. */
-  onGroupFromLines: (lines: string[]) => void;
+  onGroupFromLines: (lines: string[], details?: Details) => void;
   onRecheck: () => void;
   onForget: (p: ProxyView) => void;
   /** Name a saved proxy; an empty name takes the name away. */
   onRename: (p: ProxyView, name: string) => void;
+  /** Name, last day and note of saved proxies; the words of why not, or null. */
+  onDescribe: (ids: string[], details: Details) => Promise<string | null>;
+  /** The same for a group (it keeps its name). */
+  onDescribeGroup: (id: string, details: Details) => Promise<string | null>;
   /** Saved proxies being checked right now, by id. */
   checkingIds: ReadonlySet<string>;
   /** Check one saved proxy again. */
@@ -254,8 +274,8 @@ function keepSort(s: SavedSort) {
    is read by the engine and accepted in one click. */
 function ProxiesPane(p: DestinationsProps) {
   const [pasted, setPasted] = useState<string[] | null>(null);
-  // The saved proxy being named, by id.
-  const [naming, setNaming] = useState<string | null>(null);
+  // The saved proxy whose name, expiry and note are open, by id.
+  const [describing, setDescribing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [typed, setTyped] = useState("");
   const [sort, setSortState] = useState<SavedSort>(loadSort);
@@ -288,6 +308,15 @@ function ProxiesPane(p: DestinationsProps) {
         if (!takePaste(t)) p.lineRef.current?.focus();
       })
       .catch(() => p.lineRef.current?.focus());
+  // A file of proxies: a list opens the review, one proxy goes into the field.
+  const uploadList = () =>
+    void importProxyFile()
+      .then((t) => {
+        if (!t?.trim() || takePaste(t)) return;
+        p.setLine(t.trim());
+        p.lineRef.current?.focus();
+      })
+      .catch(() => {});
   const openAdd = () => {
     setAdding(true);
     setTimeout(() => p.lineRef.current?.focus(), 30);
@@ -299,13 +328,13 @@ function ProxiesPane(p: DestinationsProps) {
         lines={pasted}
         room={MAX_PROXIES - p.proxies.length}
         onCancel={() => setPasted(null)}
-        onAddAll={(ok) => {
-          p.onAddMany(ok);
+        onAdd={(kept, details, name) => {
+          p.onAddMany(kept, details, name);
           setPasted(null);
           setAdding(false);
         }}
-        onGroup={(ok) => {
-          p.onGroupFromLines(ok);
+        onGroup={(ok, details) => {
+          p.onGroupFromLines(ok, details);
           setPasted(null);
           setAdding(false);
         }}
@@ -337,9 +366,20 @@ function ProxiesPane(p: DestinationsProps) {
         </div>
       )}
 
+      <DeadLine p={p} />
+
       {(adding || empty) && (
         <div className="ux-addbox">
-          {empty && <p className="px-1 pb-1 text-[15px] font-bold text-ink">Add your proxies</p>}
+          {empty &&
+            (p.asked ? (
+              // Sent here by the switch: why, popping in again on each press.
+              <div key={p.asked} className="rise-in flex flex-col gap-0.5 px-1 pb-1" role="status">
+                <p className="text-[15px] font-bold text-ink">{ADD_FIRST}</p>
+                <p className="text-[13px] font-medium text-ink-mute">Paste one, or a whole list. As soon as they&rsquo;re in, you&rsquo;re connected.</p>
+              </div>
+            ) : (
+              <p className="px-1 pb-1 text-[15px] font-bold text-ink">Add your proxies</p>
+            ))}
           <LineField
             p={p}
             inputRef={p.lineRef}
@@ -351,6 +391,9 @@ function ProxiesPane(p: DestinationsProps) {
               <>
                 <Button variant="text" onClick={pasteList} title="Every line of the list in your clipboard becomes its own saved proxy">
                   Paste a list
+                </Button>
+                <Button variant="text" onClick={uploadList} title="A .txt or .csv file with your proxies, in any format">
+                  Upload a file
                 </Button>
                 {!empty && (
                   <Button variant="text" onClick={() => setAdding(false)} title="Close (Escape)">
@@ -372,13 +415,46 @@ function ProxiesPane(p: DestinationsProps) {
       ) : (
         <div className="ux-places" role="list" aria-label="Your proxies">
           {shown.map((s) => (
-            <ProxyRow key={s.id} s={s} p={p} naming={naming === s.id} setNaming={setNaming} />
+            <ProxyRow key={s.id} s={s} p={p} describing={describing === s.id} setDescribing={setDescribing} />
           ))}
         </div>
       )}
 
       {some && <p className="px-1 text-[12.5px] font-medium text-ink-mute">Kept on {thisDevice()} only.</p>}
+      <RestoreBar p={p} />
     </>
+  );
+}
+
+/** The ones whose last check got no answer, and one press to take them out; Restore follows
+    (2026-10-18). Hidden while Test all runs: the answers are still coming. */
+function DeadLine({ p }: { p: DestinationsProps }) {
+  const n = p.dead.length;
+  if (!n || p.testing) return null;
+  return (
+    <div className="ux-deadline" role="status">
+      <span>{n === 1 ? "1 doesn't answer right now" : `${n} don't answer right now`}</span>
+      <button type="button" className="ux-deadline-remove" onClick={p.onRemoveDead}>
+        {n === 1 ? "Remove it" : "Remove them"}
+      </button>
+    </div>
+  );
+}
+
+/** After a Remove: how many went, and Restore, for 5 seconds, at the window's foot; a line runs
+    out meanwhile (2026-10-18: "a restore button that pops up shortly after and lasts for 5
+    seconds ... at the bottom"). */
+function RestoreBar({ p }: { p: DestinationsProps }) {
+  const r = p.removing;
+  if (!r) return null;
+  return (
+    <div key={r.at} className="ux-restore" role="status">
+      <span>{r.ids.length === 1 ? "1 proxy removed" : `${r.ids.length} proxies removed`}</span>
+      <button type="button" className="ux-restore-btn" onClick={p.onRestore}>
+        Restore
+      </button>
+      <i className="ux-restore-time" style={{ animationDuration: `${UNDO_MS}ms` }} aria-hidden="true" />
+    </div>
   );
 }
 
@@ -468,9 +544,9 @@ export function LineField({
 }
 
 /** One of your proxies: its flag and name, the address under a name, how it
-    did when last checked, and ⋯. The login and how often it was used are in
-    the row's tooltip. */
-function ProxyRow({ s, p, naming, setNaming }: { s: ProxyView; p: DestinationsProps; naming: boolean; setNaming: (id: string | null) => void }) {
+    did when last checked, its note, how many days it has left, and ⋯. The
+    login, its last day and how often it was used are in the row's tooltip. */
+function ProxyRow({ s, p, describing, setDescribing }: { s: ProxyView; p: DestinationsProps; describing: boolean; setDescribing: (id: string | null) => void }) {
   const place: Place = { kind: "proxy", id: s.id };
   const title = proxyTitle(s);
   const said = lastCheckWords(s.last);
@@ -484,19 +560,24 @@ function ProxyRow({ s, p, naming, setNaming }: { s: ProxyView; p: DestinationsPr
   // What the line is (a session in California); else, under a name, its address.
   const about = aboutWords(s.about);
   const what = about || (s.name ? s.address : "");
+  const note = firstLine(s.note);
   const sub = (
     <>
       {what && <span className={about ? undefined : "num"}>{what}</span>}
       {what && status && " · "}
       {status}
+      {note && ` · ${note}`}
     </>
   );
   const cc = s.last?.cc ?? s.about?.country?.toLowerCase();
   const tooltip = [
     s.address,
     s.user ? `login ${s.user}` : "no login",
+    s.expires ? `last day ${dayWords(s.expires, todayHere())}` : "",
     s.uses ? `used ${s.uses === 1 ? "once" : `${s.uses} times`}, last ${formatAgo(p.now - s.lastUsedAt)}` : "not used yet",
-  ].join(" · ");
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <PlaceRow
       lead={cc ? <Flag cc={cc} /> : <Icon.globe />}
@@ -505,27 +586,27 @@ function ProxyRow({ s, p, naming, setNaming }: { s: ProxyView; p: DestinationsPr
       sub={sub}
       ms={s.last?.ok ? (s.last.latencyMs ?? null) : null}
       checking={p.checkingIds.has(s.id)}
+      tag={expiryTag(s.expires)}
       state={rowState(place, p)}
       running={p.running}
       busy={p.busy}
       problem={rowProblem(place, p)}
-      tooltip={tooltip}
+      tooltip={s.note ? `${tooltip}\n${s.note}` : tooltip}
       onConnect={() => p.onConnect(place)}
-      editing={
-        naming ? (
-          <NameField
-            initial={s.name ?? ""}
-            address={proxyTitle({ address: s.address, about: s.about })}
-            onDone={(name) => {
-              p.onRename(s, name);
-              setNaming(null);
-            }}
-            onCancel={() => setNaming(null)}
+      below={
+        describing ? (
+          <DetailsEditor
+            name={s.name ?? ""}
+            expires={s.expires}
+            note={s.note}
+            nameHint={`A name for ${proxyTitle({ address: s.address, about: s.about })}, like "Netflix US"`}
+            onSave={(d) => p.onDescribe([s.id], d)}
+            onDone={() => setDescribing(null)}
           />
         ) : undefined
       }
       menu={[
-        { label: s.name ? "Rename" : "Give it a name", onClick: () => setNaming(s.id) },
+        { label: "Name, expiry and note", onClick: () => setDescribing(s.id) },
         { label: "Check again", onClick: () => p.onCheckOne(s) },
         { label: "Copy address", onClick: () => void copyText(s.address) },
         { label: `Remove from ${thisDevice()}`, onClick: () => p.onForget(s), danger: true },
@@ -534,47 +615,105 @@ function ProxyRow({ s, p, naming, setNaming }: { s: ProxyView; p: DestinationsPr
   );
 }
 
-/* Naming a saved proxy, in place of its title: Enter or clicking away keeps
-   the name, Escape leaves it as it was, an empty name goes back to the
-   address. */
-function NameField({ initial, address, onDone, onCancel }: { initial: string; address: string; onDone: (name: string) => void; onCancel: () => void }) {
-  const [value, setValue] = useState(initial);
-  const field = useRef<HTMLInputElement>(null);
-  // Enter and Escape end it once: the blur that follows as the field goes
-  // must not save again (after Escape it would save what Escape threw away).
-  const ended = useRef(false);
-  const end = (keep: boolean) => {
-    if (ended.current) return;
-    ended.current = true;
-    if (keep) onDone(value);
-    else onCancel();
-  };
-  useEffect(() => {
-    field.current?.focus();
-    field.current?.select();
-  }, []);
+/** A note's first line, for a row; the whole note is in the row's tooltip. */
+const firstLine = (note: string | undefined) => (note ? note.split("\n")[0].trim() : "");
+
+/** How many days a place has left, as a chip: plain while there is time,
+    amber in its last three days, red once past. Nothing without a last day. */
+function expiryTag(expires: string | undefined): ReactNode {
+  const e = expiryOf(expires);
+  if (!e || !expires) return undefined;
   return (
-    <input
-      ref={field}
-      className="ux-input ux-namefield"
-      value={value}
-      maxLength={MAX_NAME}
-      placeholder={`A name for ${address}, like "Netflix US"`}
-      aria-label={`Name for ${address}`}
-      spellCheck={false}
-      autoComplete="off"
-      onChange={(e) => setValue(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          end(true);
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          end(false);
-        }
-      }}
-      onBlur={() => end(true)}
-    />
+    <Tag tone={e.tone === "quiet" ? undefined : e.tone} title={`Last day: ${dayWords(expires, todayHere())}`}>
+      {e.words}
+    </Tag>
+  );
+}
+
+/* What a person says about one of their places, under its row: a name, the
+   day it expires and a note (a group keeps its name when the field is
+   emptied). Save or Enter keeps them, Escape or Cancel leaves them as they
+   were; a date that is not a day says so and the editor stays open. */
+function DetailsEditor({
+  name,
+  expires,
+  note,
+  nameHint,
+  keepsName = false,
+  onSave,
+  onDone,
+}: {
+  name: string;
+  expires?: string;
+  note?: string;
+  nameHint: string;
+  keepsName?: boolean;
+  /** The words of why it was not kept, or null. */
+  onSave: (d: Details) => Promise<string | null>;
+  onDone: () => void;
+}) {
+  const [title, setTitle] = useState(name);
+  const [day, setDay] = useState(expires ?? "");
+  const [text, setText] = useState(note ?? "");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const first = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    first.current?.focus();
+    first.current?.select();
+  }, []);
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    const why = await onSave({ name: keepsName && !title.trim() ? undefined : title, expires: day, note: text });
+    setSaving(false);
+    if (why) setProblem(why);
+    else onDone();
+  };
+  const keys = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void save();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      onDone();
+    }
+  };
+  const left = expiryOf(day || undefined);
+  return (
+    <div className="flex flex-col gap-3 px-2 pb-2 pt-1">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_190px]">
+        <label className="flex min-w-0 flex-col gap-1">
+          <span className="px-1 text-[12.5px] font-semibold text-ink-mute">Name</span>
+          <Input inputRef={first} value={title} onChange={setTitle} placeholder={nameHint} label="Name" onKeyDown={keys} />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="px-1 text-[12.5px] font-semibold text-ink-mute">
+            Expires on{left ? ` · ${left.words}` : ""}
+          </span>
+          <Input type="date" value={day} onChange={setDay} label="Expires on" onKeyDown={keys} />
+        </label>
+      </div>
+      <label className="flex flex-col gap-1">
+        <span className="px-1 text-[12.5px] font-semibold text-ink-mute">Note</span>
+        <Input value={text} onChange={setText} placeholder="Where it is from, what it is for" label="Note" onKeyDown={keys} />
+      </label>
+      {problem && <p className="px-1 text-[13px] font-semibold text-danger">{problem}</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="solid" disabled={saving} onClick={() => void save()}>
+          Save
+        </Button>
+        <Button size="sm" variant="text" onClick={onDone}>
+          Cancel
+        </Button>
+        {day && (
+          <Button size="sm" variant="text" onClick={() => setDay("")} title="It does not expire">
+            No end date
+          </Button>
+        )}
+        {text.length > MAX_NOTE && <span className="text-[12.5px] font-semibold text-warn">The first {MAX_NOTE} characters are kept.</span>}
+      </div>
+    </div>
   );
 }
 
@@ -588,6 +727,8 @@ function NameField({ initial, address, onDone, onCancel }: { initial: string; ad
 function GroupsPane(p: DestinationsProps) {
   const [editing, setEditing] = useState<GroupView | "new" | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  // The group whose name, expiry and note are open, by id.
+  const [describing, setDescribing] = useState<string | null>(null);
   // The group whose members are open, by id.
   const [opened, setOpened] = useState<string | null>(null);
   /* Text pasted or dropped anywhere on the page while the groups show: a new
@@ -706,7 +847,22 @@ function GroupsPane(p: DestinationsProps) {
                 key={g.id}
                 lead={<Icon.layers />}
                 name={g.name}
-                sub={`${groupWords(g)}${g.uses > 0 ? ` · used ${formatAgo(p.now - g.lastUsedAt)}` : ""}`}
+                sub={`${groupWords(g)}${g.uses > 0 ? ` · used ${formatAgo(p.now - g.lastUsedAt)}` : ""}${g.note ? ` · ${firstLine(g.note)}` : ""}`}
+                tag={expiryTag(g.expires)}
+                tooltip={g.note || undefined}
+                below={
+                  describing === g.id ? (
+                    <DetailsEditor
+                      name={g.name}
+                      expires={g.expires}
+                      note={g.note}
+                      nameHint={g.name}
+                      keepsName
+                      onSave={(d) => p.onDescribeGroup(g.id, d)}
+                      onDone={() => setDescribing(null)}
+                    />
+                  ) : undefined
+                }
                 state={rowState(place, p)}
                 running={p.running}
                 busy={p.busy}
@@ -719,6 +875,7 @@ function GroupsPane(p: DestinationsProps) {
                 }}
                 menu={[
                   { label: "Edit", onClick: () => setEditing(g) },
+                  { label: "Name, expiry and note", onClick: () => setDescribing(g.id) },
                   { label: "Check every proxy", onClick: () => p.onCheckGroup(g) },
                   { label: `Remove from ${thisDevice()}`, onClick: () => setConfirming(g.id), danger: true },
                 ]}
@@ -1267,150 +1424,6 @@ function FreeTrouble({ words, again, onAgain, onOwn }: { words: string; again: s
         <button type="button" className="ux-link" onClick={onOwn}>
           Connect a proxy of your own <Icon.arrowRight className="h-3.5 w-3.5" />
         </button>
-      </div>
-    </div>
-  );
-}
-
-/* ── A pasted list, before it is saved ──────────────────────────────────── */
-
-/** Every line read by the engine's own parser, a dozen at a time: `true`, or
-    the parser's reason it cannot be read. Answers are kept per line, so typing
-    into a list only reads the lines that changed. */
-function useReadable(lines: string[], enabled = true): { read: Map<string, true | string>; done: boolean } {
-  const cache = useRef(new Map<string, true | string>());
-  const [, bump] = useState(0);
-  const key = lines.join("\n");
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    const queue = [...new Set(lines)].filter((l) => !cache.current.has(l));
-    if (!queue.length) return;
-    let since = 0;
-    const work = async () => {
-      while (queue.length && !cancelled) {
-        const l = queue.shift()!;
-        try {
-          await parseLine(l);
-          cache.current.set(l, true);
-        } catch (e) {
-          cache.current.set(l, e instanceof Error ? e.message : String(e));
-        }
-        if (++since >= 25) {
-          since = 0;
-          if (!cancelled) bump((n) => n + 1);
-        }
-      }
-      if (!cancelled) bump((n) => n + 1);
-    };
-    const t = setTimeout(() => void Promise.all(Array.from({ length: 12 }, work)), 250);
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, enabled]);
-  return { read: cache.current, done: lines.every((l) => cache.current.has(l)) };
-}
-
-/** What each of `lines` targets (a session, a region), asked of the engine in
-    one call (src-tauri/src/places.rs). Empty until it answers. */
-function useTargeting(lines: string[]): Map<string, Targeting | null> {
-  const [found, setFound] = useState(() => new Map<string, Targeting | null>());
-  const key = lines.join("\n");
-  useEffect(() => {
-    let live = true;
-    void describeLines(lines)
-      .then((about) => live && setFound(new Map(lines.map((l, i) => [l, about[i] ?? null] as const))))
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-  return found;
-}
-
-/** Every line read by the engine's own parser, so what is accepted is exactly
-    what will connect; the unreadable ones are shown with the engine's reason
-    and left out. One click keeps them as proxies or as one group. A batch of
-    sessions shows each session, not the address they all share. */
-function PasteReview({
-  lines,
-  room,
-  onCancel,
-  onAddAll,
-  onGroup,
-}: {
-  lines: string[];
-  /** How many more proxies can be saved. */
-  room: number;
-  onCancel: () => void;
-  onAddAll: (ok: string[]) => void;
-  onGroup: (ok: string[]) => void;
-}) {
-  // A phone's Back leaves the review, as Cancel does.
-  useBack(true, onCancel);
-  const { read, done } = useReadable(lines);
-  const ok = lines.filter((l) => read.get(l) === true);
-  const bad = lines.filter((l) => typeof read.get(l) === "string");
-  const shown = lines.slice(0, 150);
-  const targeting = useTargeting(shown);
-
-  return (
-    <div className="flex flex-col gap-3">
-      <BlockTitle
-        name={`${spacedN(lines.length)} proxies pasted`}
-        value={
-          done
-            ? `${spacedN(ok.length)} ready${bad.length ? ` · ${spacedN(bad.length)} unreadable` : ""}`
-            : `reading ${spacedN(lines.length)} lines`
-        }
-      />
-      <div className="ux-dests max-h-[330px] overflow-y-auto rounded-[14px] bg-[var(--well)] p-1.5">
-        {shown.map((l) => {
-          const r = read.get(l);
-          const parts = lineParts(l);
-          const about = targeting.get(l) ?? null;
-          return (
-            <div key={l} className="ux-dest !min-h-[44px]">
-              <span className="pick !cursor-default">
-                <span className={cx("lead", r === true ? "is-ok" : typeof r === "string" ? "is-bad" : "")}>
-                  {r === true ? <Icon.check /> : typeof r === "string" ? <Icon.cross /> : <Icon.clock />}
-                </span>
-                <span className="text">
-                  <span className="name num">{proxyTitle({ address: parts.address, about })}</span>
-                  <span className="sub">
-                    {typeof r === "string" ? (
-                      <span className="bad">{r}</span>
-                    ) : (
-                      aboutWords(about) || (parts.user ? `login ${parts.user}` : "no login")
-                    )}
-                  </span>
-                </span>
-              </span>
-            </div>
-          );
-        })}
-        {lines.length > shown.length && <p className="px-3 py-2 text-[13px] font-medium text-ink-mute">and {spacedN(lines.length - shown.length)} more</p>}
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="solid" disabled={!done || ok.length === 0 || ok.length > room} onClick={() => onAddAll(ok)} title="Each line becomes its own saved proxy">
-          <Icon.plus className="h-4 w-4" />
-          Add {done ? spacedN(ok.length) : "them"} as proxies
-        </Button>
-        <Button disabled={!done || ok.length === 0} onClick={() => onGroup(ok)} title="One group you connect to in one click">
-          <Icon.layers className="h-4 w-4" />
-          Make them one group
-        </Button>
-        <Button variant="text" onClick={onCancel}>
-          Cancel
-        </Button>
-        {done && ok.length > room && (
-          <span className="text-[13px] font-semibold text-warn">
-            Room for {spacedN(Math.max(0, room))} more saved proxies; a group holds up to {spacedN(MAX_GROUP_LINES)}.
-          </span>
-        )}
       </div>
     </div>
   );

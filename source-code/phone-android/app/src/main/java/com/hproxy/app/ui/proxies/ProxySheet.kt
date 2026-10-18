@@ -61,6 +61,7 @@ import com.hproxy.app.ui.theme.C
 import com.hproxy.app.ui.theme.type
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 
 /** A proxy as its sheet shows it, free or saved. */
 private data class Opened(
@@ -82,6 +83,9 @@ private data class Opened(
     /** The name it has now. */
     val name: String,
     val lastCheck: String?,
+    /** A saved one's last day and note. */
+    val expires: String? = null,
+    val note: String = "",
 )
 
 private fun openedOf(ref: PlaceRef): Opened? {
@@ -115,6 +119,8 @@ private fun openedOf(ref: PlaceRef): Opened? {
                 savedId = p.id,
                 name = p.name ?: "",
                 lastCheck = last?.let { v -> (if (v.ok) "Answered" else "No answer") + " · " + ago(v.at) },
+                expires = p.expires,
+                note = p.note ?: "",
             )
         }
         is PlaceRef.Free -> {
@@ -140,6 +146,28 @@ private fun openedOf(ref: PlaceRef): Opened? {
             )
         }
         is PlaceRef.Group -> null
+    }
+}
+
+/**
+ * Say what saved proxies are (one, or all those just added): `details` are the library's fields
+ * ("expires" YYYY-MM-DD, "note"); a field left out stays, an empty one is taken away. The engine's
+ * words when it refuses.
+ */
+internal suspend fun describe(ids: List<String>, vararg details: Pair<String, String>) {
+    try {
+        AppState.setLibrary(Engine.obj("describe", jsonOf("ids" to JSONArray(ids), "details" to jsonOf(*details))))
+    } catch (e: EngineError) {
+        AppState.toast(e.message ?: "It was not saved")
+    }
+}
+
+/** The same for a group. */
+internal suspend fun describeGroup(id: String, vararg details: Pair<String, String>) {
+    try {
+        AppState.setLibrary(Engine.obj("describeGroup", jsonOf("id" to id, "details" to jsonOf(*details))))
+    } catch (e: EngineError) {
+        AppState.toast(e.message ?: "It was not saved")
     }
 }
 
@@ -203,6 +231,16 @@ fun ColumnScope.ProxySheet(nav: Nav) {
         }
     }
 
+    // A saved one's last day, kept when picked, and its note, a moment after the last key.
+    var expires by remember(ref.key) { mutableStateOf(o.expires) }
+    var note by remember(ref.key) { mutableStateOf(o.note) }
+    LaunchedEffect(ref.key, note) {
+        val id = o.savedId ?: return@LaunchedEffect
+        if (note.trim() == o.note.trim()) return@LaunchedEffect
+        delay(450)
+        describe(listOf(id), "note" to note.trim())
+    }
+
     // Head: the flag, the proxy itself or its name, where it is.
     Row(
         Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 12.dp),
@@ -219,6 +257,18 @@ fun ColumnScope.ProxySheet(nav: Nav) {
 
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 12.dp)) {
         Field(name, { name = it.take(60) }, placeholder = "Give it a name, like Shop account", label = "Name", height = 52.dp, surface = C.bg, style = type(15.5.sp, FontWeight.Bold, C.ink))
+        val savedId = o.savedId
+        if (savedId != null) {
+            Spacer(Modifier.height(8.dp))
+            ExpiryField(expires, { day ->
+                expires = day
+                scope.launch { describe(listOf(savedId), "expires" to (day ?: "")) }
+                // A last day is a reminder three days before it: Android shows it once allowed.
+                if (day != null) nav.askNotifications()
+            })
+            Spacer(Modifier.height(8.dp))
+            Field(note, { note = it.take(500) }, placeholder = "Where it is from, what it is for", label = "Note", height = 52.dp, surface = C.bg)
+        }
         Spacer(Modifier.height(10.dp))
         Line()
         Fact("Proxy") {

@@ -1,5 +1,6 @@
-import { useLayoutEffect, useRef, useState, type JSX, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type JSX, type RefObject } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { supportChat } from "../lib/supportChat";
 import { isTauri } from "../lib/tauri";
 import IpPill from "./IpPill";
 import UpdatePanel from "./UpdatePanel";
@@ -8,7 +9,7 @@ import { Icon, cx, useSlidingPill } from "./ui";
 
 /** The pages. The checker (its History inside it) is a page of its own again since
     2026-10-12, beside Proxies. */
-export type View = "connect" | "proxies" | "checker" | "ai" | "settings";
+export type View = "connect" | "proxies" | "checker" | "ai" | "help" | "settings";
 
 /* Every screen is a tab in the middle, Settings included (2026-10-12). Five
    tabs with room around each fit a 1280 px window beside the address with short
@@ -20,6 +21,8 @@ const NAV: { id: View; label: string; title: string; icon: (p: { className?: str
   { id: "proxies", label: "Proxies", title: "Proxies", icon: Icon.layers },
   { id: "checker", label: "Checker", title: "Checker", icon: Icon.listCheck },
   { id: "ai", label: "AI", title: "Use with AI", icon: Icon.spark },
+  // Talking to HProxy support (HelpPage.tsx, 2026-10-18), as on the phone.
+  { id: "help", label: "Help", title: "Help", icon: Icon.chat },
   { id: "settings", label: "Settings", title: "Settings", icon: Icon.settings },
 ];
 
@@ -114,6 +117,8 @@ export default function TitleBar({ view, setView }: { view: View; setView: (v: V
   const right = useRef<HTMLDivElement>(null);
   useSlidingPill(row, pill, ".ux-tab.is-active", view);
   const address = useAddressFit(right);
+  // Support answered while Help was not showing: a dot on its tab.
+  const unseen = useSyncExternalStore(supportChat.subscribe, () => supportChat.snapshot().unseen);
   return (
     <div
       data-tauri-drag-region
@@ -141,6 +146,7 @@ export default function TitleBar({ view, setView }: { view: View; setView: (v: V
           >
             <t.icon />
             <span className="label">{t.label}</span>
+            {t.id === "help" && unseen > 0 && <i className="ux-tab-dot" title="A new answer from support" />}
           </button>
         ))}
       </nav>

@@ -19,7 +19,7 @@
 
    USAGE
      <Dropdown label="Export" icon={<Icon.download />} onMain={txt} items={[
-       { label: "Working list as .txt", note: "host:port, one per line", onClick: txt },
+       { label: "Working list as .txt", note: "as you gave them, with the logins, one per line", onClick: txt },
      ]} />
    ============================================================ */
 

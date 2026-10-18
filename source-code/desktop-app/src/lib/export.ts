@@ -103,7 +103,9 @@ export function toJson(rows: Row[]): string {
   return JSON.stringify(payload, null, 2);
 }
 
-/** Plain host:port, one per line. What gets pasted into another tool. */
+/** Each proxy as it was given, login and all, one per line: what gets pasted into another tool,
+    and what works there. (It was host:port only until 2026-10-18, so a proxy with a login came
+    out without it; the phone always copied them as pasted.) */
 export function toList(rows: Row[]): string {
-  return rows.map((r) => `${r.host}:${r.port}`).join("\n");
+  return rows.map((r) => r.raw.trim() || `${r.host}:${r.port}`).join("\n");
 }

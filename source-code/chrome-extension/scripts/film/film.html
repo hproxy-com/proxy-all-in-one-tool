@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>HProxy extension film</title>
+    <link rel="stylesheet" href="film.css" />
+  </head>
+  <!--
+    The stage of the extension's film (scripts/marketing-video.mjs), never part of the
+    extension: the recorder copies the folder, puts this page beside popup.html (only a page of
+    the extension's own may frame its popup), and records it at 1280 x 720. On the left the words
+    of what happens, as on the store's pictures; on the right a browser's toolbar with the H, and
+    under it the real popup in a frame, sized to its page as Chrome sizes a popup. film.js plays
+    the worker and drives the words, the badge and the pointer.
+  -->
+  <body>
+    <div class="words">
+      <div class="logo" aria-label="HProxy">
+        <svg viewBox="0 0 22 26" aria-hidden="true">
+          <path d="M0 0V0C3.98547 0 7.21633 3.23086 7.21633 7.21633V26H0V0Z" />
+          <rect x="14.2188" width="7.21633" height="26" />
+          <path d="M7.2349 26H0V15.9714C0 12.4548 2.85076 9.60408 6.36735 9.60408H14.2204V0H21.4367V10.4531C21.4367 13.9696 18.586 16.8204 15.0694 16.8204H7.2349V26Z" />
+        </svg>
+        <b>Proxy</b><i>.</i>
+      </div>
+      <div class="say" id="say"></div>
+    </div>
+
+    <div class="window">
+      <div class="tabstrip">
+        <div class="tab">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg>
+          <span>New Tab</span>
+        </div>
+      </div>
+      <div class="toolbar">
+        <svg class="nav" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6" /></svg>
+        <svg class="nav dim" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+        <svg class="nav" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12a7 7 0 1 1-2.05-4.95M19 4v4h-4" /></svg>
+        <div class="omni">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6" /><path d="m20 20-4.5-4.5" /></svg>
+          <span>Search or type a web address</span>
+        </div>
+        <button type="button" class="ext" id="ext" aria-label="HProxy">
+          <img src="icons/icon48.png" alt="" />
+          <span class="badge" id="badge" hidden>ON</span>
+        </button>
+        <span class="avatar" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="9" r="4" /><path d="M4.5 20a7.5 7.5 0 0 1 15 0" /></svg>
+        </span>
+      </div>
+    </div>
+
+    <div class="popup" id="popupBox">
+      <iframe id="popup" title="HProxy"></iframe>
+    </div>
+
+    <div class="ring" id="ring"></div>
+    <div class="arrow" id="arrow">
+      <svg width="30" height="30" viewBox="0 0 30 30"><path d="M6 4 L6 24.5 L11.2 19.6 L14.8 27.4 L18.4 25.8 L14.9 18.2 L22 18.2 Z" fill="#0a0a0a" stroke="#fff" stroke-width="1.8" stroke-linejoin="round" /></svg>
+    </div>
+
+    <script src="film.js"></script>
+  </body>
+</html>

@@ -105,6 +105,13 @@
       <div class="search" id="savedSearchBox" hidden>
         <input id="savedSearch" class="input input--search" placeholder="Search your proxies" autocomplete="off" spellcheck="false" aria-label="Search your proxies" />
       </div>
+      <!-- Once a saved proxy has a last day: how many plans end within three
+           days or have ended (else when the next one ends), and the list's
+           order, newest first or the soonest last day first. -->
+      <div id="expiryNote" class="expiry-note" hidden>
+        <span id="expiryWords" class="expiry-words"></span>
+        <button type="button" id="expirySort" class="link-btn">Soonest first</button>
+      </div>
       <div id="byoList" class="list"></div>
 
       <!-- Hidden until "Sign in with HProxy" has its server route (popup.js,
@@ -159,6 +166,8 @@
       <a class="link-btn" href="https://hproxy.com" target="_blank" rel="noopener">hproxy.com</a>
     </footer>
 
+    <!-- The last days of saved proxies, read as the worker reads them (expiry.js). -->
+    <script src="expiry.js"></script>
     <script type="module" src="popup.js"></script>
   </body>
 </html>

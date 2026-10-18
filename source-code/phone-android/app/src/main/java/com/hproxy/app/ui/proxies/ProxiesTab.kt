@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import com.hproxy.app.engine.Expiry
 import com.hproxy.app.engine.FreeExit
 import com.hproxy.app.engine.GroupItem
 import com.hproxy.app.engine.PlaceRef
@@ -394,10 +395,14 @@ private fun MineShelf(nav: Nav, query: String, state: LazyListState) {
 
     val justAdded = added.mapNotNull { id -> library.proxies.find { it.id == id } }
     val words = remember(library, answers) { library.proxies.associate { it.id to savedWords(it, answers[it.id]) } }
-    fun hit(p: ProxyItem): Boolean = words[p.id]?.let { w -> matches(query, w.title, w.sub, p.address, countryName(w.cc)) } ?: true
+    fun hit(p: ProxyItem): Boolean = words[p.id]?.let { w -> matches(query, w.title, w.sub, p.address, countryName(w.cc), p.note) } ?: true
     val fresh = justAdded.filter(::hit)
-    val groups = library.groups.filter { g -> matches(query, g.name, countryName(g.shared.country?.lowercase()), g.shared.city, g.shared.kind?.label) }
+    val groups = library.groups.filter { g -> matches(query, g.name, countryName(g.shared.country?.lowercase()), g.shared.city, g.shared.kind?.label, g.note) }
     val singles = library.proxies.filter { it.id !in added && hit(it) }
+    // Plans ending within three days, and ended ones, counted over the list (a group is one plan).
+    val days = remember(library) { (library.proxies.map { it.expires } + library.groups.map { it.expires }).mapNotNull { Expiry.daysLeft(it) } }
+    val soon = days.count { it in 0..Expiry.SOON }
+    val ended = days.count { it < 0 }
 
     // The fraud score of the saved proxies on screen, from where each came out at its last check
     // (a key with a quota is never spent on the whole list).
@@ -423,7 +428,7 @@ private fun MineShelf(nav: Nav, query: String, state: LazyListState) {
             ProxyRow(
                 cc = w.cc,
                 title = w.title,
-                sub = w.sub,
+                sub = listOfNotNull(w.sub, firstLine(p.note)).joinToString(" · "),
                 state = st,
                 ms = w.ms,
                 score = scoreOf(w, headline),
@@ -432,8 +437,10 @@ private fun MineShelf(nav: Nav, query: String, state: LazyListState) {
                 onClick = { nav.openProxy(ref) },
                 onMore = { go(nav, ref, conn) },
                 modifier = modifier,
+                tag = Expiry.of(p.expires),
             )
         }
+        if (soon > 0 || ended > 0) item("h-expiry") { ExpiryLine(soon, ended) }
         if (fresh.isNotEmpty()) {
             item("h-added") { ListHead("Just added") }
             items(fresh, key = { "a-" + it.id }) { p -> Saved(p, Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)) }
@@ -461,7 +468,7 @@ private fun GroupRow(nav: Nav, g: GroupItem, conn: Conn, modifier: Modifier) {
     ProxyRow(
         cc = g.shared.country?.lowercase(),
         title = g.name,
-        sub = listOfNotNull(g.shared.kind?.label, count, where).joinToString(" · "),
+        sub = listOfNotNull(g.shared.kind?.label, count, where, firstLine(g.note)).joinToString(" · "),
         state = st,
         ms = null,
         score = null,
@@ -470,7 +477,25 @@ private fun GroupRow(nav: Nav, g: GroupItem, conn: Conn, modifier: Modifier) {
         moreGlyph = I.right,
         moreTint = C.ink3,
         modifier = modifier,
+        tag = Expiry.of(g.expires),
     )
+}
+
+/** A note's first line, for a row; the whole note is on the proxy's sheet. */
+internal fun firstLine(note: String?): String? = note?.lineSequence()?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+
+/** Over the list while plans end within three days or have ended: how many of each. */
+@Composable
+private fun ExpiryLine(soon: Int, ended: Int) {
+    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (soon > 0) {
+            Txt("$soon ${if (soon == 1) "expires" else "expire"} within ${Expiry.SOON} days", type(13.sp, FontWeight.Bold, C.warn, numbers = true), maxLines = 1)
+        }
+        if (soon > 0 && ended > 0) Txt(" · ", type(13.sp, FontWeight.Bold, C.ink3), maxLines = 1)
+        if (ended > 0) {
+            Txt("$ended ${if (ended == 1) "has" else "have"} expired", type(13.sp, FontWeight.Bold, C.bad, numbers = true), maxLines = 1)
+        }
+    }
 }
 
 @Composable

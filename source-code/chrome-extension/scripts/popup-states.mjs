@@ -9,7 +9,12 @@
    the browser in use: tests/e2e/cdp.mjs) at 2x and captures:
 
      1  My proxies, not connected, a few example proxies kept
-     2  the same, one row pointed at (Connect and its ×)
+     2  the same, one row pointed at (Connect, its pencil and its ×)
+     2e last days (2026-10-15): two named with a note, a plan in its last
+        days, one ended, and the line over the list counting them
+     2f a row's editor open (name, last day, note)
+     2g the list by its soonest last day
+     2h a proxy past its last day connecting all the same, and saying so
      3  a proxy pasted and connecting
      4  your own proxy connected (the test proxy on this machine, which
         leaves by this machine's own address, so its checks rightly find a
@@ -138,6 +143,48 @@ try {
   await capture("1-proxies");
   await capture("2-proxies-hover", '#byoList .row[data-key="203.0.113.24:3128"]');
   await unhover();
+
+  /* Last days, counted from the page's own today. The toolbar's count is
+     read, not drawn (a headless browser has no toolbar). */
+  const lastDays = (extra = []) => `(() => {
+    const day = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return HPROXY_EXPIRY.todayHere(d); };
+    const kept = ${JSON.stringify(KEPT)};
+    kept[0] = { ...kept[0], name: "Shop account 3", expires: day(24), note: "Thirty-day plan, renewed by hand" };
+    kept[1] = { ...kept[1], expires: day(2) };
+    kept[3] = { ...kept[3], name: "Streaming UK", expires: day(-5), note: "Ask the seller to extend it" };
+    const more = ${JSON.stringify(extra)}.map((x) => ({ ...x, expires: day(x.expires) }));
+    return chrome.storage.local.set({ hproxy_byo: [...more, ...kept] });
+  })()`;
+  await js(lastDays());
+  await sleep(700);
+  await capture("2e-last-days");
+  console.log("toolbar count while not connected:", await js(`chrome.action.getBadgeText({})`));
+  await js(`${row("203.0.113.24:3128")}.querySelector(".row-edit").click()`);
+  await sleep(300);
+  await js(`(() => { const f = document.querySelector('.row-editor [data-field="name"]'); f.value = "Office line"; f.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+  // Its buttons in the picture too: the editor's foot at the window's foot.
+  await js(`document.querySelector(".row-editor").scrollIntoView({ block: "end" })`);
+  await capture("2f-editor");
+  await js(`window.scrollTo(0, 0)`);
+  await js(`document.querySelector('.row-editor [data-act="save"]').click()`);
+  await sleep(600);
+  console.log("saved from the editor:", await js(`${row("203.0.113.24:3128")}.querySelector(".row-name").textContent`));
+  await js(`document.getElementById("expirySort").click()`);
+  await sleep(300);
+  await capture("2g-soonest-first");
+  await js(`document.getElementById("expirySort").click()`);
+  // The test proxy on this machine as a plan that ended three days ago.
+  await js(lastDays([{ host: "127.0.0.1", port: proxy.port, scheme: "http", username: "demo", password: "demo-pass", country: "", name: "Old plan", expires: -3 }]));
+  await sleep(600);
+  await js(`${row(`127.0.0.1:${proxy.port}`)}.click()`);
+  await until(`document.getElementById("conn").dataset.phase === "on"`, 15);
+  await sleep(900);
+  await capture("2h-ended-connects");
+  console.log("said on connecting:", await js(`document.getElementById("byoMsg").textContent`));
+  await js(`chrome.runtime.sendMessage({ type: "disconnect" })`);
+  await until(`document.getElementById("conn").dataset.phase === "off"`, 10);
+  await js(`chrome.storage.local.set({ hproxy_byo: ${JSON.stringify(KEPT)} })`);
+  await sleep(600);
 
   // A proxy of our own, pasted with its login: the test proxy on this machine.
   await js(`(() => { document.getElementById("byoInput").value = "127.0.0.1:${proxy.port}:demo:demo-pass"; document.getElementById("byoConnect").click(); })()`);

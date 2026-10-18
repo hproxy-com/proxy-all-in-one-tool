@@ -81,8 +81,9 @@ export type InputProps = {
   mono?: boolean;
   /** Draws the field in red. The message goes beside it, not in it. */
   invalid?: boolean;
-  /** `password` for a secret the screen should not show: an API key. */
-  type?: "text" | "number" | "password";
+  /** `password` for a secret the screen should not show: an API key. `date`
+      for a day (its value YYYY-MM-DD, the system's own picker). */
+  type?: "text" | "number" | "password" | "date";
   min?: number;
   max?: number;
   /** Required: the accessible name. */

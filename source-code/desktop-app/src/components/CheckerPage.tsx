@@ -17,7 +17,7 @@ import { cx } from "./ui";
    History a step deeper, with the way back in the top bar. */
 
 export default function CheckerPage({ settings, active }: { settings: Settings; active: boolean }) {
-  const { checkSeed, connectThrough, saveAsGroup, destinations } = useConnection();
+  const { checkSeed, connectThrough, saveAsGroup, keepLines, open, destinations } = useConnection();
   // The names given in My proxies, by host:port: a checked proxy you named shows its name first.
   const names = useMemo(
     () => new Map(destinations.proxies.filter((p) => p.name).map((p) => [p.address, p.name as string])),
@@ -41,6 +41,8 @@ export default function CheckerPage({ settings, active }: { settings: Settings; 
           settings={settings}
           onConnect={connectThrough}
           onSaveGroup={saveAsGroup}
+          onKeep={keepLines}
+          onOpenList={() => open("proxies")}
           seed={checkSeed}
           onHistory={() => (phone ? pushPage(() => setHistory(true)) : setHistory(true))}
           names={names}

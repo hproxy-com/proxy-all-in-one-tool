@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Shared application state, managed by Tauri.
 pub struct AppState {
@@ -116,6 +116,15 @@ struct DonePayload {
     /// list fell back to local, a chunk failed. A silent fallback is worse than
     /// a slow run.
     notices: Vec<String>,
+}
+
+/// What a run found about a line, remembered a while the way a paste field's check is, so rows
+/// kept from the Checker right after ("Add 4" to the proxy list) carry it instead of reading
+/// "not checked yet" (places.rs, `PlacesState::checked`).
+fn remember_row(app: &AppHandle, r: &CheckResult) {
+    if let Some(places) = app.try_state::<crate::places::PlacesState>() {
+        places.checked(&r.input, crate::places::verdict_of_check(r, crate::places::now_ms()));
+    }
 }
 
 /// Start a run. Returns immediately; results arrive as `checker:result` events
@@ -285,6 +294,7 @@ pub fn check_proxies(app: AppHandle, state: State<'_, AppState>, args: CheckArgs
                         let _ = exit_tx.send(exit.to_string());
                     }
                 }
+                remember_row(&emit_app, &r);
                 let _ = emit_app.emit("checker:result", r);
             })
             .await;
@@ -394,6 +404,7 @@ fn spawn_api_task(
                     if r.alive {
                         api_alive.fetch_add(1, Ordering::Relaxed);
                     }
+                    remember_row(&app, &r);
                     let _ = app.emit("checker:result", r);
                 })
                 .await;

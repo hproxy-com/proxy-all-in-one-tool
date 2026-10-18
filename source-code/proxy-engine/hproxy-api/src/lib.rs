@@ -11,6 +11,8 @@
 //!              default, or the person's own key at another service.
 //!   versions   `https://hproxy.com/downloads/versions.json`: the newest version
 //!              of each product and the oldest one still supported.
+//!   usage      `https://hproxy.com/v1/app/usage`: a copy's daily counts, kept
+//!              and sent only after the person's yes in the app.
 //!
 //! The checking itself (every transport, the judge ladder, the grading and the
 //! adaptive governor) lives in `hproxy-probe`. This crate only talks to our
@@ -22,6 +24,7 @@ pub mod fraud;
 pub mod free_list;
 pub mod geo;
 pub mod leak;
+pub mod usage;
 pub mod versions;
 
 /// The HTTP client type the functions here take, so callers can hold one

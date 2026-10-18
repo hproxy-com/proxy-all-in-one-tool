@@ -1116,6 +1116,8 @@ mod tests {
             last_used_at: 0,
             uses: 0,
             summary: Default::default(),
+            expires: None,
+            note: None,
         });
         (PlacesState::with(lib), proxy_id, "g1".into())
     }

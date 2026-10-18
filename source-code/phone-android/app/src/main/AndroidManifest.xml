@@ -99,5 +99,10 @@
         <receiver
             android:name=".firewall.AllowReceiver"
             android:exported="false" />
+
+        <!-- Plans close to their last day: the twice-daily look (remind/Reminders.kt). -->
+        <receiver
+            android:name=".remind.RemindersReceiver"
+            android:exported="false" />
     </application>
 </manifest>

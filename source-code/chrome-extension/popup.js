@@ -40,6 +40,14 @@ import { parseLine } from "./line.js";
 import { httpTwinPort } from "./gateways.js";
 import { riseIn, rollDigits, slideIn, unfold } from "./motion.js";
 
+/* A saved proxy's last day, read the way the worker reads it (expiry.js, a
+   plain script popup.html loads before this module). */
+const { cleanDate, todayHere, daysLeft, expiryOf, dayWords, SOON } = globalThis.HPROXY_EXPIRY;
+/* A saved proxy's name and note are kept as long as the computer app's
+   library keeps them (proxy-engine/hproxy-places, library.rs). */
+const MAX_NAME = 60;
+const MAX_NOTE = 500;
+
 const API = "https://hproxy.com";
 
 /* "Your HProxy plans" needs "Sign in with HProxy", whose server route is not
@@ -77,6 +85,11 @@ let countries = [];
 let favCountries = [];
 let countryFilter = "";
 let savedFilter = "";
+/* My proxies' order: "recent" (as kept, the newest on top) or "expiring"
+   (the soonest last day on top, the ended ones above all). Kept between
+   openings. */
+let savedSort = "recent";
+const SORT_KEY = "hproxy_saved_sort";
 let connectingCC = null;
 /* Quick Connect was pressed and has not answered yet. */
 let connectingQuick = false;
@@ -179,6 +192,7 @@ function setSub(words, ip = "") {
 const GLOBE_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg>`;
 const KEY_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4" /><path d="m11 12 8-8m-3 3 2.5 2.5M13.5 9.5 16 12" /></svg>`;
 const CROSS_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11" /></svg>`;
+const PEN_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 19.5h4l10.5-10.5-4-4L4.5 15.5z" /><path d="m12.5 7.5 4 4" /></svg>`;
 const STAR_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.8 6.6 19.7l1.1-6.1-4.5-4.2 6.1-.8z" /></svg>`;
 const H_SVG = `<svg class="solid" viewBox="0 0 22 26" aria-hidden="true"><path d="M0 0V0C3.98547 0 7.21633 3.23086 7.21633 7.21633V26H0V0Z" /><rect x="14.2188" width="7.21633" height="26" /><path d="M7.2349 26H0V15.9714C0 12.4548 2.85076 9.60408 6.36735 9.60408H14.2204V0H21.4367V10.4531C21.4367 13.9696 18.586 16.8204 15.0694 16.8204H7.2349V26Z" /></svg>`;
 
@@ -208,6 +222,24 @@ async function toggleConnection() {
     if (saved) return connectSaved(saved);
   }
   return quickConnect();
+}
+
+/** Where the switch goes, in words: the last place used (a saved proxy by its
+    name when it has one), or the fastest free proxy when there is none yet. */
+function nextWords() {
+  if (lastTarget?.kind === "pin") return savedList.find((x) => `${x.host}:${x.port}` === lastTarget.key)?.name || lastTarget.key;
+  if (lastTarget?.kind === "vpn" && lastTarget.country) return ccName(lastTarget.country);
+  return "the fastest free proxy";
+}
+
+/* Off, the switch's title and the line under it say where it goes; on, the
+   title says it disconnects. Painted again when the saved list changes, as a
+   name may have been given meanwhile. */
+function paintNext() {
+  const sw = el("connSwitch");
+  const next = nextWords();
+  if (sw) sw.title = sw.getAttribute("aria-checked") === "true" ? "Disconnect" : `Connect to ${next}`;
+  text("heroHint", `Connects to ${next}`);
 }
 
 /* ── status ─────────────────────────────────────────────────────────── */
@@ -249,15 +281,9 @@ async function refreshStatus({ rerunAnalysis = false } = {}) {
      it says where it goes: the last place used, or the fastest free proxy
      when there is none yet. */
   const lit = on_ || busyNow;
-  const next =
-    lastTarget?.kind === "pin" ? lastTarget.key : lastTarget?.kind === "vpn" && lastTarget.country ? ccName(lastTarget.country) : "the fastest free proxy";
-  const sw = el("connSwitch");
-  if (sw) {
-    sw.setAttribute("aria-checked", String(lit));
-    sw.title = lit ? "Disconnect" : `Connect to ${next}`;
-  }
+  el("connSwitch")?.setAttribute("aria-checked", String(lit));
   show("heroHint", !lit);
-  text("heroHint", `Connects to ${next}`);
+  paintNext();
 
   /* Where you appear, while there is a connection. Its checks only while
      there is something of it to measure: a proxy that refuses the login, has
@@ -1010,18 +1036,25 @@ function followWaiting() {
   }
 }
 
-/** Store a proxy in the saved list, newest first, no duplicates. */
+/** Store a proxy in the saved list, newest first, no duplicates. Pasted
+    again, it keeps what was written about it (its name, last day and note). */
 async function saveByo(proxy) {
   const list = await store.get("local", "hproxy_byo", []);
   const key = `${proxy.host}:${proxy.port}`;
-  const next = [{ ...proxy, label: key }, ...list.filter((x) => `${x.host}:${x.port}` !== key)].slice(0, 50);
+  const before = list.find((x) => `${x.host}:${x.port}` === key);
+  const next = [{ ...before, ...proxy, label: key }, ...list.filter((x) => `${x.host}:${x.port}` !== key)].slice(0, 50);
   await store.set("local", "hproxy_byo", next);
 }
 
-/** Connect to a saved proxy, and make it the place the switch goes back to. */
+/** Connect to a saved proxy, and make it the place the switch goes back to.
+    One past its last day connects all the same (plans get extended) and
+    says so. */
 async function connectSaved(x) {
   const key = `${x.host}:${x.port}`;
   show("byoMsg", false);
+  if (cleanDate(x.expires) && expiryOf(x.expires)?.tone === "bad") {
+    byoMsg(`Its plan ended on ${dayWords(x.expires)}. Connecting anyway.`, "warn", key);
+  }
   connectingKey = key;
   failedAt = null;
   markSavedStates();
@@ -1072,28 +1105,49 @@ function markSavedStates() {
   }
 }
 
-/* A saved proxy: its country's flag (a globe until it is known), its address,
-   a key when it carries a login, and what it speaks. Pointed at, it offers
-   Connect and the × that removes it. */
-function savedRow(x) {
+/** A note's first line, for a row; the whole note is the row's tooltip. */
+const firstLine = (note) => (note ? String(note).split("\n")[0].trim() : "");
+
+/* A saved proxy: its country's flag (a globe until it is known), its name or
+   else its address, a key when it carries a login; under it how many days
+   its plan has left, then the address under a name, the country, what it
+   speaks and the first line of its note. Pointed at, it offers Connect, the
+   pencil for its name, last day and note, and the × that removes it. */
+function savedRow(x, today = todayHere()) {
   const key = `${x.host}:${x.port}`;
   const cc = /^[A-Za-z]{2}$/.test(x.country || "") ? String(x.country).toUpperCase() : "";
+  const left = cleanDate(x.expires) ? expiryOf(x.expires, today) : null;
+  const called = x.name || key;
   const row = document.createElement("div");
   row.className = "row";
   row.dataset.key = key;
-  row.dataset.meta = [cc ? ccName(cc) : "", (x.scheme || "http").toUpperCase()].filter(Boolean).join(" · ");
+  row.dataset.meta = [x.name ? key : "", cc ? ccName(cc) : "", (x.scheme || "http").toUpperCase(), firstLine(x.note)]
+    .filter(Boolean)
+    .join(" · ");
+  if (x.note) row.title = x.note;
   row.innerHTML =
     `<span class="row-lead">${cc ? flagImg(cc) : GLOBE_SVG}</span>` +
     `<span class="row-main">` +
-    `<span class="row-name">${escapeHtml(x.host)}<span class="port">:${escapeHtml(String(x.port))}</span>` +
+    `<span class="row-name">` +
+    (x.name ? escapeHtml(x.name) : `${escapeHtml(x.host)}<span class="port">:${escapeHtml(String(x.port))}</span>`) +
     (x.username ? `<span class="mark" title="With a login">${KEY_SVG}</span>` : "") +
     `</span>` +
+    `<span class="row-sub">` +
+    (left
+      ? `<span class="row-days" data-tone="${left.tone}" title="Last day: ${escapeHtml(dayWords(x.expires, today))}">${left.words}</span>`
+      : "") +
     `<span class="row-meta">${escapeHtml(row.dataset.meta)}</span>` +
     `</span>` +
+    `</span>` +
     `<span class="row-go">Connect</span>` +
-    `<button type="button" class="row-del" title="Remove" aria-label="Remove ${escapeHtml(key)}">${CROSS_SVG}</button>`;
+    `<button type="button" class="row-edit" title="Name, expiry and note" aria-expanded="false" aria-label="Name, expiry and note of ${escapeHtml(called)}">${PEN_SVG}</button>` +
+    `<button type="button" class="row-del" title="Remove" aria-label="Remove ${escapeHtml(called)}">${CROSS_SVG}</button>`;
   // Decided when pressed, not when drawn: the session may have changed since.
   pressable(row, () => (isSavedOn(x) ? doDisconnect() : connectSaved(x)));
+  row.querySelector(".row-edit").addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleEditor(row, x);
+  });
   row.querySelector(".row-del").addEventListener("click", async (e) => {
     e.stopPropagation();
     const current = await store.get("local", "hproxy_byo", []);
@@ -1120,17 +1174,23 @@ async function renderByoList() {
     placeBar(false);
   }
   show("savedSearchBox", savedList.length > 6);
+  drawExpiryNote();
   drawSaved();
+  // A name given meanwhile: the line under the switch says it.
+  paintNext();
 }
 
 /* Drawn from the list each time, matches only: a row hidden in place would
-   leave its hairline above the next one. Searched by address, country or
-   protocol. */
+   leave its hairline above the next one. Searched by name, address, country,
+   protocol or note; in the order chosen over the list (savedSort). An open
+   editor comes back under its row, the caret with it when it was there. */
 function drawSaved() {
   const list = el("byoList");
   if (!list) return;
+  const caretIn = !!document.activeElement?.closest?.(".row-editor");
   list.textContent = "";
   if (!savedList.length) {
+    editing = null;
     list.innerHTML =
       `<p class="hint">Paste a proxy above. Each one that works is kept here.</p>` +
       `<p class="hint">No proxy yet? <button type="button" class="link-btn" id="tryFree">Try a free one</button></p>`;
@@ -1138,14 +1198,193 @@ function drawSaved() {
     return;
   }
   const q = savedFilter.trim().toLowerCase();
-  const words = (x) => `${x.host}:${x.port} ${x.country ? ccName(x.country) : ""} ${x.scheme || "http"}`.toLowerCase();
-  const matches = savedList.filter((x) => !q || words(x).includes(q));
+  const words = (x) =>
+    `${x.name || ""} ${x.host}:${x.port} ${x.country ? ccName(x.country) : ""} ${x.scheme || "http"} ${x.note || ""}`.toLowerCase();
+  // YYYY-MM-DD orders as text the way it orders as days; ties keep the kept order.
+  const lastDay = (x) => cleanDate(x.expires) || "9999";
+  const ordered = savedSort === "expiring" ? [...savedList].sort((a, b) => lastDay(a).localeCompare(lastDay(b))) : savedList;
+  const matches = ordered.filter((x) => !q || words(x).includes(q));
   if (!matches.length) {
+    editing = null;
     list.innerHTML = `<p class="hint">None of your proxies matches "${escapeHtml(savedFilter.trim())}".</p>`;
     return;
   }
-  for (const x of matches) list.appendChild(savedRow(x));
+  const today = todayHere();
+  let editRow = null;
+  for (const x of matches) {
+    const row = savedRow(x, today);
+    if (editing?.key === row.dataset.key) editRow = row;
+    list.appendChild(row);
+  }
+  if (editRow) placeEditor(editRow, caretIn ? "back" : "none");
+  else editing = null;
   markSavedStates();
+}
+
+/* Over the list once any saved proxy has a last day: how many plans end
+   within three days and how many have ended, else when the next one ends;
+   and the switch between newest first and the soonest last day first. */
+function drawExpiryNote() {
+  const box = el("expiryNote");
+  const said = el("expiryWords");
+  if (!box || !said) return;
+  const today = todayHere();
+  const dated = savedList.map((x) => cleanDate(x.expires)).filter(Boolean);
+  box.hidden = !dated.length;
+  if (!dated.length) return;
+  const days = dated.map((day) => daysLeft(day, today));
+  const soon = days.filter((d) => d >= 0 && d <= SOON).length;
+  const ended = days.filter((d) => d < 0).length;
+  const parts = [];
+  if (soon) parts.push(`<span data-tone="warn">${soon} ${soon === 1 ? "expires" : "expire"} within ${SOON} days</span>`);
+  if (ended) parts.push(`<span data-tone="bad">${ended} ${ended === 1 ? "has" : "have"} expired</span>`);
+  if (!parts.length) parts.push(`The next plan ends on ${escapeHtml(dayWords([...dated].sort()[0], today))}`);
+  said.innerHTML = parts.join(" · ");
+  const sort = el("expirySort");
+  if (sort) {
+    sort.textContent = savedSort === "expiring" ? "Newest first" : "Soonest first";
+    sort.title = savedSort === "expiring" ? "Show the proxies saved last on top" : "Show the soonest last day on top";
+  }
+}
+
+/* ── a saved proxy's name, last day and note ────────────────────────── */
+
+/* The editor open under a saved proxy and what is typed in it so far
+   ({ key, name, expires, note, focus }): the list is drawn again whenever the
+   saved list changes (the worker may save a proxy meanwhile), and the editor
+   comes back as it was. One at a time. */
+let editing = null;
+
+/** Open the editor under `row`, or close it when it is open there already. */
+function toggleEditor(row, x) {
+  const key = `${x.host}:${x.port}`;
+  const wasHere = editing?.key === key;
+  closeEditor();
+  if (wasHere) return;
+  editing = { key, name: x.name || "", expires: cleanDate(x.expires) || "", note: x.note || "", focus: "name" };
+  placeEditor(row, "first");
+}
+
+function closeEditor() {
+  editing = null;
+  document.querySelectorAll("#byoList .row-editor").forEach((box) => box.remove());
+  document.querySelectorAll("#byoList .row-edit[aria-expanded='true']").forEach((b) => b.setAttribute("aria-expanded", "false"));
+}
+
+/* The editor of `editing`, under its row: Save or Enter keeps the words,
+   Cancel or Escape leaves them as they were; a day that is not one says so
+   and the editor stays. `caret`: "first" puts it in the name, "back" where
+   it was before the list was drawn again, "none" leaves it alone. */
+function placeEditor(row, caret) {
+  const draft = editing;
+  const box = document.createElement("div");
+  box.className = "row-editor";
+  box.innerHTML =
+    `<div class="editor-pair">` +
+    `<label class="editor-field"><span class="editor-label">Name</span>` +
+    `<input class="input" data-field="name" maxlength="${MAX_NAME}" placeholder="Like Netflix US" autocomplete="off" spellcheck="false" /></label>` +
+    `<label class="editor-field"><span class="editor-label" data-left>Expires on</span>` +
+    `<input class="input" data-field="expires" type="date" min="2000-01-01" max="2199-12-31" /></label>` +
+    `</div>` +
+    `<label class="editor-field"><span class="editor-label">Note</span>` +
+    `<input class="input" data-field="note" maxlength="${MAX_NOTE}" placeholder="Where it is from, what it is for" autocomplete="off" spellcheck="false" /></label>` +
+    `<p class="msg bad" data-problem hidden></p>` +
+    `<div class="editor-actions">` +
+    `<button type="button" class="btn btn--primary btn--sm" data-act="save">Save</button>` +
+    `<button type="button" class="link-btn" data-act="cancel">Cancel</button>` +
+    `<button type="button" class="link-btn" data-act="clear" title="It does not expire">No end date</button>` +
+    `</div>`;
+  const field = (name) => box.querySelector(`[data-field="${name}"]`);
+  const problem = box.querySelector("[data-problem]");
+  const say = (words) => {
+    problem.hidden = !words;
+    problem.textContent = words || "";
+  };
+  // How long the day typed leaves, beside its label, as the row's chip will say it.
+  const showLeft = () => {
+    const left = expiryOf(cleanDate(field("expires").value));
+    box.querySelector("[data-left]").textContent = left ? `Expires on · ${left.words}` : "Expires on";
+    box.querySelector('[data-act="clear"]').hidden = !field("expires").value;
+  };
+  for (const name of ["name", "expires", "note"]) field(name).value = draft[name];
+  showLeft();
+
+  const save = async () => {
+    if (field("expires").validity?.badInput) return say("That is not a day of the calendar.");
+    const why = await describeSaved(draft.key, {
+      name: field("name").value,
+      expires: field("expires").value,
+      note: field("note").value,
+    });
+    if (why) return say(why);
+    closeEditor();
+    // The storage listener draws the list again, with the new words.
+  };
+  const leave = () => {
+    closeEditor();
+    row.querySelector(".row-edit")?.focus();
+  };
+  box.addEventListener("input", (e) => {
+    const name = e.target.dataset?.field;
+    if (!name) return;
+    draft[name] = e.target.value;
+    if (name === "expires") showLeft();
+    say(null);
+  });
+  box.addEventListener("focusin", (e) => {
+    if (e.target.dataset?.field) draft.focus = e.target.dataset.field;
+  });
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.matches("input")) {
+      e.preventDefault();
+      void save();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      leave();
+    }
+  });
+  box.querySelector('[data-act="save"]').addEventListener("click", () => void save());
+  box.querySelector('[data-act="cancel"]').addEventListener("click", leave);
+  box.querySelector('[data-act="clear"]').addEventListener("click", () => {
+    field("expires").value = "";
+    draft.expires = "";
+    showLeft();
+    field("expires").focus();
+  });
+
+  row.after(box);
+  row.querySelector(".row-edit")?.setAttribute("aria-expanded", "true");
+  const at = field(draft.focus) || field("name");
+  if (caret === "first") {
+    at.focus();
+    at.select();
+  } else if (caret === "back") {
+    at.focus();
+    // A date field has no caret to place.
+    if (at.type !== "date") at.setSelectionRange(at.value.length, at.value.length);
+  }
+}
+
+/** Keep what was written about a saved proxy: its name, its last day and a
+    note, an empty field taking its word away. Says why when it cannot. */
+async function describeSaved(key, { name, expires, note }) {
+  const day = String(expires || "").trim();
+  if (day && !cleanDate(day)) return "That is not a day between 2000 and 2199.";
+  const list = await store.get("local", "hproxy_byo", []);
+  const at = list.findIndex((x) => `${x.host}:${x.port}` === key);
+  if (at < 0) return "This proxy is no longer in your list.";
+  // Counted in characters, as the computer app's library counts them.
+  const tidy = (s, most) => Array.from(String(s || "").replace(/\s+/g, " ").trim()).slice(0, most).join("").trim();
+  const next = { ...list[at] };
+  const put = (field, value) => {
+    if (value) next[field] = value;
+    else delete next[field];
+  };
+  put("name", tidy(name, MAX_NAME));
+  put("expires", day);
+  put("note", tidy(note, MAX_NOTE));
+  await store.set("local", "hproxy_byo", list.map((x, i) => (i === at ? next : x)));
+  return null;
 }
 
 /* ── Proxies: your HProxy plans ─────────────────────────────────────── */
@@ -1355,6 +1594,12 @@ on("savedSearch", "input", () => {
   savedFilter = el("savedSearch").value;
   drawSaved();
 });
+on("expirySort", "click", () => {
+  savedSort = savedSort === "expiring" ? "recent" : "expiring";
+  void store.set("local", SORT_KEY, savedSort);
+  drawExpiryNote();
+  drawSaved();
+});
 on("byoConnect", "click", byoConnectNow);
 on("byoInput", "keydown", (e) => {
   if (e.key === "Enter") byoConnectNow();
@@ -1388,6 +1633,7 @@ async function init() {
   document.fonts?.ready.then(() => placeBar(false)).catch(() => {});
 
   renderFavs();
+  savedSort = (await store.get("local", SORT_KEY, "recent")) === "expiring" ? "expiring" : "recent";
   renderByoList();
   if (PLANS_LIVE) {
     show("plansBlock", true);

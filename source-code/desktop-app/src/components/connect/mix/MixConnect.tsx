@@ -8,7 +8,8 @@ import HLetter from "../../HLetter";
 import { DigitRoll, Flag, Icon, cx } from "../../ui";
 import { ConnMessages, LeakCheck, SystemProxyRow, connectionWords, type ConnectionCardProps } from "../ConnectionCard";
 import { useConnection } from "../connection";
-import MixMap, { type Fade } from "./MixMap";
+import { ChangeRows, useChangeList } from "../QuickChange";
+import MixMap, { type Fade, type PinPlace } from "./MixMap";
 import { CITY_S, Flight, TONES, WORLD_S, camOn, centreOf, countryOf, countryScale } from "./worldMap";
 
 /* Mix: the phone app's main screen on the computer (the A + C mix of the design rounds): C's
@@ -21,6 +22,8 @@ import { CITY_S, Flight, TONES, WORLD_S, camOn, centreOf, countryOf, countryScal
    design (ConnectionCard.tsx); only the look is the phone's. */
 
 type Props = { card: ConnectionCardProps; side: ReactNode; note?: ReactNode };
+
+type Sheet = "places" | "change" | "menu";
 
 /** A place on the map, unless missing or the nowhere at 0,0 (what IP data says when it knows
     only a country, or nothing). */
@@ -57,7 +60,9 @@ export default function MixConnect({ card: p, side, note }: Props) {
   const w = connectionWords(p);
   const dark = useDark();
   const [rootRef, { w: W, h: H }] = useSize<HTMLDivElement>();
-  const [sheet, setSheet] = useState<"places" | "menu" | null>(null);
+  // places: Quick connect with Connect's paste field (a proxy pasted here); change: Quick change
+  // (the card's Change); menu: what only a computer has.
+  const [sheet, setSheet] = useState<Sheet | null>(null);
   // Closing: the sheet goes back down through the window's edge first (styles/connect-mix.css).
   const [leaving, setLeaving] = useState(false);
   const shownSheet = useRef(sheet);
@@ -67,7 +72,7 @@ export default function MixConnect({ card: p, side, note }: Props) {
     if (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches) setSheet(null);
     else setLeaving(true);
   };
-  const openSheet = (s: "places" | "menu") => {
+  const openSheet = (s: Sheet) => {
     setLeaving(false);
     setSheet(s);
   };
@@ -81,21 +86,22 @@ export default function MixConnect({ card: p, side, note }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [sheet, leaving]); // eslint-disable-line react-hooks/exhaustive-deps
-  const { quickAsk, askQuick } = useConnection();
+  const { quickAsk } = useConnection();
+  const changes = useChangeList();
 
   const phase = p.phase;
   const on = phase === "on" || phase === "switching" || phase === "rotating";
   const busy = phase === "connecting";
 
-  // Connect's paste field asked for (a proxy pasted on this page, the switch with nothing
-  // picked): the places come up with it. An ask from an earlier visit is not one.
+  // Connect's paste field asked for (a proxy pasted on this page): the places come up with it.
+  // An ask from an earlier visit is not one.
   useEffect(() => {
     if (quickAsk && Date.now() - quickAsk < 1500) openSheet("places");
   }, [quickAsk]); // eslint-disable-line react-hooks/exhaustive-deps
-  // A place taken in the sheet (a row, the field's Connect) starts a connect: the sheet gives
+  // A place taken in a sheet (a row, the field's Connect) starts a connect: the sheet gives
   // way so the map can show it. Anything else in it (Check again) leaves it open.
   useEffect(() => {
-    if ((phase === "connecting" || phase === "switching") && shownSheet.current === "places") closeSheet();
+    if ((phase === "connecting" || phase === "switching") && (shownSheet.current === "places" || shownSheet.current === "change")) closeSheet();
   }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
   // Why the last connect did not go through, until the next one starts: under the switch,
   // where you look (it showed only on the Proxies page's row before).
@@ -133,6 +139,16 @@ export default function MixConnect({ card: p, side, note }: Props) {
     } else flight.go(cam);
   }, [camKey, W > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The pin stands on the place the camera goes to and rides the map while it flies there. A new
+  // place (the exit's city once a probe has said it, the country when you are off) makes it come
+  // up there; only closer or farther, it stays. Read here, in the render that brings the new
+  // place's words, so they never show for a frame where the old place was.
+  const at = camOn(target?.[0] ?? 20, target?.[1] ?? 10, scale);
+  const place = useRef<PinPlace>({ x: at.x, y: at.y, since: -Infinity });
+  if (Math.abs(at.x - place.current.x) > 1e-6 || Math.abs(at.y - place.current.y) > 1e-6) {
+    place.current = { x: at.x, y: at.y, since: performance.now() };
+  }
+
   // The lit country hands over to the next one: the old one fades out while the new one fades in.
   const fade = useRef<Fade>({ exit: pinCc, start: 0 });
   const [fadeKey, setFadeKey] = useState(0);
@@ -164,10 +180,23 @@ export default function MixConnect({ card: p, side, note }: Props) {
     setKnob({ x: a.right - b.left - 8 - 52, y: a.top - b.top + a.height / 2 });
   }, [W, H]); // eslint-disable-line react-hooks/exhaustive-deps
   const reach = Math.hypot(Math.max(knob.x, width - knob.x), Math.max(knob.y, (H || 700) - knob.y)) * 1.04;
+  // The blue layer is there while a connection is on, and leaves once its circle has closed
+  // (onTransitionEnd below). It comes in closed and opens one style pass later: a layer that
+  // starts at its full size has nothing to grow from, and the page turned blue in one frame
+  // (0.3.8). Off, it closes at once, as before. Already on when the page opens: blue at once.
+  const floodRef = useRef<HTMLDivElement>(null);
   const [blueUp, setBlueUp] = useState(on);
+  const [open, setOpen] = useState(on);
   useEffect(() => {
     if (on) setBlueUp(true);
+    else setOpen(false);
   }, [on]);
+  useLayoutEffect(() => {
+    if (!on || !blueUp || open) return;
+    // The closed circle is worked out first, so the transition runs from it.
+    floodRef.current?.getBoundingClientRect();
+    setOpen(true);
+  }, [on, blueUp, open]);
 
   const state = phase === "off"
     ? "Not connected"
@@ -194,27 +223,25 @@ export default function MixConnect({ card: p, side, note }: Props) {
         ? "Your own address"
         : "Pick where you appear";
 
-  const press = () => {
-    if (on || busy || phase === "leaving") p.onToggle();
-    else if (!p.view || !p.canConnect) askQuick();
-    else p.onToggle();
-  };
+  // On, off, or with none of yours Proxies saying to add them first (connection.tsx, toggle).
+  const press = p.onToggle;
 
   return (
     <div ref={rootRef} className="mix" data-on={on || undefined} data-busy={busy || undefined} data-dark={dark || undefined} data-compact={compact || undefined}>
-      <MixMap className="mix-map" flight={flight} fade={fade} fadeKey={fadeKey} scene={darkScene} hidden={on && blueUp && !!W}>
+      <MixMap className="mix-map" flight={flight} fade={fade} place={place} fadeKey={fadeKey} scene={darkScene} hidden={on && blueUp && !!W}>
         <Pin on={busy} white={false} cc={pinCc} words={pinWords} dark={dark} />
       </MixMap>
 
       {blueUp && (
         <div
+          ref={floodRef}
           className="mix-flood"
-          style={{ clipPath: `circle(${on ? reach : 0}px at ${knob.x}px ${knob.y}px)` }}
+          style={{ clipPath: `circle(${on && open ? reach : 0}px at ${knob.x}px ${knob.y}px)` }}
           onTransitionEnd={() => {
             if (!on) setBlueUp(false);
           }}
         >
-          <MixMap className="mix-map" flight={flight} fade={fade} fadeKey={fadeKey} scene={blueScene}>
+          <MixMap className="mix-map" flight={flight} fade={fade} place={place} fadeKey={fadeKey} scene={blueScene}>
             <Pin on white cc={pinCc} words={pinWords} dark={dark} beat={health?.exit_ip ?? undefined} />
           </MixMap>
         </div>
@@ -245,13 +272,14 @@ export default function MixConnect({ card: p, side, note }: Props) {
             {failed}
           </div>
         ) : phase === "off" && !p.view ? (
-          // Nothing picked yet: the words that ask you to pick are the way to do it.
-          <button type="button" className="mix-where is-link" onClick={askQuick}>
+          // None of yours yet: the words that ask you to pick are the way to My proxies.
+          <button type="button" className="mix-where is-link" onClick={p.onChangeTarget}>
             {where}
           </button>
         ) : (
           <div className="mix-where">{where}</div>
         )}
+        {p.ended && (on || busy) && <div className="mix-ended">{p.ended}</div>}
         <div className="mix-stats num" aria-hidden={!on}>
           <span>
             <Icon.download /> {formatRate(p.rate?.down ?? 0)}
@@ -265,7 +293,15 @@ export default function MixConnect({ card: p, side, note }: Props) {
       {note && <div className="mix-note">{note}</div>}
 
       <div className="mix-bottom">
-        <button type="button" className="mix-place" onClick={() => (p.view ? openSheet("places") : askQuick())}>
+        {/* The place: Change opens Quick change (a quick one, or the full list); with none of
+            yours, My proxies, where they are added. */}
+        <button
+          type="button"
+          className="mix-place"
+          onClick={() => (p.view ? openSheet("change") : p.onChangeTarget())}
+          aria-haspopup={p.view ? "dialog" : undefined}
+          aria-expanded={p.view ? sheet === "change" : undefined}
+        >
           {p.view ? (
             <>
               <span className="mix-tile" data-kind={p.view.kind}>
@@ -275,6 +311,10 @@ export default function MixConnect({ card: p, side, note }: Props) {
                 <b>{p.view.name}</b>
                 <small>{p.view.sub ?? (p.view.kind === "free" ? "The fastest one there" : "Your proxy")}</small>
               </span>
+              <span className="mix-change">
+                Change
+                <Icon.chevronDown className={sheet === "change" ? undefined : "rotate-180"} />
+              </span>
             </>
           ) : (
             <>
@@ -283,7 +323,7 @@ export default function MixConnect({ card: p, side, note }: Props) {
               </span>
               <span className="mix-place-words">
                 <b>Add your proxies</b>
-                <small>Paste them, or pick a free proxy</small>
+                <small>Paste them or drop a file. Any format.</small>
               </span>
             </>
           )}
@@ -299,7 +339,7 @@ export default function MixConnect({ card: p, side, note }: Props) {
           <div
             className="mix-sheet"
             role="dialog"
-            aria-label={sheet === "places" ? "Connect to" : "Menu"}
+            aria-label={sheet === "places" ? "Connect to" : sheet === "change" ? "Quick change" : "Menu"}
             onClick={(e) => e.stopPropagation()}
             onAnimationEnd={(e) => {
               if (e.target !== e.currentTarget || e.animationName !== "mix-down") return;
@@ -308,16 +348,21 @@ export default function MixConnect({ card: p, side, note }: Props) {
             }}
           >
             <div className="mix-sheet-head">
-              <b>{sheet === "places" ? "Connect to" : (p.view?.name ?? "Menu")}</b>
+              <b>{sheet === "places" ? "Connect to" : sheet === "change" ? "Quick change" : (p.view?.name ?? "Menu")}</b>
               {sheet === "menu" && probe && (
                 <small className="num">{[probe.exit_ip, probe.city].filter(Boolean).join(" · ")}</small>
               )}
+              {sheet === "change" && changes.line && <small>{changes.line}</small>}
               <button type="button" className="mix-close" onClick={closeSheet} aria-label="Close">
                 <Icon.cross />
               </button>
             </div>
             {sheet === "places" ? (
               <div className="mix-sheet-body">{side}</div>
+            ) : sheet === "change" ? (
+              <div className="mix-sheet-body mix-change-body">
+                <ChangeRows list={changes} onDone={closeSheet} />
+              </div>
             ) : (
               <Menu p={p} w={w} />
             )}

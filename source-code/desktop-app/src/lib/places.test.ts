@@ -1,5 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { freeGroupName, lastCheckWords, quickPlaces, samePlace, tabOf, type GroupView, type ProxyView } from "./places";
+import {
+  changePlaces,
+  cleanDate,
+  dayWords,
+  daysLeft,
+  expiryOf,
+  firstPlace,
+  firstWorking,
+  freeGroupName,
+  lastCheckWords,
+  quickPlaces,
+  samePlace,
+  tabOf,
+  type ChangePlace,
+  type GroupView,
+  type ProxyView,
+} from "./places";
 
 describe("what a saved proxy's row says about its last check", () => {
   it("says nothing extra when it was working", () => {
@@ -52,6 +68,59 @@ describe("quickPlaces", () => {
   });
 });
 
+/** A proxy whose last check answered in `ms` (or did not answer: null). */
+const checked = (id: string, ms: number | null, addedAt = 0): ProxyView => ({
+  ...proxy(id, addedAt, 0, 0),
+  last: ms == null ? { ok: false, at: 1 } : { ok: true, latencyMs: ms, at: 1 },
+});
+const ids = (places: ChangePlace[]) => places.map((c) => (c.kind === "proxy" ? c.proxy.id : c.kind === "group" ? c.group.id : "free"));
+
+describe("changePlaces", () => {
+  it("puts the one in use first, then the working ones fastest first", () => {
+    const proxies = [checked("slow", 400), checked("fast", 50), checked("mid", 120), checked("used", 900)];
+    const got = changePlaces(proxies, [], { kind: "proxy", id: "used" }, 10);
+    expect(ids(got.places)).toEqual(["used", "fast", "mid", "slow"]);
+    expect(got.working).toBe(4);
+  });
+
+  it("never offers one that did not answer, unless it is the one in use", () => {
+    const proxies = [checked("dead", null), checked("ok", 80)];
+    expect(ids(changePlaces(proxies, [], null, 10).places)).toEqual(["ok"]);
+    expect(ids(changePlaces(proxies, [], { kind: "proxy", id: "dead" }, 10).places)).toEqual(["dead", "ok"]);
+  });
+
+  it("then the unchecked ones and the groups, used last first, new groups last", () => {
+    const proxies = [checked("ok", 80), proxy("used", 1, 1, 300), proxy("fresh", 50, 0, 0)];
+    const groups = [group("G", 1, 200), group("new")];
+    expect(ids(changePlaces(proxies, groups, null, 10).places)).toEqual(["ok", "used", "G", "fresh", "new"]);
+  });
+
+  it("shows the free proxy in use, and stops at the number asked for", () => {
+    const free = { kind: "free" as const, country: "", socks5: false };
+    const proxies = [checked("a", 10), checked("b", 20), checked("c", 30)];
+    expect(ids(changePlaces(proxies, [], free, 3).places)).toEqual(["free", "a", "b"]);
+    expect(changePlaces(proxies, [], free, 0).places).toEqual([]);
+  });
+});
+
+describe("firstPlace", () => {
+  it("is the fastest working proxy, else the one used or added last, never a free one", () => {
+    expect(firstPlace([checked("slow", 300), checked("fast", 40)], [])).toEqual({ kind: "proxy", id: "fast" });
+    expect(firstPlace([checked("dead", null)], [])).toEqual({ kind: "proxy", id: "dead" });
+    expect(firstPlace([], [group("G", 1, 5)])).toEqual({ kind: "group", id: "G" });
+    expect(firstPlace([], [])).toBeNull();
+  });
+});
+
+describe("firstWorking", () => {
+  it("takes the first saved one that answered, else the first", () => {
+    const proxies = [checked("a", null), checked("b", 90), checked("c", 20)];
+    expect(firstWorking(["a", "b", "c"], proxies)).toBe("b");
+    expect(firstWorking(["a"], proxies)).toBe("a");
+    expect(firstWorking(["gone"], proxies)).toBeNull();
+  });
+});
+
 describe("samePlace", () => {
   it("compares places by what they connect to", () => {
     expect(samePlace({ kind: "proxy", id: "a" }, { kind: "proxy", id: "a" })).toBe(true);
@@ -83,5 +152,35 @@ describe("names and tabs", () => {
     expect(tabOf({ kind: "group", id: "g" })).toBe("groups");
     expect(tabOf({ kind: "free", country: "", socks5: false })).toBe("free");
     expect(tabOf(null)).toBe("proxies");
+  });
+});
+
+describe("the day a place expires", () => {
+  it("is one day of the calendar written year-month-day, as the library keeps it", () => {
+    expect(cleanDate("2026-11-14")).toBe("2026-11-14");
+    expect(cleanDate("2028-02-29")).toBe("2028-02-29");
+    for (const wrong of ["2026-02-29", "2026-04-31", "2026-13-01", "14.11.2026", "1999-12-31", ""]) expect(cleanDate(wrong)).toBeNull();
+  });
+
+  it("counts calendar days: 0 on its last day, below 0 once past", () => {
+    expect(daysLeft("2026-11-14", "2026-11-14")).toBe(0);
+    expect(daysLeft("2027-01-02", "2026-12-30")).toBe(3);
+    expect(daysLeft("2028-03-01", "2028-02-28")).toBe(2);
+    expect(daysLeft("2026-11-14", "2026-11-16")).toBe(-2);
+  });
+
+  it("reads quiet with time left, amber in its last three days, red once past", () => {
+    const today = "2026-11-10";
+    expect(expiryOf(undefined, today)).toBeNull();
+    expect(expiryOf("2026-11-22", today)).toEqual({ days: 12, words: "12 days left", tone: "quiet" });
+    expect(expiryOf("2026-11-13", today)).toEqual({ days: 3, words: "3 days left", tone: "warn" });
+    expect(expiryOf("2026-11-11", today)).toEqual({ days: 1, words: "1 day left", tone: "warn" });
+    expect(expiryOf("2026-11-10", today)).toEqual({ days: 0, words: "Expires today", tone: "warn" });
+    expect(expiryOf("2026-11-01", today)).toEqual({ days: -9, words: "Expired", tone: "danger" });
+  });
+
+  it("is said with its year only when it is not this year's", () => {
+    expect(dayWords("2026-11-14", "2026-10-15")).toBe("14 Nov");
+    expect(dayWords("2027-01-02", "2026-10-15")).toBe("2 Jan 2027");
   });
 });

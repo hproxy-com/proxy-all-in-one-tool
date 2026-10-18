@@ -25,6 +25,19 @@ const stroke = {
 };
 
 export const Icon = {
+  /** Help: a speech bubble with the crossbar's cut corner, two lines of words in it. */
+  chat: ({ className }: IconProps) => (
+    <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
+      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 4v-4H5.5A1.5 1.5 0 0 1 4 14.5Z" />
+      <path d="M8 8.5h8M8 12h5" />
+    </svg>
+  ),
+  /** Send: an arrow to a wall, the message leaving. */
+  send: ({ className }: IconProps) => (
+    <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
+      <path d="M4 12h12M11 7l5 5-5 5M20 5v14" />
+    </svg>
+  ),
   search: ({ className }: IconProps) => (
     <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
       <circle cx="10.5" cy="10.5" r="6.5" />

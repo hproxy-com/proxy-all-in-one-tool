@@ -385,7 +385,7 @@ export const TONES: Record<"dark" | "light" | "blue", Tone> = {
 export type Scene = {
   width: number;
   height: number;
-  /** Where the camera's centre sits on the screen: the pin stands here. */
+  /** Where the camera's centre sits on the screen: at rest, the pin's place is here. */
   px: number;
   py: number;
   /** The grid's spacing at rest, and a dot's radius, in pixels. */
@@ -398,9 +398,19 @@ export type Scene = {
   /** The country lit before `exit`: it fades out while `exit` fades in, `litK` going 0 to 1. */
   exitBefore?: string;
   litK: number;
-  /** A pin stands at (px, py): at rest the place itself, in a flight the world slides under it. */
+  /** A pin stands on the place. */
   pin: boolean;
+  /** Where the pin is on the screen this frame (onScreen), the brightest dots around it; at rest
+      that is (px, py). */
+  pinAt?: { x: number; y: number };
 };
+
+/** A point of the world (Mercator degrees) on the screen, for this camera: its copy nearest the
+    camera, so a place across the date line is drawn where the map shows it. */
+export function onScreen(at: { x: number; y: number }, cam: Cam, sc: Pick<Scene, "px" | "py">): { x: number; y: number } {
+  const x = at.x + Math.round((cam.x - at.x) / 360) * 360;
+  return { x: sc.px + (x - cam.x) * cam.s, y: sc.py - (at.y - cam.y) * cam.s };
+}
 
 /** Per map: which grid points are inside a lit country, per country (two while one fades). */
 export type Memo = Map<string, Map<number, boolean>>;
@@ -527,6 +537,9 @@ export function paint(ctx: CanvasRenderingContext2D, dpr: number, cam: Cam, sc: 
   const nearOut = mix(tone.base, tone.near, 1 - fade);
   const midOut = mix(tone.base, tone.mid, 1 - fade);
   const pin = sc.lit && sc.pin;
+  // The glow stands around the pin, on its place, wherever the flight has the map.
+  const gx = sc.pinAt?.x ?? px;
+  const gy = sc.pinAt?.y ?? py;
   const nearest = 2.4 * pitch;
   const groups = new Map<string, number[]>();
   let mask: Uint8ClampedArray | null = null;
@@ -576,11 +589,11 @@ export function paint(ctx: CanvasRenderingContext2D, dpr: number, cam: Cam, sc: 
         if (pin) {
           // Brightest by the city, then a step down, then the plain land: a glow in solid
           // colours, so a close-up never turns one flat field.
-          const far = Math.hypot(sx - px, sy - py);
+          const far = Math.hypot(sx - gx, sy - gy);
           colour = far < 10 * pitch ? near : far < 17 * pitch ? mid : tone.base;
         } else colour = near;
       }
-      if (pin && Math.hypot(sx - px, sy - py) < nearest) colour = tone.nearest;
+      if (pin && Math.hypot(sx - gx, sy - gy) < nearest) colour = tone.nearest;
 
       let list = groups.get(colour);
       if (!list) groups.set(colour, (list = []));

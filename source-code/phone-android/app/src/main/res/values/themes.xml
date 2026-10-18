@@ -8,4 +8,10 @@
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
     </style>
+
+    <!-- Android's own calendar, where the last day of a plan is picked (ui/proxies/Rows.kt,
+         pickDay): dark like the app, its day and buttons in the app's blue. -->
+    <style name="Theme.HProxy.Calendar" parent="android:Theme.Material.Dialog">
+        <item name="android:colorAccent">@color/blue</item>
+    </style>
 </resources>

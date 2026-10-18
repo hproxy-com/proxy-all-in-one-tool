@@ -141,7 +141,7 @@ function Bar({ card, side, note }: DesignProps) {
           <Switch
             on={w.lit}
             busy={busyPhase(p.phase)}
-            disabled={p.busy || (p.phase === "off" && !p.canConnect)}
+            disabled={p.busy}
             onChange={p.onToggle}
             label="Connection"
             title={w.toggleTitle}

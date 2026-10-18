@@ -6,9 +6,9 @@ below is in the code; nothing is inferred from a policy.
 **There is no account, no telemetry, no analytics, no crash reporting and no
 tracking inside the app.** The app contacts HProxy, and for fraud scores
 FFraud and each service whose key you give it. Every one of them is in the table
-below, and each can be switched off or pointed elsewhere. Two of those requests
-leave a record on our side, and only when you use the feature that sends them:
-both are under "What our servers keep", with what they hold and for how long.
+below, and each can be switched off or pointed elsewhere. Three of them leave a
+record on our side, and only when you use the feature that sends them: all
+three are under "What our servers keep", with what they hold and for how long.
 
 ## Every server the app talks to
 
@@ -26,23 +26,25 @@ both are under "What our servers keep", with what they hold and for how long.
 | Updates, the download for Windows, macOS or Linux (AppImage) | `hproxy.com/downloads/desktop/` | At start and every six hours: one list, the same for everyone, and the installer when there is a newer version. Downloads are signed and verified before they are installed. | Nothing is sent about you |
 | Version check, every copy | `hproxy.com/downloads/versions.json` | At start and every six hours: one list, the same for everyone. The request names this copy's version and where it came from, for example `hproxy-checker/0.2.4 (windows)`, and nothing else. It is how a copy from a store or a downloaded package learns of a fix, and how we count how many copies run each version (kept 30 days, with the address shortened: "What our servers keep"). | Always on: it is how a fix reaches every copy |
 | Updates, a copy from the Microsoft Store or Google Play | The store | The store's own update check, at start, under the store's own policy. | The store's settings |
+| Help, the support chat (only once you open it) | `chat.hproxy.com`, HProxy support | A connection that stays open while the app runs: which app this is, where this copy came from and its version (for example `hproxy-app://windows?store=website&v=0.3.9`), the token the chat gave this copy so your own conversation comes back, and what you write. Nothing about your proxies. | Do not open Help |
 
 To send **nothing at all**: keep checking on "This computer" ("This device" on
-a phone), switch the location lookup off, do not use Connect, and do not ask
-for fraud scores. Checking then works exactly the same, with the location
-columns blank.
+a phone), switch the location lookup off, do not use Connect, do not ask for
+fraud scores, and do not open Help. Checking then works exactly the same, with
+the location columns blank.
 
 ## What our servers keep
 
-Everything in the table above is answered and forgotten, with two exceptions.
+Everything in the table above is answered and forgotten, with three exceptions.
 The location lookup keeps its answers in memory for a while, by the address
-looked up, never by who asked; the judges keep nothing. These two requests
-leave a row in our database:
+looked up, never by who asked; the judges keep nothing. These three leave a
+row in our database:
 
 | What | What the row holds | How long |
 | --- | --- | --- |
 | A check run on our servers ("Both" or "HProxy's servers") | The IP address the request came from, the app's user agent, how many proxies were sent and how long the check took. Never the proxies, their logins or the results. | 30 days, then deleted automatically |
 | A report that a free exit stopped answering (Connect, "Free proxy") | The exit: its address, port and protocol, whether it answered and how fast. With it, the IP address the report came from, the country Cloudflare gives for that address, and the app's user agent. | No deletion date is set yet |
+| A conversation with support (Help) | What you write and what support answers; where the chat was opened from (the app, where this copy came from, its version); the IP address the app first and last connected from, and the name the app gives its connection (`HProxy Windows`, `HProxy Android`). Never your proxies. | Kept so support can read the conversation back; no deletion date is set yet |
 
 FFraud's free lookup (`api.ffraud.com/public/ip/`) counts how often each
 looked-up address is asked about, never who asked; the address you ask from
@@ -59,7 +61,8 @@ Analytics uses (an IPv4 address loses its last part, 203.0.113.7 becomes
 address is never written. The log is kept 30 days, then deleted
 (hproxy.com's server configuration, 2026-09-27).
 
-(Checked against the code of hproxy.com and api.ffraud.com on 2026-09-24.)
+(Checked against the code of hproxy.com and api.ffraud.com on 2026-09-24, and
+of the support chat on 2026-10-18.)
 
 ## The command-line tool and its MCP server
 

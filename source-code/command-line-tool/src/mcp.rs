@@ -74,7 +74,7 @@ proxy_check tests proxy lines in any format and returns the working ones with ex
 proxy_list returns free proxies from hproxy.com; verify=true tests them here first. \
 ip_lookup locates addresses. \
 proxy_places lists the proxies and groups the person saved in the HProxy app: names, what each targets (country, \
-city, session), how each did when last checked; never a password. \
+city, session), how each did when last checked, when its plan ends; never a password. \
 proxy_connect starts a local proxy on 127.0.0.1 (HTTP and SOCKS5 on one port, no password) that forwards through \
 the chosen proxy with its login attached: point curl -x, a browser's --proxy-server, HTTP_PROXY/HTTPS_PROXY or \
 Playwright at the returned http_proxy. proxy_connect {place} uses one the person saved, by its name or id. A proxy \
@@ -94,7 +94,8 @@ Free proxies      proxy_list {country: \"US\", verify: true}: free public proxie
                   Public proxies: never send logins or private data through them.
 Where an IP is    ip_lookup {ips: [\"1.2.3.4\"]}: country, city, timezone, network.
 Saved proxies     proxy_places {search: \"california\"}: the proxies and groups the person saved in the HProxy app,
-                  by name, with what each targets and how it did when last checked. Never a password.
+                  by name, with what each targets, how it did when last checked and when its plan ends.
+                  Never a password.
 Use a proxy       proxy_connect {place: \"a saved name or id\"}, or {proxy: \"host:port:user:pass\"}, or {file, rotate},
                   or {free: true, free_country}: a proxy on 127.0.0.1 with no password that forwards through it;
                   point curl -x, --proxy-server, HTTP(S)_PROXY or Playwright at the http_proxy it returns.
@@ -806,7 +807,8 @@ async fn build_unsaved_source(args: &Value, free: bool) -> Result<Source, String
 fn proxy_places(args: &Value) -> Result<String, String> {
     let limit = arg_count(args, "limit")?.unwrap_or(PLACES_LISTED).clamp(1, MAX_LISTED);
     let lib = crate::places::open_library()?;
-    let mut answer = crate::places::listing(&lib, arg_str(args, "search").as_deref().unwrap_or(""), limit);
+    let today = crate::places::today();
+    let mut answer = crate::places::listing(&lib, arg_str(args, "search").as_deref().unwrap_or(""), limit, &today);
     let none =
         answer["proxies"].as_array().is_none_or(Vec::is_empty) && answer["groups"].as_array().is_none_or(Vec::is_empty);
     answer["note"] = json!(if none && lib.proxies.is_empty() && lib.groups.is_empty() {
@@ -1047,11 +1049,11 @@ fn tools() -> Value {
         {
             "name": "proxy_places",
             "title": "Saved proxies",
-            "description": "The proxies and groups the person saved in the HProxy app on this machine: name, id, address, what each targets (country, city, session), how it did when last checked; groups with size and rule. Never a password or login. Connect with proxy_connect {place}.",
+            "description": "The proxies and groups the person saved in the HProxy app on this machine: name, id, address, what each targets (country, city, session), how it did when last checked, the last day of its plan (expires, with days_left: 0 on the day, below 0 once past) and the person's note; groups with size and rule. Never a password or login. Connect with proxy_connect {place}.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "search": {"type": "string", "description": "Only those whose name, address, place or session holds this."},
+                    "search": {"type": "string", "description": "Only those whose name, address, place, session or note holds this."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Of each kind. Default 50."}
                 }
             },

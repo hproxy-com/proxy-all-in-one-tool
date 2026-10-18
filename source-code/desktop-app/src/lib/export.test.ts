@@ -144,7 +144,20 @@ describe("toJson", () => {
 });
 
 describe("toList", () => {
-  it("is plain host:port, one per line", () => {
-    expect(toList([row(), row({ host: "5.6.7.8", port: "1080" })])).toBe("1.2.3.4:8080\n5.6.7.8:1080");
+  it("is each line as it was given, one per line", () => {
+    expect(toList([row(), row({ raw: "5.6.7.8:1080", host: "5.6.7.8", port: "1080" })])).toBe("1.2.3.4:8080\n5.6.7.8:1080");
+  });
+
+  // The bug of 2026-10-16: a proxy with a login came out as host:port, and the
+  // copy no longer worked anywhere it was pasted. The phone copies the lines as
+  // they were pasted; so does the computer now.
+  it("keeps the login", () => {
+    expect(toList([row({ raw: "1.2.3.4:8080:user:pass", auth: true }), row({ raw: "socks5://u:p@5.6.7.8:1080", host: "5.6.7.8", port: "1080", auth: true })])).toBe(
+      "1.2.3.4:8080:user:pass\nsocks5://u:p@5.6.7.8:1080",
+    );
+  });
+
+  it("falls back to host:port for a row with no line of its own", () => {
+    expect(toList([row({ raw: "  " })])).toBe("1.2.3.4:8080");
   });
 });

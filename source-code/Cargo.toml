@@ -17,6 +17,8 @@
 #   proxy-engine/hproxy-connection  One connection for every door: a place becomes the
 #                               relay's source, the relay switches in place, probes say
 #                               whether traffic really gets through.
+#   proxy-engine/hproxy-chat    The support chat of the apps' Help pages (chat.hproxy.com),
+#                               for the phone app's engine and the desktop app alike.
 #   proxy-engine/hproxy-mobile  The engine for the native phone app (phone-android):
 #                               libhproxy.so, called from Kotlin through JNI.
 #   command-line-tool           `hproxy`: check, connect, free, list, ip, and `mcp`
@@ -38,13 +40,14 @@ members = [
     "proxy-engine/hproxy-places",
     "proxy-engine/hproxy-tunnel",
     "proxy-engine/hproxy-connection",
+    "proxy-engine/hproxy-chat",
     "proxy-engine/hproxy-mobile",
     "command-line-tool",
     "desktop-app/src-tauri",
 ]
 
 [workspace.package]
-version = "0.3.8"
+version = "0.3.9"
 edition = "2021"
 license = "MIT"
 authors = ["HProxy"]
@@ -59,6 +62,7 @@ hproxy-api = { path = "proxy-engine/hproxy-api" }
 hproxy-places = { path = "proxy-engine/hproxy-places" }
 hproxy-tunnel = { path = "proxy-engine/hproxy-tunnel" }
 hproxy-connection = { path = "proxy-engine/hproxy-connection" }
+hproxy-chat = { path = "proxy-engine/hproxy-chat" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync", "signal"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

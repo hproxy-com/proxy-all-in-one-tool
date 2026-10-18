@@ -17,6 +17,10 @@
 //
 // The engine does the IP intelligence; this worker does the browser plumbing.
 
+// The last days of saved proxies, read as the popup reads them (expiry.js:
+// HPROXY_EXPIRY). A classic worker loads it this way, at the top.
+importScripts("expiry.js");
+
 const API = "https://hproxy.com";
 const SESSION_KEY = "hproxy_session";
 
@@ -351,12 +355,38 @@ function setWebRtcLock(on) {
 }
 
 const PRODUCT_TITLE = chrome.runtime.getManifest().action?.default_title || "HProxy";
+
+/* Saved proxies whose plan ends within three days (its last day included):
+   while nothing is connected, the badge counts them in amber, so a plan
+   never ends unnoticed. A connection's ON comes first. */
+async function expiringSoon() {
+  try {
+    const list = (await chrome.storage.local.get("hproxy_byo")).hproxy_byo || [];
+    const today = HPROXY_EXPIRY.todayHere();
+    return list.filter((x) => {
+      const days = x.expires ? HPROXY_EXPIRY.daysLeft(x.expires, today) : null;
+      return days != null && days >= 0 && days <= HPROXY_EXPIRY.SOON;
+    }).length;
+  } catch {
+    return 0;
+  }
+}
+
 async function setBadge(session, failing) {
   try {
     if (session) {
       await chrome.action.setBadgeText({ text: failing ? "…" : "ON" });
       await chrome.action.setBadgeBackgroundColor({ color: failing ? "#f59e0b" : "#0158ff" });
       await chrome.action.setTitle({ title: `HProxy · ${session.label || "connected"}` });
+      return;
+    }
+    const soon = await expiringSoon();
+    if (soon) {
+      await chrome.action.setBadgeText({ text: String(soon) });
+      await chrome.action.setBadgeBackgroundColor({ color: "#f59e0b" });
+      await chrome.action.setTitle({
+        title: `HProxy · ${soon === 1 ? "1 of your proxies expires" : `${soon} of your proxies expire`} within 3 days`,
+      });
     } else {
       await chrome.action.setBadgeText({ text: "" });
       await chrome.action.setTitle({ title: PRODUCT_TITLE });
@@ -877,14 +907,16 @@ async function settlePin(session, seen) {
 
 /* Into the saved list, the shape the popup writes (popup.js saveByo), and
    the place the switch goes back to. Only for a proxy that answered: one
-   that never did would sit in the list looking usable. */
+   that never did would sit in the list looking usable. One saved before
+   keeps what was written about it (its name, last day and note). */
 async function keepSaved(session) {
   const p = session.proxy;
   const key = `${p.host}:${p.port}`;
   try {
     const o = await chrome.storage.local.get("hproxy_byo");
     const list = Array.isArray(o?.hproxy_byo) ? o.hproxy_byo : [];
-    const entry = { host: p.host, port: p.port, username: p.username, password: p.password, scheme: p.scheme, country: session.country || "", label: key };
+    const before = list.find((x) => `${x.host}:${x.port}` === key);
+    const entry = { ...before, host: p.host, port: p.port, username: p.username, password: p.password, scheme: p.scheme, country: session.country || "", label: key };
     await chrome.storage.local.set({
       hproxy_byo: [entry, ...list.filter((x) => `${x.host}:${x.port}` !== key)].slice(0, 50),
       hproxy_last_target: { kind: "pin", key },
@@ -1250,4 +1282,22 @@ chrome.runtime.onStartup.addListener(async () => {
 });
 chrome.runtime.onInstalled.addListener(async () => {
   setBadge(await loadSession(), false);
+});
+
+/* The count of plans ending soon, kept true while nothing is connected: the
+   days move on with nobody pressing anything (an hourly look, created once,
+   so a worker that wakes often never pushes it back), and a saved list that
+   changes (a date set, a proxy removed) shows at once. A connection's badge
+   is left as it is. */
+async function refreshIdleBadge() {
+  if (!(await loadSession())) setBadge(null, false);
+}
+chrome.alarms.get("hproxy-expiry", (alarm) => {
+  if (!alarm) chrome.alarms.create("hproxy-expiry", { periodInMinutes: 60 });
+});
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "hproxy-expiry") refreshIdleBadge();
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.hproxy_byo) refreshIdleBadge();
 });

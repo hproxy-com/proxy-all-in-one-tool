@@ -5,13 +5,13 @@
    a line (the Rust reader does that in the app), and never pretends to keep
    anything on disk. */
 
-import type { CheckResult } from "./checker";
+import type { CheckResult, Row } from "./checker";
 import { lineParts, maskLine } from "./connect";
-import type { GroupInput, LibraryView, MemberView, Place, PlacesStart, ProxyView, Rule, Verdict } from "./places";
+import { cleanDate, MAX_NOTE, type Details, type GroupInput, type LibraryView, type MemberView, type Place, type PlacesStart, type ProxyView, type Rule, type Verdict } from "./places";
 import type { WindowStorage } from "./windowStorage";
 
-type Kept = { id: string; line: string; name?: string; addedAt: number; lastUsedAt: number; uses: number; last?: Verdict };
-type KeptGroup = { id: string; name: string; lines: string[]; rule: Rule; n?: number; addedAt: number; lastUsedAt: number; uses: number };
+type Kept = { id: string; line: string; name?: string; addedAt: number; lastUsedAt: number; uses: number; last?: Verdict; expires?: string; note?: string };
+type KeptGroup = { id: string; name: string; lines: string[]; rule: Rule; n?: number; addedAt: number; lastUsedAt: number; uses: number; expires?: string; note?: string };
 
 const lib = { proxies: [] as Kept[], groups: [] as KeptGroup[], picked: null as Place | null, moved: false };
 let groupSeq = 0;
@@ -33,6 +33,19 @@ function verdictOf(r: CheckResult, at: number): Verdict {
 
 export function demoChecked(line: string, r: CheckResult): void {
   checked.set(line.trim(), verdictOf(r, Date.now()));
+}
+
+/** A pretend Checker run's row, kept the same way (the app: check.rs, remember_row). */
+export function demoCheckedRow(r: Row): void {
+  checked.set(r.raw.trim(), {
+    ok: r.status === "working",
+    latencyMs: r.latency ?? undefined,
+    cc: r.cc?.toLowerCase(),
+    place: [r.city, r.country].filter(Boolean).join(", ") || undefined,
+    exitIp: r.exitIp,
+    anonymity: r.anonymity?.toLowerCase(),
+    at: Date.now(),
+  });
 }
 
 /** The same id the library gives a line (FNV-1a over UTF-16, base 36). */
@@ -64,6 +77,8 @@ function view(): LibraryView {
         lastUsedAt: p.lastUsedAt,
         uses: p.uses,
         last: p.last,
+        expires: p.expires,
+        note: p.note,
       };
     }),
     groups: lib.groups.map((g) => ({
@@ -76,6 +91,8 @@ function view(): LibraryView {
       lastUsedAt: g.lastUsedAt,
       uses: g.uses,
       summary: { shared: {}, sessions: 0 },
+      expires: g.expires,
+      note: g.note,
     })),
     picked: lib.picked,
   };
@@ -126,6 +143,51 @@ export function demoPlacesAdd(lines: string[]): { view: LibraryView; ids: string
 export function demoPlacesRename(id: string, name: string): LibraryView {
   const p = lib.proxies.find((x) => x.id === id);
   if (p) p.name = cleanName(name) || undefined;
+  return view();
+}
+
+export function demoPlacesNameEach(ids: string[], names: string[]): LibraryView {
+  ids.forEach((id, i) => {
+    const p = lib.proxies.find((x) => x.id === id);
+    if (p) p.name = cleanName(names[i] ?? "") || undefined;
+  });
+  return view();
+}
+
+/* Name, last day and note, as the library says them (library.rs, describe_proxies): a field left
+   out stays, an empty one goes, a date that is not a day changes nothing and says why. */
+function described(details: Details): { name?: string | null; expires?: string | null; note?: string | null } {
+  const field = <T,>(v: string | undefined, clean: (s: string) => T | null) => (v === undefined ? undefined : v.trim() === "" ? null : clean(v));
+  const expires = field(details.expires, (s) => {
+    const day = cleanDate(s);
+    if (!day) throw new Error(`"${s.trim()}" is not a day: write it like 2026-11-14`);
+    return day;
+  });
+  return {
+    name: field(details.name, (s) => cleanName(s) || null),
+    expires,
+    note: field(details.note, (s) => s.replace(/\r\n?/g, "\n").trim().slice(0, MAX_NOTE).trimEnd() || null),
+  };
+}
+
+export function demoPlacesDescribe(ids: string[], details: Details): LibraryView {
+  const d = described(details);
+  for (const p of lib.proxies.filter((x) => ids.includes(x.id))) {
+    if (d.name !== undefined) p.name = d.name ?? undefined;
+    if (d.expires !== undefined) p.expires = d.expires ?? undefined;
+    if (d.note !== undefined) p.note = d.note ?? undefined;
+  }
+  return view();
+}
+
+export function demoPlacesGroupDescribe(id: string, details: Details): LibraryView {
+  const d = described(details);
+  const g = lib.groups.find((x) => x.id === id);
+  if (g) {
+    if (d.name) g.name = d.name;
+    if (d.expires !== undefined) g.expires = d.expires ?? undefined;
+    if (d.note !== undefined) g.note = d.note ?? undefined;
+  }
   return view();
 }
 
@@ -184,6 +246,12 @@ export async function demoPlacesCheck(id: string): Promise<ProxyView> {
   if (!p) throw new Error("that proxy is not saved here any more");
   p.last = verdictOf(await demoCheckLine(p.line), Date.now());
   return view().proxies.find((x) => x.id === id)!;
+}
+
+/** A saved proxy's line as it was saved, for the pretend relay to come out where
+    the pretend check placed it (previewConnect.ts); never shown. */
+export function demoProxyLine(id: string): string | null {
+  return lib.proxies.find((x) => x.id === id)?.line ?? null;
 }
 
 /** The pretend relay's side: what a place dials, masked, and a use counted. */

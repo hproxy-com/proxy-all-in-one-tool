@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.hproxy.app.engine.Engine
 import com.hproxy.app.engine.EngineError
+import com.hproxy.app.engine.Expiry
 import com.hproxy.app.engine.PlaceRef
 import com.hproxy.app.engine.Targeting
 import com.hproxy.app.engine.countryName
@@ -225,9 +226,9 @@ fun ColumnScope.AddSheet(nav: Nav) {
                 onAdd = { asGroup -> add(text, asGroup) },
             )
             AddMode.Name -> if (group != null) {
-                NameGroup(group!!) { nav.sheet = null }
+                NameGroup(group!!, nav.askNotifications) { nav.sheet = null }
             } else {
-                NameThem(fresh) { nav.sheet = null }
+                NameThem(fresh, nav.askNotifications) { nav.sheet = null }
             }
         }
     }
@@ -431,23 +432,52 @@ private fun NameBox(over: String, value: String, onValue: (String) -> Unit, plac
     }
 }
 
-/** Name the proxies just added: each its own, or one name for all of them, numbered; or Skip. */
+/** What a last day promises, said where one is set. */
+private const val REMINDER_WORDS = "A last day brings a reminder 3 days before it."
+
+/** "They expire on 14 Nov. You get a reminder 3 days before." */
+private fun expiresWords(count: Int, day: String): String =
+    "${if (count == 1) "It expires" else "They expire"} on ${Expiry.words(day)}. You get a reminder 3 days before."
+
+/** The last day and the note given on the naming step, as the library's fields. */
+private fun detailsOf(day: String?, note: String): Array<Pair<String, String>> =
+    listOfNotNull(day?.let { "expires" to it }, note.trim().takeIf { it.isNotEmpty() }?.let { "note" to it }).toTypedArray()
+
+/**
+ * Name the proxies just added: each its own, or one name for all of them, numbered; one last day
+ * and one note for all of them (a list bought at once ends at once); or Skip.
+ */
 @Composable
-private fun NameThem(ids: List<String>, done: () -> Unit) {
+private fun NameThem(ids: List<String>, askNotifications: () -> Unit, done: () -> Unit) {
     val scope = rememberCoroutineScope()
     val library by AppState.library.collectAsState()
     val given = remember { mutableStateMapOf<String, String>() }
     // The ones named by hand keep their name when the one name for all changes.
     val byHand = remember { mutableStateListOf<String>() }
     var all by remember { mutableStateOf("") }
+    var day by remember { mutableStateOf<String?>(null) }
+    var note by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
     val named = ids.count { given[it]?.isNotBlank() == true }
+    val described = day != null || note.isNotBlank()
 
     Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 20.dp)) {
         Txt("Name them", type(22.sp, FontWeight.Bold, spacing = (-0.015).em), modifier = Modifier.padding(top = 4.dp))
-        Txt("Optional.", type(13.sp, FontWeight.SemiBold, C.ink3, lineHeight = 18.sp), modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
+        Txt("Optional. $REMINDER_WORDS", type(13.sp, FontWeight.SemiBold, C.ink3, lineHeight = 18.sp), modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
         // As tall as the names, and scrolling once they fill the sheet.
         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ExpiryField(day, { picked ->
+                day = picked
+                if (picked != null) askNotifications()
+            }, label = if (ids.size > 1) "All expire on" else "Expires on")
+            Field(
+                note,
+                { note = it.take(500) },
+                placeholder = "Where they are from, what they are for",
+                label = if (ids.size > 1) "Note for all" else "Note",
+                height = 52.dp,
+                surface = C.bg,
+            )
             if (ids.size > 1) {
                 NameBox("All of them", all, { v ->
                     all = v
@@ -468,6 +498,7 @@ private fun NameThem(ids: List<String>, done: () -> Unit) {
             Btn(
                 when {
                     saving -> "Saving"
+                    described -> "Save"
                     named == 0 -> "Save names"
                     named == 1 -> "Save the name"
                     else -> "Save $named names"
@@ -487,42 +518,68 @@ private fun NameThem(ids: List<String>, done: () -> Unit) {
                             }
                         }
                         lib?.let(AppState::setLibrary)
-                        AppState.toast(if (named == 1) "1 name saved" else "$named names saved")
+                        // One call for all of them, however many.
+                        val details = detailsOf(day, note)
+                        if (details.isNotEmpty()) describe(ids, *details)
+                        val picked = day
+                        AppState.toast(
+                            when {
+                                picked != null -> expiresWords(ids.size, picked)
+                                named == 0 -> "Note saved"
+                                named == 1 -> "1 name saved"
+                                else -> "$named names saved"
+                            },
+                        )
                         saving = false
                         done()
                     }
                 },
                 Modifier.weight(1f),
-                enabled = named > 0,
+                enabled = named > 0 || described,
             )
         }
     }
 }
 
-/** Name the group just added (it came with a name made of what its sessions share). */
+/** Name the group just added (it came with a name made of what its sessions share), and give it
+ *  its last day and a note. */
 @Composable
-private fun NameGroup(id: String, done: () -> Unit) {
+private fun NameGroup(id: String, askNotifications: () -> Unit, done: () -> Unit) {
     val scope = rememberCoroutineScope()
     val library by AppState.library.collectAsState()
     val g = library.groups.find { it.id == id }
     var name by remember { mutableStateOf(g?.name ?: "") }
+    var day by remember { mutableStateOf<String?>(null) }
+    var note by remember { mutableStateOf("") }
+    val renamed = name.isNotBlank() && name.trim() != g?.name
+    val described = day != null || note.isNotBlank()
     Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 20.dp)) {
         Txt("Name the group", type(22.sp, FontWeight.Bold, spacing = (-0.015).em), modifier = Modifier.padding(top = 4.dp))
-        Txt("Optional.", type(13.sp, FontWeight.SemiBold, C.ink3, lineHeight = 18.sp), modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
+        Txt("Optional. $REMINDER_WORDS", type(13.sp, FontWeight.SemiBold, C.ink3, lineHeight = 18.sp), modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
         NameBox(g?.let { "${it.sessions.takeIf { s -> s > 0 } ?: it.size} sessions" } ?: "The group", name, { name = it }, "Its name")
+        Spacer(Modifier.height(8.dp))
+        ExpiryField(day, { picked ->
+            day = picked
+            if (picked != null) askNotifications()
+        })
+        Spacer(Modifier.height(8.dp))
+        Field(note, { note = it.take(500) }, placeholder = "Where it is from, what it is for", label = "Note", height = 52.dp, surface = C.bg)
         Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             LineBtn("Skip", done, Modifier.weight(1f), height = 56.dp)
-            Btn("Save the name", {
+            Btn(if (described) "Save" else "Save the name", {
                 scope.launch {
                     try {
-                        AppState.setLibrary(Engine.obj("renameGroup", jsonOf("id" to id, "name" to name.trim())))
-                        AppState.toast("Name saved")
+                        if (renamed) AppState.setLibrary(Engine.obj("renameGroup", jsonOf("id" to id, "name" to name.trim())))
+                        val details = detailsOf(day, note)
+                        if (details.isNotEmpty()) describeGroup(id, *details)
+                        val picked = day
+                        AppState.toast(if (picked != null) expiresWords(1, picked) else if (renamed) "Name saved" else "Note saved")
                     } catch (e: EngineError) {
                         AppState.toast(e.message ?: "The name was not saved")
                     }
                     done()
                 }
-            }, Modifier.weight(1f), enabled = name.isNotBlank() && name.trim() != g?.name)
+            }, Modifier.weight(1f), enabled = renamed || described)
         }
     }
 }

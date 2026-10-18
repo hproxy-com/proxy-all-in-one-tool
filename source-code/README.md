@@ -25,7 +25,7 @@ All of HProxy's software, in one place (Hproxy-Software-Bundle-Core):
 | `desktop-app/` | The app for Windows, macOS and Linux: check proxies, connect the whole computer through them. (`src-tauri/gen/android` holds the earlier Android app, the one on Google Play until 0.3.0.) |
 | `phone-android/` | The Android app, native (Kotlin and Jetpack Compose) on the same engine: check proxies, connect the whole phone through one with Android's VPN service, the free proxy list, fraud scores and support chat. |
 | `command-line-tool/` | `hproxy`, the same engine on the command line, and `hproxy mcp`, its server for AI assistants. |
-| `proxy-engine/` | What every door above shares: the checking engine, the connector (relay), the system proxy glue, the saved places, the client for hproxy.com's free doors, and the phone's engine and tunnel (`hproxy-mobile`, `hproxy-tunnel`). |
+| `proxy-engine/` | What every door above shares: the checking engine, the connector (relay), the system proxy glue, the saved places, the client for hproxy.com's free doors, the support chat of the apps' Help pages (`hproxy-chat`), and the phone's engine and tunnel (`hproxy-mobile`, `hproxy-tunnel`). |
 | `chrome-extension/` | The browser extension: connect Chrome to your proxies, your HProxy plans or the free pool, with every free exit tested before your pages go through it. |
 | `ai-tool-npm-package/` | The MCP server as an npm package (the same tools, calling hproxy.com's API). |
 

@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.os.Build
 import com.hproxy.app.engine.Native
 import com.hproxy.app.engine.Pictures
+import com.hproxy.app.remind.Reminders
 import com.hproxy.app.state.AppState
 import com.hproxy.app.vpn.OwnerLookup
 
@@ -14,6 +15,9 @@ class HProxyApp : Application() {
         super.onCreate()
         if (Pictures.on) Pictures.load(this)
         AppState.start(this)
+        // Plans close to their last day: the twice-daily look armed, and one look now.
+        Reminders.arm(this)
+        Thread({ Reminders.look(this) }, "hproxy-reminders").start()
         // Android 10 and later tell the firewall whose connection a connection is only through
         // ConnectivityManager; older phones are read in Rust.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

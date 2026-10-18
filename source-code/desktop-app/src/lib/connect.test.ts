@@ -62,6 +62,22 @@ describe("the lists' order, search and speed", () => {
     expect(sortSaved(list, "name").map((p) => p.name ?? p.address)).toEqual(["203.0.113.2:3128", "Dead one", "Proxy 2", "Proxy 10", "Work"]);
   });
 
+  it("puts the soonest last day first, the ones without a day after them", () => {
+    const dated = [
+      proxy("x", "198.51.100.1:80"),
+      proxy("y", "198.51.100.2:80", { expires: "2026-12-01" }),
+      proxy("z", "198.51.100.3:80", { expires: "2026-10-02" }),
+      proxy("w", "198.51.100.4:80"),
+      proxy("v", "198.51.100.5:80", { expires: "2026-12-01" }),
+    ];
+    expect(ids(sortSaved(dated, "expiring"))).toBe("zyvxw");
+  });
+
+  it("finds a proxy by its note too", () => {
+    const noted = [...list, proxy("n", "198.51.100.9:80", { note: "Shop account 3, from October" })];
+    expect(ids(matchSaved(noted, "shop account"))).toBe("n");
+  });
+
   it("finds by name, address or place; a password is never there to find", () => {
     expect(ids(matchSaved(list, "proxy"))).toBe("ac");
     expect(ids(matchSaved(list, "113.4"))).toBe("d");

@@ -1,5 +1,7 @@
 package com.hproxy.app.ui.proxies
 
+import android.app.DatePickerDialog
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
@@ -38,6 +40,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -46,6 +49,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import com.hproxy.app.R
+import com.hproxy.app.engine.Expiry
 import com.hproxy.app.state.FraudAnswer
 import com.hproxy.app.state.RowState
 import com.hproxy.app.ui.connection.clock
@@ -54,12 +59,14 @@ import com.hproxy.app.ui.kit.Flag
 import com.hproxy.app.ui.kit.Glyph
 import com.hproxy.app.ui.kit.I
 import com.hproxy.app.ui.kit.Ic
+import com.hproxy.app.ui.kit.IconBtn
 import com.hproxy.app.ui.kit.Txt
 import com.hproxy.app.ui.kit.pressable
 import com.hproxy.app.ui.theme.C
 import com.hproxy.app.ui.theme.Glide
 import com.hproxy.app.ui.theme.cut
 import com.hproxy.app.ui.theme.type
+import java.util.GregorianCalendar
 import kotlinx.coroutines.delay
 
 /*
@@ -160,6 +167,8 @@ fun ProxyRow(
     moreTint: Color? = null,
     /** What stands where the flag goes (the fastest free proxy's bolt). */
     lead: (@Composable () -> Unit)? = null,
+    /** How many days its plan has left, as a chip before the words under the name. */
+    tag: Expiry.Left? = null,
 ) {
     val shape = cut(16.dp, 6.dp)
     val lifted = checking || state !is RowState.Idle
@@ -199,7 +208,14 @@ fun ProxyRow(
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Txt(title, type(16.sp, FontWeight.Bold, spacing = (-0.01).em, numbers = true), color = nameInk, maxLines = 1)
-                    Txt(words, type(13.sp, subWeight, numbers = true), color = subInk, maxLines = 1)
+                    if (tag != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            ExpiryChip(tag)
+                            Txt(words, type(13.sp, subWeight, numbers = true), color = subInk, maxLines = 1)
+                        }
+                    } else {
+                        Txt(words, type(13.sp, subWeight, numbers = true), color = subInk, maxLines = 1)
+                    }
                 }
                 // The results rise in the moment the check lands.
                 Box(Modifier.clipToBounds()) {
@@ -233,6 +249,73 @@ fun ProxyRow(
         }
         if (state is RowState.Busy) GrowLine(Modifier.align(Alignment.BottomStart).padding(horizontal = 12.dp))
     }
+}
+
+/** How many days a plan has left, in a hairline: grey while there is time, amber in its last three
+ *  days, red once past. A hairline, never a fill. */
+@Composable
+fun ExpiryChip(left: Expiry.Left) {
+    val ink = when (left.tone) {
+        Expiry.Tone.Quiet -> C.ink2
+        Expiry.Tone.Warn -> C.warn
+        Expiry.Tone.Bad -> C.bad
+    }
+    val shape = cut(7.dp, 3.dp)
+    Box(
+        Modifier
+            .height(20.dp)
+            .clip(shape)
+            .border(1.dp, if (left.tone == Expiry.Tone.Quiet) C.line else ink, shape)
+            .padding(horizontal = 7.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Txt(left.words, type(11.5.sp, FontWeight.Bold, ink, numbers = true), maxLines = 1)
+    }
+}
+
+/**
+ * The last day of a plan, in a box like a field: what it is ("Expires on"), then the day and how
+ * long it leaves, or "Not set". A tap opens Android's own calendar; the × takes the day away.
+ */
+@Composable
+fun ExpiryField(day: String?, onDay: (String?) -> Unit, modifier: Modifier = Modifier, label: String = "Expires on") {
+    val context = LocalContext.current
+    val shape = cut(14.dp, 5.dp)
+    val left = Expiry.of(day)
+    Row(
+        modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .pressable({ pickDay(context, day) { onDay(it) } }, scale = 0.99f)
+            .clip(shape)
+            .background(C.bg)
+            .border(1.dp, C.line, shape)
+            .padding(start = 14.dp, end = if (left != null) 2.dp else 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Txt(label, type(13.sp, FontWeight.Bold, C.ink3), maxLines = 1)
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (left != null) {
+                Txt(Expiry.words(day), type(15.5.sp, FontWeight.Bold, C.ink, numbers = true), maxLines = 1)
+                ExpiryChip(left)
+            } else {
+                Txt("Not set", type(15.sp, FontWeight.Medium, C.ink3), maxLines = 1)
+            }
+        }
+        if (left != null) IconBtn(I.close, { onDay(null) }, size = 44.dp, glyph = 18.dp, description = "No end date", tint = C.ink2)
+    }
+}
+
+/** Android's own calendar, open on `day` (else today), in the app's colours; the day picked comes
+ *  back as YYYY-MM-DD. */
+fun pickDay(context: Context, day: String?, onDay: (String) -> Unit) {
+    val (y, m, d) = Expiry.parts(day)
+    val dialog = DatePickerDialog(context, R.style.Theme_HProxy_Calendar, { _, yy, mm, dd -> onDay(Expiry.picked(yy, mm, dd)) }, y, m, d)
+    // The library keeps days of this century and the next.
+    dialog.datePicker.minDate = GregorianCalendar(2000, 0, 1).timeInMillis
+    dialog.datePicker.maxDate = GregorianCalendar(2199, 11, 31).timeInMillis
+    dialog.show()
 }
 
 /** What appears rises in from below its own foot (clipped by its parent); it never fades. */

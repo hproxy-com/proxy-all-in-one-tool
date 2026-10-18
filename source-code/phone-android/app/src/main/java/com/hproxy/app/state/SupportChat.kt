@@ -1,5 +1,7 @@
 package com.hproxy.app.state
 
+import android.os.Build
+import com.hproxy.app.BuildConfig
 import com.hproxy.app.engine.Engine
 import com.hproxy.app.engine.EngineError
 import com.hproxy.app.engine.jsonOf
@@ -58,18 +60,41 @@ object SupportChat {
         draftFlow.value = text
     }
 
-    /** Open the chat (Help showing): the person's own thread comes back with its token. */
+    /** Open the chat (Help showing): the person's own thread comes back with its token. Support
+     *  sees where it was written from: this app, its store and its version (2026-10-18). */
     fun open() {
         if (linkFlow.value == Link.Open || linkFlow.value == Link.Opening) return
         linkFlow.value = Link.Opening
         AppState.scope.launch {
             try {
-                Engine.call("chatOpen", jsonOf("token" to Settings.chatToken))
+                Engine.call("chatOpen", jsonOf("token" to Settings.chatToken, "store" to store(), "version" to BuildConfig.VERSION_NAME))
             } catch (e: EngineError) {
                 linkFlow.value = Link.Down
             }
         }
     }
+
+    /** Where this copy of the app came from, for support (2026-10-18): "google-play"; "apk" when
+     *  it was installed by hand (the APK from the website); a known store by its name; else the
+     *  installer's own package. Null when the phone will not say. */
+    private fun store(): String? = runCatching {
+        val pm = AppState.app.packageManager
+        val name = AppState.app.packageName
+        val installer = if (Build.VERSION.SDK_INT >= 30) {
+            pm.getInstallSourceInfo(name).installingPackageName
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getInstallerPackageName(name)
+        }
+        when (installer) {
+            "com.android.vending" -> "google-play"
+            null, "com.google.android.packageinstaller", "com.android.packageinstaller" -> "apk"
+            "com.sec.android.app.samsungapps" -> "galaxy-store"
+            "com.amazon.venezia" -> "amazon-appstore"
+            "com.huawei.appmarket" -> "appgallery"
+            else -> installer
+        }
+    }.getOrNull()
 
     /** Send what the box holds. It shows at once, "Sending" until the chat has it. */
     fun send(text: String): Boolean {

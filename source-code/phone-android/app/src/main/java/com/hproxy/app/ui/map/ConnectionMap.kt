@@ -1,5 +1,6 @@
 package com.hproxy.app.ui.map
 
+import android.os.SystemClock
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
@@ -54,6 +55,7 @@ import com.hproxy.app.ui.theme.C
 import com.hproxy.app.ui.theme.Glide
 import com.hproxy.app.ui.theme.Spring
 import com.hproxy.app.ui.theme.type
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlinx.coroutines.delay
 
@@ -114,6 +116,16 @@ fun ConnectionMap(widthDp: Double, heightDp: Double, pinX: Double, pinY: Double,
     val camTarget = target?.let { camOn(it.first, it.second, scale) } ?: camOn(20.0, 10.0, WORLD_S)
     LaunchedEffect(camTarget, World.loaded) { flight.go(camTarget) }
 
+    // The pin stands on the place the camera goes to and rides the map while it flies there. A new
+    // place (the exit's city once a probe has said it, the country when you are off) makes it come
+    // up there; only closer or farther, it stays. Read here, in the composition that brings the new
+    // place's words, so they never show for a frame where the old place was.
+    val held = remember { HeldPlace(PinPlace(camTarget.x, camTarget.y, 0L)) }
+    if (abs(camTarget.x - held.place.x) > 1e-6 || abs(camTarget.y - held.place.y) > 1e-6) {
+        held.place = PinPlace(camTarget.x, camTarget.y, SystemClock.uptimeMillis())
+    }
+    val place = held.place
+
     // The lit country hands over to the next one: the old one fades out while the new one fades
     // in (dots are solid colours, only their colour moves), never off at once.
     val fade = remember { Animatable(1f) }
@@ -133,7 +145,7 @@ fun ConnectionMap(widthDp: Double, heightDp: Double, pinX: Double, pinY: Double,
     val density = LocalDensity.current
 
     Box(modifier.fillMaxSize().background(C.bg)) {
-        DotMap(flight, sceneDark, widthDp.toInt(), heightDp.toInt(), hidden = on) {
+        DotMap(flight, sceneDark, widthDp.toInt(), heightDp.toInt(), hidden = on, place = place) {
             Pin(on = busy, white = false, cc = pinCc, city = city, beat = null)
         }
         val from = floodFrom ?: with(density) { Offset(pinX.dp.toPx(), pinY.dp.toPx()) }
@@ -149,13 +161,17 @@ fun ConnectionMap(widthDp: Double, heightDp: Double, pinX: Double, pinY: Double,
                     }
                     .background(C.blue),
             ) {
-                DotMap(flight, sceneBlue, widthDp.toInt(), heightDp.toInt()) {
+                DotMap(flight, sceneBlue, widthDp.toInt(), heightDp.toInt(), place = place) {
                     Pin(on = true, white = true, cc = pinCc, city = city, beat = health?.exitIp)
                 }
             }
         }
     }
 }
+
+/** The pin's place, kept across compositions: written while composing, so it is a plain holder
+ *  and never a state that would compose again. */
+private class HeldPlace(var place: PinPlace)
 
 /** A place on the map, unless it is missing or the nowhere at 0,0 (what an IP data source says
  *  when it knows only a country, or nothing). */

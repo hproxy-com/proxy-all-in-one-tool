@@ -94,10 +94,56 @@ function Unreadable({ line, reason }: { line: string; reason: string }) {
   );
 }
 
+/** After a check, the working ones shown, one press from your proxy list (2026-10-17: "what if
+    people wanna add those proxies to their proxy list ... you can add all those to your personal
+    proxy list"). Once they are in it says so, with the way there. A new set of rows asks again. */
+function KeepLine({ lines, onKeep, onOpenList }: { lines: string[]; onKeep: (lines: string[]) => Promise<void>; onOpenList?: () => void }) {
+  const key = lines.join("\n");
+  const [kept, setKept] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const n = lines.length;
+  if (kept === key) {
+    return (
+      <div className="ux-keepline" role="status">
+        <span>
+          <Icon.check className="h-4 w-4" />
+          {n === 1 ? "It is in your proxy list." : `All ${spaced(n)} are in your proxy list.`}
+        </span>
+        {onOpenList && (
+          <button type="button" className="ux-keepline-btn" onClick={onOpenList}>
+            Open it
+          </button>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="ux-keepline">
+      <span>{n === 1 ? "You can add it to your proxy list." : `You can add all ${spaced(n)} to your proxy list.`}</span>
+      <button
+        type="button"
+        className="ux-keepline-btn"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          void onKeep(lines)
+            .then(() => setKept(key))
+            .finally(() => setBusy(false));
+        }}
+      >
+        <Icon.plus className="h-4 w-4" />
+        {n === 1 ? "Add it" : `Add ${spaced(n)}`}
+      </button>
+    </div>
+  );
+}
+
 export default function CheckerConsole({
   settings,
   onConnect,
   onSaveGroup,
+  onKeep,
+  onOpenList,
   seed,
   active = true,
   onHistory,
@@ -109,6 +155,10 @@ export default function CheckerConsole({
   onConnect?: (raw: string) => void;
   /** Keep the working rows as a group (Proxies, Groups). */
   onSaveGroup?: (lines: string[]) => void;
+  /** Keep the working rows in My proxies, each its own; settles once they are in. */
+  onKeep?: (lines: string[]) => Promise<void>;
+  /** My proxies, where kept rows are. */
+  onOpenList?: () => void;
   /** Lines handed over from Connect ("Check this list"), checked on arrival. */
   seed?: { text: string; at: number } | null;
   /** False while another tab is showing: the screen stays alive behind it
@@ -349,6 +399,8 @@ export default function CheckerConsole({
       await new Promise((r) => setTimeout(r, 12 + Math.floor(rng() * 55)));
       if (live[i].status === "pending") {
         live[i] = simulateRow(live[i], rng);
+        // Remembered as the app remembers a run's rows (check.rs, remember_row).
+        void import("../../lib/previewPlaces").then((p) => p.demoCheckedRow(live[i]));
         dirtyRef.current = true;
       }
     }
@@ -810,7 +862,7 @@ export default function CheckerConsole({
               icon={<Icon.download className="h-4 w-4" />}
               disabled={settled.length === 0}
               items={[
-                { label: "Working list as .txt", note: "host:port, one per line", onClick: downloadTxt },
+                { label: "Working list as .txt", note: "as you gave them, with the logins, one per line", onClick: downloadTxt },
                 { label: "Every row shown as .csv", note: "every column", onClick: downloadCsv },
                 { label: "Every row shown as .json", note: "every column, with the timings", onClick: downloadJson },
                 ...(onSaveGroup && filteredWorking.length > 0
@@ -839,6 +891,9 @@ export default function CheckerConsole({
             </span>
           </div>
           <ActiveFilters filters={filters} setFilters={setFilters} shown={visible.length} />
+          {onKeep && !checking && filteredWorking.length > 0 && (
+            <KeepLine lines={filteredWorking.map((r) => r.raw)} onKeep={onKeep} onOpenList={onOpenList} />
+          )}
         </div>
 
         <ResultsTable

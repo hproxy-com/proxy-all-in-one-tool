@@ -1,0 +1,20 @@
+[package]
+name = "hproxy-chat"
+description = "The support chat of the apps' Help pages: a visitor socket to HProxy support at chat.hproxy.com, for the phone app's engine and the desktop app alike."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+# WebSocket framing only. Its TLS is the engine's own rustls with ring (the versions reqwest
+# already brings), so no second TLS stack and no aws-lc, which the phone's build cannot carry.
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

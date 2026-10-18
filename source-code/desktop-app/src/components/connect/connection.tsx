@@ -17,8 +17,25 @@ import {
 import type { Settings } from "../../lib/settings";
 import { DEFAULT_ROTATION, listLines, spacedN } from "../../lib/connect";
 import { phaseOf, placeView, type Busy } from "../../lib/connectionView";
-import { freeGroupName, MAX_PROXIES, samePlace, tabOf, type GroupInput, type GroupView, type Place, type ProxyView } from "../../lib/places";
+import {
+  dayWords,
+  daysLeft,
+  firstPlace,
+  firstWorking,
+  freeGroupName,
+  MAX_PROXIES,
+  samePlace,
+  tabOf,
+  todayHere,
+  type Details,
+  type GroupInput,
+  type GroupView,
+  type Place,
+  type ProxyView,
+} from "../../lib/places";
 import { placesStore } from "../../lib/placesStore";
+import { numberedNames } from "../../lib/review";
+import { pendingRemoves, type PendingRemove } from "../../lib/undoRemove";
 import {
   DATE_TIME_SETTINGS,
   dnsRow,
@@ -102,6 +119,9 @@ export type Connection = {
     onDrop: (e: DragEvent) => void;
   };
   checkSeed: { text: string; at: number } | null;
+  /** What the switch connects to: the pick, else the first of yours (lib/places.ts firstPlace);
+      null with none of yours. */
+  chosen: Place | null;
   /** Connect's own paste field (Quick connect). */
   quickRef: RefObject<HTMLInputElement | null>;
   /** When something last asked for Connect's paste field (a proxy pasted on Connect, the
@@ -115,6 +135,8 @@ export type Connection = {
   connectThrough: (raw: string) => void;
   /** The Checker's "Save the working ones as a group". */
   saveAsGroup: (lines: string[]) => void;
+  /** The Checker's working ones kept in My proxies, each its own; settles once they are in. */
+  keepLines: (lines: string[]) => Promise<void>;
   checkLines: (lines: string[]) => void;
 };
 
@@ -156,6 +178,32 @@ export function ConnectionProvider({
      goes through. */
   const [placesProblem, setPlacesProblem] = useState<string | null>(null);
 
+  /* Remove the ones that don't answer, then Restore for 5 seconds (2026-10-18: "when you remove
+     the ones that aren't working sometimes it's risky ... there should be a restore button that
+     pops up shortly after and lasts for 5 seconds"). They leave the list at once and are
+     forgotten when the time is up (lib/undoRemove.ts); a page change in between keeps the clock
+     running, a closed app forgets nothing. Everything below reads `listed`, so Test all and the
+     counts never see the ones waiting to go. */
+  const [removing, setRemoving] = useState<PendingRemove | null>(null);
+  const removes = useRef<ReturnType<typeof pendingRemoves> | null>(null);
+  if (!removes.current)
+    removes.current = pendingRemoves(
+      (ids) =>
+        Promise.all(ids.map((id) => placesStore.forget(id))).then(
+          () => setPlacesProblem(null),
+          (e: unknown) => setPlacesProblem(String(e)),
+        ),
+      setRemoving,
+    );
+  const leaving = new Set(removing?.ids ?? []);
+  const listed = leaving.size ? proxies.filter((x) => !leaving.has(x.id)) : proxies;
+  /* What the switch connects to: the pick (unless it is waiting to be removed), else the first
+     of yours, so the card always names what a press does. With none of yours, nothing: never a
+     free proxy by itself (2026-10-17: "the H button shouldn't be for free proxies, ignore the
+     free proxies"). */
+  const pickStays = picked && !(picked.kind === "proxy" && leaving.has(picked.id)) ? picked : null;
+  const chosen: Place | null = pickStays ?? firstPlace(listed, groups);
+
   /* The list opens on My proxies, whatever was picked last: the app is for
      people connecting proxies of their own, and free proxies are the extra. The place picked last stays remembered for the
      switch, and "Change" on the card opens its tab. */
@@ -177,7 +225,7 @@ export function ConnectionProvider({
 
   const [line, setLine] = useState("");
   const lineCheck = useLineCheck(line);
-  const { testing, checkingIds, checkSaved, testAll } = useSavedChecks(proxies);
+  const { testing, checkingIds, checkSaved, testAll } = useSavedChecks(listed);
   /* The place the last connect failed on, and why: the Proxies page shows it
      on that place's row, since a click there connects without leaving the
      page (the card on Connect says it too). */
@@ -193,6 +241,8 @@ export function ConnectionProvider({
   const [goingToMember, setGoingToMember] = useState<number | null>(null);
   const [busy, setBusy] = useState<Busy>("");
   const [error, setError] = useState<string | null>(null);
+  // Connected to a place past the day it expires: said until the next connect or stop.
+  const [ended, setEnded] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [incoming, setIncoming] = useState<{ text: string; at: number } | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -200,6 +250,18 @@ export function ConnectionProvider({
   const quickRef = useRef<HTMLInputElement>(null);
   const [quickAsk, setQuickAsk] = useState(0);
   const askQuick = () => setQuickAsk(Date.now());
+  /* The switch pressed with none of yours (2026-10-18: "whenever someone presses on the H it
+     says ... add your proxies first to start connecting!"): Proxies says so, popping in on each
+     press (`addAsked`, the time of the last press), and once they are in, the first that works
+     connects (`thenConnect`). Both end when you leave the Proxies page. */
+  const [addAsked, setAddAsked] = useState(0);
+  const thenConnect = useRef(false);
+  const onProxiesPage = active && !onConnectPage;
+  useEffect(() => {
+    if (onProxiesPage) return;
+    thenConnect.current = false;
+    setAddAsked(0);
+  }, [onProxiesPage]);
   const takeText = (text: string) => {
     if (!text.trim()) return;
     // One proxy pasted or dropped on Connect goes into Connect's own field, checked at once,
@@ -252,11 +314,18 @@ export function ConnectionProvider({
       `member` when one is given. The app counts the use and makes it the
       pick; a place that failed stays the pick, so the switch tries it again. */
   const start = async (place: Place, member?: number) => {
+    // Connecting through one that waits to be removed (the card still shows it): it stays.
+    if (place.kind === "proxy" && leaving.has(place.id)) removes.current?.restore();
     setBusy(running ? "switching" : "connecting");
     setGoingTo(place);
     setGoingToMember(member ?? null);
     setError(null);
     setFailed(null);
+    // A day typed by the person, past: it is said, and the connect goes ahead (plans get extended).
+    const expires =
+      place.kind === "proxy" ? proxies.find((x) => x.id === place.id)?.expires : place.kind === "group" ? groups.find((x) => x.id === place.id)?.expires : undefined;
+    const today = todayHere();
+    setEnded(expires && (daysLeft(expires, today) ?? 0) < 0 ? `Its plan ended on ${dayWords(expires, today)}. Connecting anyway.` : null);
     try {
       appliedProbe.current = probeUrl;
       lastHealthAt.current = 0;
@@ -276,6 +345,7 @@ export function ConnectionProvider({
   const stop = async () => {
     setBusy("stopping");
     setError(null);
+    setEnded(null);
     try {
       setStatus(await connectStop());
     } catch (e) {
@@ -336,38 +406,80 @@ export function ConnectionProvider({
   const pickPlace = (place: Place) => placesStore.pick(place).catch((e: unknown) => setPlacesProblem(String(e)));
   const connectTo = (place: Place) => void start(place);
 
-  /* The switch: off → connect to the place picked; nothing picked → the
-     field to paste one (Connect's own, with your places and the fastest free
-     proxy beside it; else on Proxies); on → disconnect. */
+  /* The switch: on → disconnect; off → the place chosen (the pick, else the first of yours);
+     none of yours → Proxies, which says "Add your proxies first to start connecting!", and the
+     first of them that works connects once they are in. */
   const toggle = () => {
     if (running) return void stop();
-    if (picked) return void start(picked);
-    if (onConnectPage || quickRef.current) return void askQuick();
+    if (chosen) return void start(chosen);
+    thenConnect.current = true;
+    setAddAsked(Date.now());
     setPane("proxies");
     setView("proxies");
     setTimeout(() => lineRef.current?.focus(), 60);
   };
 
+  /** Proxies saved after the switch asked for them: the first that answered its check connects
+      (else the first; its connect says what went wrong). Once. */
+  const connectAsked = (ids: string[]) => {
+    if (!thenConnect.current || !ids.length) return;
+    thenConnect.current = false;
+    const id = firstWorking(ids, placesStore.snapshot().view.proxies);
+    if (id) void start({ kind: "proxy", id });
+  };
+
   /** Save lines as proxies and pick the first; says so when some did not fit.
-      The id of the first, when one was saved. */
-  const saveProxies = async (lines: string[]): Promise<string | undefined> => {
+      `details` (a last day, a note) go on every one of them; `name`, numbered, on
+      the ones new to the list (a proxy you had keeps its name). The ids saved now,
+      in the order given. */
+  const saveProxies = async (lines: string[], details?: Details, name?: string): Promise<string[]> => {
+    // A remove that waits is done first, so the room counted is the room there is.
+    await removes.current?.flush();
     try {
+      const had = new Set(placesStore.snapshot().view.proxies.map((p) => p.id));
       const ids = await placesStore.add(lines);
       const left = new Set(lines.map((l) => l.trim()).filter(Boolean)).size - ids.length;
       setPlacesProblem(left > 0 ? noRoom(left) : null);
+      if (details && ids.length) await placesStore.describe(ids, details);
+      const fresh = ids.filter((id) => !had.has(id));
+      if (name?.trim() && fresh.length) await placesStore.nameEach(fresh, numberedNames(name, fresh.length));
       if (ids[0]) await pickPlace({ kind: "proxy", id: ids[0] });
-      return ids[0];
+      return ids;
     } catch (e) {
       setPlacesProblem(String(e));
-      return undefined;
+      return [];
     }
   };
 
-  /** The paste field's Add: save the line and pick it. */
+  /** Name, last day and note of saved proxies (one, or many at once), or of a
+      group. The words of why not (a date that is not a day), or null. */
+  const describeProxies = async (ids: string[], details: Details): Promise<string | null> => {
+    try {
+      await placesStore.describe(ids, details);
+      setPlacesProblem(null);
+      return null;
+    } catch (e) {
+      return String(e).replace(/^Error:\s*/, "");
+    }
+  };
+  const describeGroup = async (id: string, details: Details): Promise<string | null> => {
+    try {
+      await placesStore.describeGroup(id, details);
+      setPlacesProblem(null);
+      return null;
+    } catch (e) {
+      return String(e).replace(/^Error:\s*/, "");
+    }
+  };
+
+  /** The paste field's Add: save the line and pick it (and connect it, when the switch asked). */
   const addLine = async () => {
     const t = line.trim();
     if (!lineCheck.parsed || !t) return;
-    if (await saveProxies([t])) setLine("");
+    const ids = await saveProxies([t]);
+    if (!ids.length) return;
+    setLine("");
+    connectAsked(ids);
   };
 
   /** Connect's paste field: save the line and connect through it at once (moving there
@@ -375,18 +487,24 @@ export function ConnectionProvider({
   const addAndConnect = async () => {
     const t = line.trim();
     if (!lineCheck.parsed || !t) return;
-    const id = await saveProxies([t]);
+    const [id] = await saveProxies([t]);
     if (!id) return;
     setLine("");
     void start({ kind: "proxy", id });
   };
 
   /** Lines kept as one new group, named after `base` and the day, and picked. */
-  const makeGroup = async (base: string, lines: string[]): Promise<boolean> => {
+  const makeGroup = async (base: string, lines: string[], details?: Details): Promise<boolean> => {
     try {
       const id = await placesStore.saveGroup({ name: freeGroupName(groups, `${base} ${today()}`), lines, rule: DEFAULT_ROTATION });
+      if (details) await placesStore.describeGroup(id, details);
       setPlacesProblem(null);
       await pickPlace({ kind: "group", id });
+      // Made after the switch asked for proxies: the group connects, as a list of proxies would.
+      if (thenConnect.current) {
+        thenConnect.current = false;
+        void start({ kind: "group", id });
+      }
       return true;
     } catch (e) {
       setPlacesProblem(String(e));
@@ -411,12 +529,15 @@ export function ConnectionProvider({
       (e: unknown) => setPlacesProblem(String(e)),
     );
   const forgetProxy = (p: ProxyView) => changed(placesStore.forget(p.id));
+
+  /** Saved proxies whose last check got no answer; never the one connected through. */
+  const dead = listed.filter((x) => x.last && !x.last.ok && !(running && connected?.kind === "proxy" && connected.id === x.id));
   const renameProxy = (p: ProxyView, name: string) => changed(placesStore.rename(p.id, name));
   const forgetGroup = (g: GroupView) => changed(placesStore.forgetGroup(g.id));
 
   // "Change" on the card: the Proxies page, on the tab of the place picked.
   const changePlace = () => {
-    setPane(tabOf(picked));
+    setPane(tabOf(shown));
     setView("proxies");
   };
 
@@ -425,7 +546,7 @@ export function ConnectionProvider({
      used to stop at picking it, under a button that says Connect), the
      working ones kept as a group, or lines to check. */
   const connectThrough = (raw: string) =>
-    void saveProxies([raw.trim()]).then((id) => {
+    void saveProxies([raw.trim()]).then(([id]) => {
       if (!id) return;
       setView("connect");
       void start({ kind: "proxy", id });
@@ -434,6 +555,7 @@ export function ConnectionProvider({
     void makeGroup("Working", lines).then((made) => {
       if (made) setView("connect");
     });
+  const keepLines = async (lines: string[]) => void (await saveProxies(lines));
   const [checkSeed, setCheckSeed] = useState<{ text: string; at: number } | null>(null);
   const checkLines = (lines: string[]) => {
     setCheckSeed({ text: lines.join("\n"), at: Date.now() });
@@ -446,8 +568,8 @@ export function ConnectionProvider({
       .catch((e: unknown) => setPlacesProblem(String(e)));
 
   /* What the card says about the place: the one a connect is under way to,
-     else the one the relay goes through, else the pick. */
-  const shown: Place | null = goingTo ?? connected ?? picked;
+     else the one the relay goes through, else the one the switch connects to. */
+  const shown: Place | null = goingTo ?? connected ?? chosen;
   const view = placeView(shown, { proxies, groups, status, connected });
 
   const failing = running && !!status?.health && !status.health.ok;
@@ -499,7 +621,7 @@ export function ConnectionProvider({
     now,
     busy: busy !== "",
     onToggle: toggle,
-    canConnect: !!picked,
+    canConnect: !!chosen,
     onChangeTarget: changePlace,
     onRotate: () => void moveWithin(connectRotate),
     onBack: running && status?.source?.kind === "list" && (status.source.size ?? 0) > 1 ? () => void moveWithin(connectBack) : undefined,
@@ -507,6 +629,7 @@ export function ConnectionProvider({
     onCopy: () => void copy(),
     copied,
     error,
+    ended,
     useSystem,
     setUseSystem,
     canAutomate: support?.kind === "automatic",
@@ -534,20 +657,27 @@ export function ConnectionProvider({
     lineRef,
     ready: places.ready,
     note: placesProblem ?? places.notice,
-    proxies,
+    proxies: listed,
+    dead,
+    onRemoveDead: () => removes.current?.remove(dead.map((x) => x.id)),
+    removing,
+    onRestore: () => removes.current?.restore(),
     line,
     setLine,
     lineState: { parsed: lineCheck.parsed, parseError: lineCheck.parseError, checking: lineCheck.checking, verdict: lineCheck.verdict },
+    asked: addAsked,
     onAdd: () => void addLine(),
     onAddAndConnect: () => void addAndConnect(),
-    onAddMany: (lines) => void saveProxies(lines),
-    onGroupFromLines: (lines) =>
-      void makeGroup("Pasted", lines).then((made) => {
+    onAddMany: (lines, details, name) => void saveProxies(lines, details, name).then(connectAsked),
+    onGroupFromLines: (lines, details) =>
+      void makeGroup("Pasted", lines, details).then((made) => {
         if (made) setPane("groups");
       }),
     onRecheck: lineCheck.recheck,
     onForget: forgetProxy,
     onRename: renameProxy,
+    onDescribe: describeProxies,
+    onDescribeGroup: describeGroup,
     checkingIds,
     onCheckOne: (p) => void checkSaved(p.id),
     testing,
@@ -595,12 +725,14 @@ export function ConnectionProvider({
     open,
     drag,
     checkSeed,
+    chosen,
     quickRef,
     quickAsk,
     askQuick,
     takePasted: takeText,
     connectThrough,
     saveAsGroup,
+    keepLines,
     checkLines,
   };
   return <ConnectionContext.Provider value={value}>{children}</ConnectionContext.Provider>;

@@ -32,13 +32,24 @@ const manifest = JSON.parse(readFileSync(join(EXT, "manifest.json"), "utf8"));
 const ID = extensionIdFromKey(manifest.key);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/* Every IPv4 on the page becomes an example address, the same one each time. */
+/* Every IP address on the page becomes an example address, the same one each time: IPv4 from
+   RFC 5737, IPv6 from RFC 3849. IPv6 was left out until 2026-10-14, and a free exit that answered
+   over IPv6 put its real address on the connected picture. An IPv6 address here is four groups or
+   more, or has "::", so a time such as 1:02:03 is never taken for one. */
 const MASK = `(() => {
   const examples = ["203.0.113.24", "198.51.100.7", "192.0.2.61", "203.0.113.130"];
+  const examples6 = ["2001:db8::24", "2001:db8::7", "2001:db8::61", "2001:db8::130"];
   const seen = new Map();
+  const seen6 = new Map();
+  const v6 = /(?:\\b[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\\b|(?:\\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*\\b)?/gi;
   const swap = (s) => s.replace(/\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b/g, (ip) => {
     if (!seen.has(ip)) seen.set(ip, examples[seen.size % examples.length]);
     return seen.get(ip);
+  }).replace(v6, (ip) => {
+    if (ip === "::") return ip;
+    const key = ip.toLowerCase();
+    if (!seen6.has(key)) seen6.set(key, examples6[seen6.size % examples6.length]);
+    return seen6.get(key);
   });
   /* An address caught while it turns is a wheel per digit, which no text search matches (1.0.3's
      rested as wheels, and a capture of it kept the real address): it becomes its plain text first. */
@@ -68,7 +79,7 @@ const MASK = `(() => {
   // This run loads the folder unpacked, and such a copy says so; the store's copy never does.
   const hand = document.getElementById("handLoaded");
   if (hand) hand.hidden = true;
-  return seen.size;
+  return seen.size + seen6.size;
 })()`;
 
 /* A US visitor's browser (English, New York time), connected to a US exit below: the checks then

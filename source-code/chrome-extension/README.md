@@ -157,6 +157,11 @@ correct behaviour for a misconfigured credential minter and is asserted by
   not woken for every successful request in the browser.
 - `privacy` — lock WebRTC to the proxy while connected, release it on
   disconnect.
+- `alarms` — one look an hour at the last days a person gave their saved
+  proxies, so the toolbar's count of plans ending within three days stays true
+  while nothing is connected (a day passes with nobody opening the popup).
+  Nothing is sent anywhere; the days never leave the browser. (The Chrome Web
+  Store asks for this reason at the next upload.)
 - `identity` — "Sign in with HProxy" (`launchWebAuthFlow`).
 - `host_permissions: <all_urls>` — required for the webRequest listeners to see
   traffic on every site and to proxy every site. Inherent to a proxy/VPN

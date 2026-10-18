@@ -392,6 +392,11 @@
   font-weight: 600;
   color: var(--ink-mute);
 }
+/* How many days a place has left (Destinations.tsx, ExpiryTag). */
+.ux-place .tag {
+  display: inline-flex;
+  flex: none;
+}
 .ux-place .aside {
   flex: none;
   font-size: 13px;
@@ -456,6 +461,420 @@
 }
 .ux-rowmenu .item.is-danger {
   color: var(--danger);
+}
+
+/* The ones that don't answer (2026-10-18): a hairline box, the words, Remove in the danger
+   colour. Nothing see-through. */
+.ux-deadline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px 4px 12px 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-mute);
+}
+.ux-deadline-remove {
+  flex: none;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--danger);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* Restore, at the window's foot for 5 seconds (2026-10-18): solid, the theme's ink as its fill so
+   it stands out on either theme, a line running out. Moved by transform only. */
+.ux-restore {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  overflow: hidden;
+  padding: 11px 14px 13px 18px;
+  border-radius: 14px 5px 14px 5px;
+  background: var(--ink);
+  color: var(--canvas);
+  font-size: 14px;
+  font-weight: 650;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  animation: ux-restore-in 240ms ease-out;
+}
+.ux-restore-btn {
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  color: var(--digi-light);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+.ux-restore-time {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--digi-light);
+  transform-origin: left center;
+  animation: ux-restore-time linear forwards;
+}
+[data-theme="midnight"] .ux-restore-btn {
+  color: var(--digi);
+}
+[data-theme="midnight"] .ux-restore-time {
+  background: var(--digi);
+}
+@keyframes ux-restore-in {
+  from {
+    transform: translate(-50%, 14px);
+  }
+}
+@keyframes ux-restore-time {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ux-restore {
+    animation: none;
+  }
+}
+
+/* Quick change (QuickChange.tsx, 2026-10-18): Change's places in a filled sheet, the one the
+   switch connects marked with a check, the full list under them as a hairline button. */
+.ux-qc {
+  width: min(440px, calc(100vw - 48px));
+  padding: 14px 10px 10px;
+  border: 1px solid var(--bar);
+}
+.ux-qc-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 8px 10px;
+}
+.ux-qc-head b {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.ux-qc-head small {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-mute);
+}
+.ux-qc-full {
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  margin-top: 10px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--bar);
+  border-radius: 12px 4px 12px 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+.ux-qc-full:hover,
+.ux-qc-full:focus-visible {
+  border-color: var(--digi);
+  color: var(--accent-ink);
+}
+.ux-place .chosen {
+  display: inline-flex;
+  flex: none;
+  color: var(--accent-ink);
+}
+.ux-place .chosen svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* A pasted list's review (PasteReview.tsx, 2026-10-18): the speed on a row that worked, and
+   the line over the ones that did not. */
+.ux-dest .speed {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding-right: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.ux-review-failed {
+  margin: 10px 0 2px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--danger);
+}
+
+/* The Checker's working ones, one press from the proxy list (CheckerConsole.tsx, KeepLine):
+   a hairline box like the dead ones' line on My proxies. */
+.ux-keepline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px 4px 12px 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-mute);
+}
+.ux-keepline > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.ux-keepline > span svg {
+  color: var(--ok);
+}
+.ux-keepline-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--accent-ink);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.ux-keepline-btn:disabled {
+  cursor: default;
+  color: var(--ink-mute);
+}
+
+/* Help (HelpPage.tsx, 2026-10-18): the support chat in one column, as the paste lab's round 12
+   drew it for the computer. Solid fills only: your messages in our blue, support's on the look's
+   raised neutral with a hairline, a message that did not go in the danger colour. */
+.ux-help {
+  display: flex;
+  height: 100%;
+  max-width: 780px;
+  flex-direction: column;
+  margin: 0 auto;
+  padding: 18px 24px 16px;
+}
+.ux-help-head h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.ux-help-who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-mute);
+}
+.ux-help-who svg {
+  flex: none;
+  color: var(--accent-ink);
+}
+.ux-help-thread {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 12px 2px 16px;
+}
+.ux-bubble-row {
+  display: flex;
+}
+.ux-bubble-row.is-mine {
+  justify-content: flex-end;
+}
+.ux-bubble {
+  display: flex;
+  max-width: min(560px, 82%);
+  flex-direction: column;
+  gap: 4px;
+  padding: 11px 14px 9px;
+  border: 1px solid var(--bar);
+  border-radius: 18px 18px 18px 6px;
+  background: var(--raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 500;
+  line-height: 1.45;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ux-bubble.is-mine {
+  border-color: var(--digi);
+  border-radius: 18px 18px 6px 18px;
+  background: var(--digi);
+  color: #ffffff;
+}
+.ux-bubble.is-failed {
+  border-color: var(--danger);
+  background: var(--danger);
+  cursor: pointer;
+}
+.ux-bubble-by {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-ink);
+}
+.ux-bubble-foot {
+  align-self: flex-end;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-mute);
+}
+.ux-bubble.is-mine .ux-bubble-foot {
+  color: #d6e2ff;
+}
+.ux-help-typing {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-mute);
+}
+.ux-help-starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0 10px;
+}
+.ux-help-starter {
+  height: 36px;
+  padding: 0 13px;
+  border: 1px solid var(--bar);
+  border-radius: 12px 4px 12px 4px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+.ux-help-starter:hover,
+.ux-help-starter:focus-visible {
+  border-color: var(--digi);
+  color: var(--accent-ink);
+}
+.ux-help-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--bar);
+}
+.ux-help-box {
+  min-height: 46px;
+  max-height: 132px;
+  flex: 1;
+  resize: none;
+  padding: 12px 14px;
+  border: 1px solid var(--bar);
+  border-radius: 14px 5px 14px 5px;
+  outline: none;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 500;
+  line-height: 1.45;
+  transition: border-color 160ms ease;
+}
+.ux-help-box:focus {
+  border-color: var(--digi);
+}
+.ux-help-send {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--ink-mute);
+  cursor: pointer;
+}
+.ux-help-send.is-ready {
+  color: var(--accent-ink);
+}
+.ux-help-send svg {
+  width: 22px;
+  height: 22px;
+}
+/* An answer from support while Help was not showing: a dot on its tab. */
+.ux-tab-dot {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--digi);
+}
+
+/* A dialog over the page ("Name them?"): a solid sheet, the page behind dimmed. */
+.ux-dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(3, 6, 14, 0.56); /* data-scrim: the dimmed page behind an open dialog */
+}
+.ux-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 61;
+  display: flex;
+  width: min(480px, calc(100vw - 32px));
+  flex-direction: column;
+  gap: 12px;
+  padding: 22px 22px 18px;
+  border: 1px solid var(--bar);
+  border-radius: 20px 7px 20px 7px;
+  background: var(--canvas);
+  box-shadow: var(--shadow);
+  translate: -50% -50%;
+}
+.ux-optional {
+  padding: 2px 8px;
+  border: 1px solid var(--bar);
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink-mute);
 }
 
 /* The bar above a list: search, order, test all, add. */

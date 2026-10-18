@@ -37,6 +37,8 @@ hproxy-tunnel = { workspace = true }
 # ...) the app runs as the tool and opens no window (src/main.rs). An AI
 # assistant starts it that way from Use with AI, with nothing to download.
 hproxy-cli = { workspace = true }
+# Help's support chat (src/support.rs): the phone app's own client.
+hproxy-chat = { workspace = true }
 
 # tray-icon: the icon by the clock the app keeps running in (src/tray.rs).
 tauri = { version = "2", features = ["tray-icon"] }
@@ -80,6 +82,11 @@ semver = "1"
 tauri-plugin-single-instance = "2"
 # Start with the computer, when the person asks for it in Settings.
 tauri-plugin-autostart = "2"
+# The computer's own notifications, used from Rust only (src/reminders.rs): a
+# proxy or a group near the day it expires says so, also from the tray.
+tauri-plugin-notification = "2"
+# Today on the computer's own calendar, for those reminders.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Counting the other running copies of this program (src/update.rs): the tool
 # an AI assistant starts is this same program, and the Windows installer ends

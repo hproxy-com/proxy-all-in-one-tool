@@ -179,6 +179,10 @@ data class ProxyItem(
     val lastUsedAt: Long,
     val uses: Long,
     val last: Verdict?,
+    /** The last day its plan works (YYYY-MM-DD, Expiry), when one was set. */
+    val expires: String? = null,
+    /** What the person wrote about it. */
+    val note: String? = null,
 )
 
 data class GroupItem(
@@ -190,6 +194,9 @@ data class GroupItem(
     val shared: Targeting,
     val lastUsedAt: Long,
     val uses: Long,
+    /** A plan of many lines bought at once ends at once. */
+    val expires: String? = null,
+    val note: String? = null,
 )
 
 data class Library(
@@ -214,6 +221,8 @@ data class Library(
                     lastUsedAt = p.optLong("lastUsedAt"),
                     uses = p.optLong("uses"),
                     last = Verdict.of(p.objOrNull("last")),
+                    expires = p.str("expires"),
+                    note = p.str("note"),
                 )
             },
             groups = (o.optJSONArray("groups") ?: org.json.JSONArray()).map { g ->
@@ -227,6 +236,8 @@ data class Library(
                     shared = Targeting.of(summary.optJSONObject("shared")) ?: Targeting(),
                     lastUsedAt = g.optLong("lastUsedAt"),
                     uses = g.optLong("uses"),
+                    expires = g.str("expires"),
+                    note = g.str("note"),
                 )
             },
             picked = PlaceRef.of(o.objOrNull("picked")),

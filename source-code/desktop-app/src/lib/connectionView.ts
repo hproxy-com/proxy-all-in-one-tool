@@ -8,6 +8,10 @@ import { lastCheckWords, samePlace, type GroupView, type Place, type ProxyView }
 import type { ConnectStatus } from "./tauri";
 import type { Phase, TargetView } from "../components/connect/ConnectionCard";
 
+/** What the switch says when it was pressed with none of yours (2026-10-18: "add your proxies
+    first to start connecting! ... it needs to be stupidly easy to understand"). */
+export const ADD_FIRST = "Add your proxies first to start connecting!";
+
 /** What is under way. "switching" is a connect while already connected: the
     relay keeps running and only the place behind it changes. */
 export type Busy = "" | "connecting" | "switching" | "stopping" | "rotating" | "probing";

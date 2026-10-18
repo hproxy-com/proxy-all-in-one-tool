@@ -20,6 +20,7 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.hproxy.app.engine.Pictures
 import com.hproxy.app.migrate.OldAppStorage
+import com.hproxy.app.remind.Reminders
 import com.hproxy.app.state.AppState
 import com.hproxy.app.ui.Nav
 import com.hproxy.app.ui.Page
@@ -104,7 +105,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Proxies shared from another app go to Add proxies, read and ready; a blocked app's
-     *  notification opens Which apps. */
+     *  notification opens Which apps; a reminder of a plan's last day, My proxies. */
     private fun handle(intent: Intent?) {
         // The pictures build only: example addresses and the real ones behind them (Pictures.kt).
         if (Pictures.on) intent?.getStringExtra("pictures")?.let { Pictures.seed(applicationContext, it) }
@@ -118,6 +119,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
             OPEN_APPS -> nav.push(Page.Apps)
+            Reminders.OPEN_PROXIES -> {
+                nav.go(Tab.Proxies)
+                nav.showShelf(com.hproxy.app.ui.Shelf.Mine)
+            }
         }
     }
 

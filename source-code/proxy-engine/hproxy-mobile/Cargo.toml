@@ -32,11 +32,5 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # the app calls a handful of functions with JSON, so the glue is a few dozen
 # lines that can be read whole (src/jni_glue.rs).
 jni = { version = "0.21", default-features = false }
-# The support chat (src/chat.rs): WebSocket framing only. Its TLS is the
-# engine's own rustls with ring (the versions reqwest already brings), so no
-# second TLS stack and no aws-lc, which the phone's build cannot carry.
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-webpki-roots = "1"
-futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+# The support chat (src/chat.rs): proxy-engine/hproxy-chat, shared with the desktop app.
+hproxy-chat = { workspace = true }

@@ -14,14 +14,15 @@
 //! (`places.dat.bak`) is read instead. When that fails too, the app starts
 //! empty and says so.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hproxy_places::{
-    proxy_id, store, GroupInput, Library, LibraryView, MemberView, Place, ProxyView, Targeting, Verdict, WindowStorage,
+    proxy_id, store, Details, GroupInput, Library, LibraryView, MemberView, Place, ProxyView, Targeting, Verdict,
+    WindowStorage,
 };
 use hproxy_probe::CheckResult;
 use serde::Serialize;
@@ -38,16 +39,44 @@ pub struct PlacesState {
     notice: Arc<Mutex<Option<String>>>,
     /// A write of what checks found is on its way (`keep_soon`).
     write_pending: Arc<AtomicBool>,
-    /// The last lines checked one at a time before they were saved (the
-    /// window's paste field), with what each check found, newest first: a
-    /// line saved right after keeps that answer instead of reading "not
-    /// checked yet". In memory only.
-    checked: Mutex<VecDeque<(String, Verdict)>>,
+    /// Lines checked before they were saved (the window's paste field, every
+    /// line of a pasted list's review, every row of a Checker run), with what
+    /// each check found: a line saved right after keeps that answer instead of
+    /// reading "not checked yet". In memory only.
+    checked: Mutex<RecentChecks>,
 }
 
-/// How many of those checks are kept, and for how long they count.
-const CHECKED_KEPT: usize = 20;
+/// How many of those checks are kept, and for how long they count: more than the most proxies
+/// one can keep (10 000), so a Checker run's working rows kept at once all carry what it found.
+const CHECKED_KEPT: usize = 20_000;
 const CHECKED_FOR_MS: u64 = 10 * 60 * 1000;
+
+/// Checks of lines not saved yet, by line, the oldest let go first past CHECKED_KEPT.
+#[derive(Default)]
+struct RecentChecks {
+    by_line: HashMap<String, Verdict>,
+    order: VecDeque<String>,
+}
+
+impl RecentChecks {
+    fn put(&mut self, line: &str, verdict: Verdict) {
+        if self.by_line.insert(line.to_string(), verdict).is_none() {
+            self.order.push_back(line.to_string());
+        }
+        while self.order.len() > CHECKED_KEPT {
+            if let Some(old) = self.order.pop_front() {
+                self.by_line.remove(&old);
+            }
+        }
+    }
+
+    /// What a check of `line` found, while it still counts.
+    fn fresh(&self, line: &str, now: u64) -> Option<&Verdict> {
+        self.by_line
+            .get(line)
+            .filter(|v| now.saturating_sub(v.at) < CHECKED_FOR_MS)
+    }
+}
 /// How long what checks found waits before it is written, with whatever else
 /// was found meanwhile.
 const CHECKS_WRITTEN_AFTER: Duration = Duration::from_secs(2);
@@ -86,7 +115,7 @@ impl PlacesState {
             dir: opened.dir,
             notice: Arc::new(Mutex::new(opened.notice)),
             write_pending: Arc::new(AtomicBool::new(false)),
-            checked: Mutex::new(VecDeque::new()),
+            checked: Mutex::new(RecentChecks::default()),
         }
     }
 
@@ -160,6 +189,16 @@ impl PlacesState {
         self.lock().picked.clone()
     }
 
+    /// The library as a screen sees it (the reminders read the days from it).
+    pub fn view(&self) -> LibraryView {
+        self.lock().view()
+    }
+
+    /// The folder the library is kept in; none when it lives in memory only.
+    pub fn dir(&self) -> Option<&Path> {
+        self.dir.as_deref()
+    }
+
     /// A connection went through `place`: count it, bring it to the top and
     /// remember it as the pick.
     pub fn used(&self, place: &Place) {
@@ -183,31 +222,31 @@ impl PlacesState {
 
     /// A line was checked before it was saved: remember the answer a while.
     pub fn checked(&self, line: &str, verdict: Verdict) {
-        let line = line.trim();
-        let mut kept = self.checked.lock().unwrap_or_else(|e| e.into_inner());
-        kept.retain(|(l, _)| l != line);
-        kept.push_front((line.to_string(), verdict));
-        kept.truncate(CHECKED_KEPT);
+        self.checked
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .put(line.trim(), verdict);
     }
 
     /// Save lines as proxies. One checked a moment ago that has no check of
     /// its own yet keeps what that check found. Returns the ids saved and the
     /// view after.
     fn add(&self, lines: &[String], now: u64) -> (Vec<String>, LibraryView) {
-        let recent: Vec<(String, Verdict)> = self
-            .checked
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .filter(|(_, v)| now.saturating_sub(v.at) < CHECKED_FOR_MS)
-            .cloned()
-            .collect();
+        let recent: Vec<(String, Verdict)> = {
+            let kept = self.checked.lock().unwrap_or_else(|e| e.into_inner());
+            lines
+                .iter()
+                .map(|l| l.trim())
+                .filter_map(|l| kept.fresh(l, now).map(|v| (l.to_string(), v.clone())))
+                .collect()
+        };
         self.change(|lib| {
             let ids = lib.add_proxies(lines, now);
+            let saved: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
             for (line, verdict) in recent {
                 let id = proxy_id(&line);
                 let unchecked = lib.proxy(&id).is_some_and(|p| p.last.is_none());
-                if unchecked && ids.contains(&id) {
+                if unchecked && saved.contains(id.as_str()) {
                     lib.set_verdict(&id, verdict);
                 }
             }
@@ -402,6 +441,51 @@ pub fn places_rename(app: AppHandle, places: State<'_, PlacesState>, id: String,
     let view = places.change(|lib| lib.rename_proxy(&id, &name)).1;
     crate::tray::places_changed(&app);
     view
+}
+
+/// Several saved proxies named at once, each its own name (`names[i]` for `ids[i]`): a paste
+/// named "Shop 1", "Shop 2" … in one write.
+#[tauri::command]
+pub fn places_name_each(
+    app: AppHandle,
+    places: State<'_, PlacesState>,
+    ids: Vec<String>,
+    names: Vec<String>,
+) -> LibraryView {
+    let named: Vec<(String, String)> = ids.into_iter().zip(names).collect();
+    let view = places.change(|lib| lib.name_proxies(&named)).1;
+    crate::tray::places_changed(&app);
+    view
+}
+
+/// What saved proxies are, one or a whole paste at once: a name, the last day
+/// they work, a note. A field left out stays; an empty one is taken away; a
+/// date that is not a day changes nothing and says why.
+#[tauri::command]
+pub fn places_describe(
+    app: AppHandle,
+    places: State<'_, PlacesState>,
+    ids: Vec<String>,
+    details: Details,
+) -> Result<LibraryView, String> {
+    let (described, view) = places.change(|lib| lib.describe_proxies(&ids, &details));
+    described?;
+    crate::tray::places_changed(&app);
+    Ok(view)
+}
+
+/// The same for a group, which keeps its name when an empty one comes.
+#[tauri::command]
+pub fn places_group_describe(
+    app: AppHandle,
+    places: State<'_, PlacesState>,
+    id: String,
+    details: Details,
+) -> Result<LibraryView, String> {
+    let (described, view) = places.change(|lib| lib.describe_group(&id, &details));
+    described?;
+    crate::tray::places_changed(&app);
+    Ok(view)
 }
 
 #[tauri::command]
@@ -659,6 +743,60 @@ mod tests {
         );
         let (_, view) = places.add(&[seven], at + CHECKED_FOR_MS);
         assert!(view.proxies[0].last.is_none(), "an old check counts no more");
+    }
+
+    #[test]
+    fn every_line_a_review_checked_reaches_its_saved_proxy() {
+        let at = now_ms();
+        let places = PlacesState::with(Library::default());
+        let lines: Vec<String> = (0..200)
+            .map(|i| format!("198.51.{}.{}:8080", i / 250, i % 250 + 1))
+            .collect();
+        for (i, line) in lines.iter().enumerate() {
+            places.checked(
+                line,
+                Verdict {
+                    ok: i % 3 != 0,
+                    at,
+                    ..Default::default()
+                },
+            );
+        }
+        let (ids, view) = places.add(&lines, at + 1);
+        assert_eq!(ids.len(), 200);
+        assert!(view.proxies.iter().all(|p| p.last.is_some()), "none reads not checked");
+    }
+
+    #[test]
+    fn past_the_most_kept_the_oldest_check_is_let_go() {
+        let mut recent = RecentChecks::default();
+        let at = 1;
+        for i in 0..=CHECKED_KEPT {
+            recent.put(
+                &format!("line {i}"),
+                Verdict {
+                    ok: true,
+                    at,
+                    ..Default::default()
+                },
+            );
+        }
+        assert!(recent.fresh("line 0", at).is_none(), "the first one went");
+        assert!(recent.fresh(&format!("line {CHECKED_KEPT}"), at).is_some());
+        recent.put(
+            "line 5",
+            Verdict {
+                ok: false,
+                at,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            recent.fresh("line 5", at).map(|v| v.ok),
+            Some(false),
+            "a line checked again keeps the newer answer"
+        );
+        assert_eq!(recent.by_line.len(), CHECKED_KEPT);
     }
 
     fn set_aside_files(dir: &Path) -> Vec<Vec<u8>> {

@@ -7,6 +7,7 @@ import ConnectPanel from "./components/connect/ConnectPanel";
 import { ConnectionProvider } from "./components/connect/connection";
 import ProxiesPage from "./components/ProxiesPage";
 import CheckerPage from "./components/CheckerPage";
+import HelpPage from "./components/HelpPage";
 import Settings from "./components/Settings";
 import UseWithAi from "./components/UseWithAi";
 import PhoneShell from "./components/phone/PhoneShell";
@@ -20,7 +21,7 @@ import { isMobile, isTauri, phoneColors, setKeepRunning, zoneSetMatching } from 
 const PHONE = isMobile();
 
 /** Left to right, as the tabs stand (Use with AI is a computer's page). */
-const VIEW_ORDER: Record<View, number> = { connect: 0, proxies: 1, checker: 2, ai: 3, settings: 4 };
+const VIEW_ORDER: Record<View, number> = { connect: 0, proxies: 1, checker: 2, ai: 3, help: 4, settings: 5 };
 
 /** Connect is the main page. The browser preview's `?demo` opens the Checker
     and runs the sample; `?demo=connect` opens Connect, connected. */
@@ -128,6 +129,10 @@ export default function App() {
           <CheckerPage settings={settings} active={view === "checker"} />
         </div>
         {view === "connect" && <ConnectPanel settings={connectSettings} onSettings={onSettings} />}
+        {/* Help keeps what is being written while another page shows. */}
+        <div className={view === "help" ? "h-full" : "hidden"}>
+          <HelpPage active={view === "help"} />
+        </div>
         {view === "ai" && <UseWithAi />}
         {view === "settings" && <Settings settings={settings} setSettings={setSettings} />}
       </ErrorBoundary>

@@ -13,9 +13,41 @@
 //! and a background connection is started with the place's NAME, so no
 //! password ever sits in a process list.
 
-use hproxy_places::{store, Library, Place, ProxyView, Rule, Targeting};
+use hproxy_places::{day_words, days_left, store, Library, Place, ProxyView, Rule, Targeting};
 use hproxy_relay::Source;
 use serde_json::{json, Value};
+
+/// Today on this computer's own calendar, the way the library writes a day.
+pub fn today() -> String {
+    chrono::Local::now().date_naive().format("%Y-%m-%d").to_string()
+}
+
+/// A plan's last day in words: "expires 14 Nov (12 days)", "expires today",
+/// "expired 11 Oct". `None` without a day that reads as one.
+pub fn expiry_words(expires: &str, today: &str) -> Option<String> {
+    let left = days_left(expires, today)?;
+    let day = day_words(expires, today);
+    Some(match left {
+        l if l < 0 => format!("expired {day}"),
+        0 => "expires today".into(),
+        1 => format!("expires {day} (1 day)"),
+        l => format!("expires {day} ({l} days)"),
+    })
+}
+
+/// A plan's last day and the days it leaves, and the person's note, on a
+/// row a model or a program reads.
+fn put_details(row: &mut Value, expires: Option<&str>, note: Option<&str>, today: &str) {
+    if let Some(day) = expires {
+        row["expires"] = json!(day);
+        if let Some(left) = days_left(day, today) {
+            row["days_left"] = json!(left);
+        }
+    }
+    if let Some(note) = note {
+        row["note"] = json!(note);
+    }
+}
 
 /// The library the HProxy app keeps on this computer. Empty when the app
 /// never saved anything here.
@@ -126,8 +158,8 @@ pub fn rule_words(rule: Rule, n: Option<u32>) -> String {
 }
 
 /// Does a saved proxy or group fit what was typed? Its name, title, address,
-/// session or the places it targets, as the provider spells them and as they
-/// read ("new_york" and "New York"); never its login or password.
+/// session, note or the places it targets, as the provider spells them and as
+/// they read ("new_york" and "New York"); never its login or password.
 fn matches(fields: &[String], typed: &str) -> bool {
     let q = typed.trim().to_lowercase();
     q.is_empty() || fields.iter().any(|f| f.to_lowercase().contains(&q))
@@ -146,8 +178,9 @@ fn targeting_fields(t: Option<&Targeting>) -> Vec<String> {
 
 /// The library as one JSON object a model reads: the saved proxies and the
 /// groups that fit `search` (all of them without one), at most `limit` of
-/// each, then how many more there were. Never a password, never a login.
-pub fn listing(lib: &Library, search: &str, limit: usize) -> Value {
+/// each, then how many more there were. A plan's last day comes with the days
+/// it leaves on `today` (below 0 once past). Never a password, never a login.
+pub fn listing(lib: &Library, search: &str, limit: usize, today: &str) -> Value {
     let view = lib.view();
     let proxies: Vec<&ProxyView> = view
         .proxies
@@ -155,6 +188,7 @@ pub fn listing(lib: &Library, search: &str, limit: usize) -> Value {
         .filter(|p| {
             let mut fields = vec![p.title(), p.address.clone()];
             fields.extend(targeting_fields(p.about.as_ref()));
+            fields.extend(p.note.clone());
             matches(&fields, search)
         })
         .collect();
@@ -164,10 +198,11 @@ pub fn listing(lib: &Library, search: &str, limit: usize) -> Value {
         .filter(|g| {
             let mut fields = vec![g.name.clone()];
             fields.extend(targeting_fields(Some(&g.summary.shared)));
+            fields.extend(g.note.clone());
             matches(&fields, search)
         })
         .collect();
-    let proxy_rows: Vec<Value> = proxies.iter().take(limit).map(|p| proxy_row(p)).collect();
+    let proxy_rows: Vec<Value> = proxies.iter().take(limit).map(|p| proxy_row(p, today)).collect();
     let group_rows: Vec<Value> = groups
         .iter()
         .take(limit)
@@ -185,6 +220,7 @@ pub fn listing(lib: &Library, search: &str, limit: usize) -> Value {
             if !shared.is_empty() {
                 row["all_target"] = json!(shared);
             }
+            put_details(&mut row, g.expires.as_deref(), g.note.as_deref(), today);
             row
         })
         .collect();
@@ -235,7 +271,8 @@ pub fn command(argv: &[String]) -> crate::Outcome {
         Ok(lib) => lib,
         Err(e) => return crate::Outcome::Error(e),
     };
-    let found = listing(&lib, &words.join(" "), limit);
+    let today = today();
+    let found = listing(&lib, &words.join(" "), limit, &today);
     let proxies = found["proxies"].as_array().cloned().unwrap_or_default();
     let groups = found["groups"].as_array().cloned().unwrap_or_default();
     if json {
@@ -247,7 +284,7 @@ pub fn command(argv: &[String]) -> crate::Outcome {
             }
         }
     } else {
-        print_table(&proxies, &groups);
+        print_table(&proxies, &groups, &today);
         for (key, what) in [
             ("more_proxies_not_listed", "proxies"),
             ("more_groups_not_listed", "groups"),
@@ -279,8 +316,9 @@ pub fn command(argv: &[String]) -> crate::Outcome {
     crate::Outcome::Ok
 }
 
-/// The listing for a person: one line each, names in a column.
-fn print_table(proxies: &[Value], groups: &[Value]) {
+/// The listing for a person: one line each, names in a column, a plan's last
+/// day and the note at the end.
+fn print_table(proxies: &[Value], groups: &[Value], today: &str) {
     let width = proxies
         .iter()
         .chain(groups)
@@ -315,6 +353,7 @@ fn print_table(proxies: &[Value], groups: &[Value]) {
             if let Some(place) = p["last_check"]["exit_place"].as_str() {
                 about.push(place.to_string());
             }
+            about.extend(details_words(p, today));
             println!(
                 "  {}  {:<address_width$}  {}",
                 cell(p["name"].as_str().unwrap_or_default()),
@@ -342,6 +381,7 @@ fn print_table(proxies: &[Value], groups: &[Value]) {
                 about.push(t.to_string());
             }
             about.push(g["rule"].as_str().unwrap_or_default().to_string());
+            about.extend(details_words(g, today));
             println!(
                 "  {}  {}",
                 cell(g["name"].as_str().unwrap_or_default()),
@@ -352,7 +392,7 @@ fn print_table(proxies: &[Value], groups: &[Value]) {
 }
 
 /// One saved proxy as a model reads it.
-fn proxy_row(p: &ProxyView) -> Value {
+fn proxy_row(p: &ProxyView, today: &str) -> Value {
     let mut row = json!({"id": p.id, "name": p.title(), "address": p.address});
     if let Some(t) = p.about.as_ref().map(targeting_words).filter(|w| !w.is_empty()) {
         row["targets"] = json!(t);
@@ -367,7 +407,25 @@ fn proxy_row(p: &ProxyView) -> Value {
         }
         row["last_check"] = checked;
     }
+    put_details(&mut row, p.expires.as_deref(), p.note.as_deref(), today);
     row
+}
+
+/// A row's last day and the first line of its note, for the table.
+fn details_words(row: &Value, today: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    if let Some(w) = row["expires"].as_str().and_then(|d| expiry_words(d, today)) {
+        words.push(w);
+    }
+    if let Some(line) = row["note"]
+        .as_str()
+        .and_then(|n| n.lines().next())
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        words.push(line.to_string());
+    }
+    words
 }
 
 #[cfg(test)]
@@ -427,10 +485,13 @@ mod tests {
         );
     }
 
+    /// The day the tests read the library on.
+    const TODAY: &str = "2026-11-02";
+
     #[test]
     fn a_listing_never_carries_a_password_or_a_login() {
         let lib = kept();
-        let all = listing(&lib, "", 100).to_string();
+        let all = listing(&lib, "", 100, TODAY).to_string();
         for secret in ["hunter2", "pw2", "alice", "acct-"] {
             assert!(!all.contains(secret), "{secret} in {all}");
         }
@@ -443,17 +504,59 @@ mod tests {
     fn a_search_narrows_the_listing_and_a_limit_counts_the_rest() {
         let lib = kept();
         for typed in ["new york", "new_york", "7F3A"] {
-            let found = listing(&lib, typed, 100);
+            let found = listing(&lib, typed, 100, TODAY);
             assert_eq!(found["proxies"].as_array().unwrap().len(), 1, "{typed}: {found}");
             assert_eq!(found["groups"].as_array().unwrap().len(), 0, "{typed}");
         }
-        let found = listing(&lib, "", 1);
+        let found = listing(&lib, "", 1, TODAY);
         assert_eq!(found["proxies"].as_array().unwrap().len(), 1);
         assert_eq!(found["more_proxies_not_listed"], 1);
         assert!(
-            listing(&lib, "alice", 100)["proxies"].as_array().unwrap().is_empty(),
+            listing(&lib, "alice", 100, TODAY)["proxies"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
             "never by login"
         );
+    }
+
+    #[test]
+    fn a_plans_last_day_and_note_are_listed_and_searched() {
+        let mut lib = kept();
+        let shop = lib
+            .proxies
+            .iter()
+            .find(|p| p.name.as_deref() == Some("Shop"))
+            .unwrap()
+            .id
+            .clone();
+        let details = hproxy_places::Details {
+            expires: Some("2026-11-14".into()),
+            note: Some("Bought with the October batch".into()),
+            ..Default::default()
+        };
+        lib.describe_proxies(&[shop], &details).unwrap();
+        let found = listing(&lib, "october", 100, TODAY);
+        let rows = found["proxies"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "found by its note: {found}");
+        assert_eq!(rows[0]["expires"], "2026-11-14");
+        assert_eq!(rows[0]["days_left"], 12);
+        assert_eq!(
+            details_words(&rows[0], TODAY),
+            vec!["expires 14 Nov (12 days)", "Bought with the October batch"]
+        );
+
+        assert_eq!(expiry_words("2026-11-02", TODAY).as_deref(), Some("expires today"));
+        assert_eq!(
+            expiry_words("2026-11-03", TODAY).as_deref(),
+            Some("expires 3 Nov (1 day)")
+        );
+        assert_eq!(expiry_words("2026-10-11", TODAY).as_deref(), Some("expired 11 Oct"));
+        assert_eq!(
+            expiry_words("2027-01-02", TODAY).as_deref(),
+            Some("expires 2 Jan 2027 (61 days)")
+        );
+        assert_eq!(expiry_words("14.11.2026", TODAY), None);
     }
 
     #[test]

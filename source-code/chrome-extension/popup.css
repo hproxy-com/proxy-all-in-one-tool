@@ -887,6 +887,39 @@ button {
 .msg.bad {
   color: var(--danger);
 }
+.msg.warn {
+  color: var(--warn);
+}
+
+/* Over the saved list once any of them has a last day (popup.js,
+   drawExpiryNote): how many plans end soon or have ended, and the order. */
+.expiry-note {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 2px 4px;
+}
+/* Under the search box, which keeps its own room below. */
+.search:not([hidden]) + .expiry-note {
+  margin-top: 2px;
+}
+.expiry-words {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--ink-mute);
+}
+.expiry-words [data-tone="warn"] {
+  color: var(--warn);
+}
+.expiry-words [data-tone="bad"] {
+  color: var(--danger);
+}
+.expiry-note .link-btn {
+  flex: none;
+}
 
 .list {
   display: flex;
@@ -1015,6 +1048,46 @@ button {
   font-weight: 550;
   color: var(--ink-mute);
 }
+/* A saved proxy's second line: how many days its plan has left, then the
+   rest of what it is. */
+.row-sub {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+.row-sub .row-meta {
+  min-width: 0;
+}
+/* The days left as a chip (popup.js, savedRow): grey words in a hairline
+   while there is time, amber in the last three days, red once past. A
+   hairline, never a fill. */
+.row-days {
+  display: inline-flex;
+  height: 17px;
+  flex: none;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 6px 2px 6px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--ink-mute);
+  box-shadow: inset 0 0 0 1px var(--bar);
+}
+.row-days[data-tone="warn"] {
+  color: var(--warn);
+  box-shadow: inset 0 0 0 1px var(--warn);
+}
+.row-days[data-tone="bad"] {
+  color: var(--danger);
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+/* Pressed and not connected: the line says why, alone. */
+.row.is-failed .row-days {
+  display: none;
+}
 /* What pressing does, on the right: there when you point at the row, or when
    it has something to say (Connected, a turning ring, Stopped). At rest a
    list is names and second lines only. */
@@ -1073,14 +1146,14 @@ button {
   white-space: normal;
   color: var(--warn);
 }
-/* A saved proxy's ×, there when you point at the row. */
+/* A saved proxy's pencil and ×, there when you point at the row. */
+.row-edit,
 .row-del {
   display: grid;
   width: 26px;
   height: 26px;
   flex: none;
   place-items: center;
-  margin-right: -4px;
   padding: 0;
   border: 0;
   cursor: pointer;
@@ -1089,6 +1162,14 @@ button {
   color: var(--ink-soft);
   background: transparent;
 }
+/* The two side by side, closer than the row's own gap. */
+.row-edit {
+  margin-right: -8px;
+}
+.row-del {
+  margin-right: -4px;
+}
+.row-edit svg,
 .row-del svg {
   width: 13px;
   height: 13px;
@@ -1096,13 +1177,69 @@ button {
   stroke: currentColor;
   stroke-width: 2.2;
 }
+.row:hover .row-edit,
+.row:focus-within .row-edit,
+.row-edit[aria-expanded="true"],
 .row:hover .row-del,
 .row:focus-within .row-del {
   visibility: visible;
 }
+.row-edit:hover {
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--bar);
+}
+/* Its editor open: the pencil stays, in our blue. */
+.row-edit[aria-expanded="true"] {
+  color: var(--digi);
+}
 .row-del:hover {
   color: var(--danger);
   box-shadow: inset 0 0 0 1px var(--bar);
+}
+
+/* A saved proxy's name, last day and note, under its row (popup.js,
+   placeEditor): a white box with a hairline, as wide as the row's own. */
+.row-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 2px -8px 8px;
+  padding: 10px;
+  border-radius: 12px 4px 12px 4px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--bar);
+}
+.editor-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 168px);
+  gap: 8px;
+}
+.editor-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+.editor-label {
+  overflow: hidden;
+  padding: 0 2px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-mute);
+}
+.row-editor .input {
+  height: 32px;
+  padding: 0 10px;
+}
+.row-editor .msg {
+  margin: 0 2px;
+}
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 /* A country's star: a favorite's is solid blue and always there; the others
    show their outline only when you point at the row. */

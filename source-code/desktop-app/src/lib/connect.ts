@@ -281,15 +281,16 @@ export function speedOf(ms: number | null | undefined): { bars: 1 | 2 | 3; word:
 }
 
 /** How My proxies can be ordered. */
-export type SavedSort = "recent" | "fastest" | "name";
+export type SavedSort = "recent" | "fastest" | "name" | "expiring";
 
 export const SAVED_SORTS: readonly (readonly [SavedSort, string])[] = [
   ["recent", "Recently used"],
   ["fastest", "Fastest first"],
   ["name", "By name"],
+  ["expiring", "Expires soonest"],
 ];
 
-export const isSavedSort = (v: unknown): v is SavedSort => v === "recent" || v === "fastest" || v === "name";
+export const isSavedSort = (v: unknown): v is SavedSort => v === "recent" || v === "fastest" || v === "name" || v === "expiring";
 
 /** Where a saved proxy stands for "Fastest first": working with a time, then
     working without one, then never checked, then not answering. */
@@ -298,11 +299,17 @@ const speedRank = (p: ProxyView): number => (!p.last ? 2 : !p.last.ok ? 3 : p.la
 /** The saved proxies in the order asked for. "recent" is the order they are
     kept in (the one used or added last on top); "fastest" puts the working ones
     first, the quickest on top; "name" goes by what each is called, numbers in
-    number order ("Proxy 2" before "Proxy 10"). Ties keep the kept order. */
+    number order ("Proxy 2" before "Proxy 10"); "expiring" puts the ones with a
+    last day first, the soonest on top (the expired ones above all), then the
+    ones without. Ties keep the kept order. */
 export function sortSaved(list: ProxyView[], sort: SavedSort): ProxyView[] {
   if (sort === "recent") return list;
   const kept = new Map(list.map((p, i) => [p.id, i]));
   const byKept = (a: ProxyView, b: ProxyView) => (kept.get(a.id) ?? 0) - (kept.get(b.id) ?? 0);
+  if (sort === "expiring") {
+    // YYYY-MM-DD orders as text the way it orders as days.
+    return [...list].sort((a, b) => (a.expires ?? "9999").localeCompare(b.expires ?? "9999") || byKept(a, b));
+  }
   if (sort === "fastest") {
     return [...list].sort(
       (a, b) =>
@@ -314,14 +321,15 @@ export function sortSaved(list: ProxyView[], sort: SavedSort): ProxyView[] {
   return [...list].sort((a, b) => proxyTitle(a).localeCompare(proxyTitle(b), "en", { numeric: true, sensitivity: "base" }) || byKept(a, b));
 }
 
-/** The saved proxies whose name, address, place or session holds what was
-    typed. The window never holds a password, so none can be found by typing it. */
+/** The saved proxies whose name, note, address, place or session holds what
+    was typed. The window never holds a password, so none can be found by typing it. */
 export function matchSaved(list: ProxyView[], typed: string): ProxyView[] {
   const q = typed.trim().toLowerCase();
   if (!q) return list;
   return list.filter((p) =>
     [
       p.name,
+      p.note,
       p.address,
       p.last?.place,
       p.about?.session,

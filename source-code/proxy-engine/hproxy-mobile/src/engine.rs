@@ -15,7 +15,8 @@ use std::time::Duration;
 
 use hproxy_api::geo::{Geo, DEFAULT_GEO_API};
 use hproxy_connection::{Change, Connection, ProbePolicy};
-use hproxy_places::{Library, Place, WindowStorage};
+use hproxy_places::reminders::{self, Said};
+use hproxy_places::{Details, Library, Place, WindowStorage};
 use hproxy_probe::Checker;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -136,6 +137,36 @@ struct IdArgs {
     name: Option<String>,
 }
 
+/// A name, a last day and a note for saved proxies (`ids`, one or a whole
+/// paste) or for a group (`id`).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DescribeArgs {
+    #[serde(default)]
+    ids: Vec<String>,
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    details: Details,
+}
+
+/// The phone's own today (`YYYY-MM-DD`, its calendar and time zone), and the
+/// reminders shown on it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemindersArgs {
+    today: String,
+    #[serde(default)]
+    keys: Vec<String>,
+}
+
+impl RemindersArgs {
+    fn today(&self) -> Result<String, String> {
+        hproxy_places::clean_date(&self.today)
+            .ok_or_else(|| format!("the app sent a day that is not one: {}", self.today))
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SecretArgs {
@@ -192,6 +223,34 @@ impl Engine {
                 let a: IdArgs = from(args)?;
                 self.change(|lib| Ok(lib.rename_group(&a.id, a.name.as_deref().unwrap_or(""))))?;
                 Ok(self.library())
+            }
+            "describe" => {
+                let a: DescribeArgs = from(args)?;
+                self.change(|lib| lib.describe_proxies(&a.ids, &a.details))?;
+                Ok(self.library())
+            }
+            "describeGroup" => {
+                let a: DescribeArgs = from(args)?;
+                self.change(|lib| lib.describe_group(&a.id, &a.details))?;
+                Ok(self.library())
+            }
+            // What is due on the phone's today, in the words every app uses
+            // (hproxy-places, reminders); said once each, as remindersSaid records.
+            "remindersDue" => {
+                let a: RemindersArgs = from(args)?;
+                let today = a.today()?;
+                let said = Said::read(&self.places_dir);
+                to(reminders::due(&locked(&self.lib).view(), &today, &said))
+            }
+            "remindersSaid" => {
+                let a: RemindersArgs = from(args)?;
+                let today = a.today()?;
+                let mut said = Said::read(&self.places_dir);
+                for key in &a.keys {
+                    said.note(key, &today);
+                }
+                said.write(&self.places_dir, &today);
+                Ok(Value::Null)
             }
             "forget" => {
                 let a: IdArgs = from(args)?;
@@ -265,23 +324,18 @@ impl Engine {
             "fraud" => Ok(Value::Array(self.rt.block_on(fraud_scores(from(args)?)))),
             "chatOpen" => {
                 let a: ChatOpenArgs = from(args)?;
-                self.chat.open(&self.rt, a.token);
+                let page = crate::chat::page(a.store.as_deref(), a.version.as_deref());
+                self.chat.open(&self.rt, a.token, page);
                 Ok(Value::Null)
             }
             "chatSend" => {
                 let a: ChatSendArgs = from(args)?;
-                let body = a.body.trim();
-                if body.is_empty() {
-                    return Err("write something first".into());
-                }
-                self.chat
-                    .send(json!({ "op": "message.send", "id": a.id, "data": { "body": body } }))?;
+                self.chat.send_message(&a.id, &a.body)?;
                 Ok(Value::Null)
             }
             "chatRead" => {
                 let a: ChatReadArgs = from(args)?;
-                self.chat
-                    .send(json!({ "op": "message.read", "data": { "conversation_id": a.conversation_id } }))?;
+                self.chat.mark_read(&a.conversation_id)?;
                 Ok(Value::Null)
             }
             "chatClose" => {
@@ -545,6 +599,12 @@ async fn fraud_scores(a: FraudArgs) -> Vec<Value> {
 struct ChatOpenArgs {
     #[serde(default)]
     token: Option<String>,
+    /// Where this copy of the app came from ("google-play", "apk"), for support (2026-10-18).
+    #[serde(default)]
+    store: Option<String>,
+    /// The app's version, for support.
+    #[serde(default)]
+    version: Option<String>,
 }
 
 #[derive(Deserialize)]

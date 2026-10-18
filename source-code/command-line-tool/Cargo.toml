@@ -31,6 +31,9 @@ hproxy-api = { workspace = true }
 tokio = { workspace = true, features = ["io-std"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Today on this computer's own calendar, for how many days a saved plan has
+# left (`hproxy places`); the desktop app builds the same one.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Unix only, and for one call: `setsid` for the background copy, so closing the
 # terminal that started it does not take the connection with it.

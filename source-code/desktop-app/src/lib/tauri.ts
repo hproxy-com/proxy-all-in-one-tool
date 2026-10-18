@@ -3,7 +3,7 @@
    runs its seeded simulation instead of invoking the engine. */
 
 import type { CheckResult } from "./checker";
-import type { GroupInput, LibraryView, MemberView, Place, PlacesStart, ProxyView } from "./places";
+import type { Details, GroupInput, LibraryView, MemberView, Place, PlacesStart, ProxyView } from "./places";
 import type { WindowStorage } from "./windowStorage";
 
 export function isTauri(): boolean {
@@ -377,6 +377,19 @@ export const placesAdd = (lines: string[]) => placesCall<PlacesAdded>("places_ad
 export const placesRename = (id: string, name: string) =>
   placesCall<LibraryView>("places_rename", { id, name }, (p) => p.demoPlacesRename(id, name));
 
+/** Several saved proxies named at once, `names[i]` for `ids[i]` ("Shop 1", "Shop 2" …), in one write. */
+export const placesNameEach = (ids: string[], names: string[]) =>
+  placesCall<LibraryView>("places_name_each", { ids, names }, (p) => p.demoPlacesNameEach(ids, names));
+
+/** Name, last day and note of saved proxies, one or a whole paste at once. A
+    field left out stays, an empty one is taken away; rejects a date that is not a day. */
+export const placesDescribe = (ids: string[], details: Details) =>
+  placesCall<LibraryView>("places_describe", { ids, details }, (p) => p.demoPlacesDescribe(ids, details));
+
+/** The same for a group (which keeps its name). */
+export const placesGroupDescribe = (id: string, details: Details) =>
+  placesCall<LibraryView>("places_group_describe", { id, details }, (p) => p.demoPlacesGroupDescribe(id, details));
+
 export const placesForget = (id: string) => placesCall<LibraryView>("places_forget", { id }, (p) => p.demoPlacesForget(id));
 
 /** Pick the place the switch connects to (null: nothing). Rejects for a proxy or group that is gone. */
@@ -616,6 +629,47 @@ export async function onRelayChanged(cb: (connected: boolean) => void): Promise<
   if (!isTauri()) return (await import("./previewConnect")).onDemoRelayChanged(cb);
   const { listen } = await import("@tauri-apps/api/event");
   return listen<boolean>("relay-changed", (e) => cb(!!e.payload));
+}
+
+/* ── Help: the support chat (src-tauri/src/support.rs, the phone app's own client in
+   proxy-engine/hproxy-chat). The app holds the socket; the window asks and hears "chat" events.
+   In a browser, lib/previewChat.ts stands in: it opens and takes messages, and nobody answers. */
+
+/** What the chat says happened: ready, history, message, ack, conversation, typing, online,
+    deleted, down, error (proxy-engine/hproxy-chat, `read`). */
+export type ChatEvent = { kind: string } & Record<string, unknown>;
+
+/** Open the chat; `token` brings the person's own thread back. */
+export async function chatOpen(token: string | null): Promise<void> {
+  if (!isTauri()) return (await import("./previewChat")).demoChatOpen();
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("chat_open", { token });
+}
+
+/** A message; `id` is the window's own, which its acknowledgements carry. Rejects when the chat is not open. */
+export async function chatSend(id: string, body: string): Promise<void> {
+  if (!isTauri()) return (await import("./previewChat")).demoChatSend(id, body);
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("chat_send", { id, body });
+}
+
+/** The person read the thread. */
+export async function chatRead(conversationId: string): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("chat_read", { conversationId });
+}
+
+export async function chatClose(): Promise<void> {
+  if (!isTauri()) return (await import("./previewChat")).demoChatClose();
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("chat_close");
+}
+
+export async function onChat(cb: (e: ChatEvent) => void): Promise<() => void> {
+  if (!isTauri()) return (await import("./previewChat")).onDemoChat(cb);
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<ChatEvent>("chat", (e) => cb(e.payload));
 }
 
 /** Whether the app starts with the computer (off until the person ticks it).

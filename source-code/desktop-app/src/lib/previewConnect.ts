@@ -7,7 +7,7 @@ import { countryName, type CheckResult } from "./checker";
 import { FREE_COUNTRIES } from "./connect";
 import type { Place } from "./places";
 import { hashSeed, mulberry32 } from "./preview";
-import { demoPlaceForRelay, demoSampleGroup } from "./previewPlaces";
+import { demoPlaceForRelay, demoProxyLine, demoSampleGroup } from "./previewPlaces";
 import { DEFAULT_PROBE_URL } from "./settings";
 import {
   isMobile,
@@ -396,15 +396,18 @@ export function demoConnectStart(place: Place, systemProxy: boolean, probeUrl?: 
   const first = member ?? 0;
   if (place.kind === "group" && !(first >= 0 && first < dialled.lines.length)) throw new Error(noMember(first));
   const source = sourceInfo(place, dialled, first);
+  // A saved proxy comes out where the pretend check placed it: a row that says Amsterdam connects to Amsterdam.
+  const line = place.kind === "proxy" ? demoProxyLine(place.id) : null;
+  const exit = line ? checkedExit(line) : 0;
   demo = {
     startedAt: now,
     place,
     source,
     systemProxy,
-    exit: 0,
+    exit,
     picked,
     freeCountry: place.kind === "free" ? place.country.toUpperCase() || null : null,
-    health: healthFor(picked ?? EXITS[0], now, 0, url),
+    health: healthFor(picked ?? EXITS[exit], now, 0, url),
     rotations: 0,
     probes: 0,
     probeUrl: url,
@@ -484,6 +487,14 @@ export function demoConnectSetProbe(url: string): ConnectStatus {
   if (!demo) throw new Error("not connected");
   demo.probeUrl = url.trim() || DEFAULT_PROBE_URL;
   return demoConnectProbe();
+}
+
+/** The pretend exit demoCheckLine places `line` at (the same draws of the same
+    seed); the first one for a line it finds dead. */
+function checkedExit(line: string): number {
+  const rng = mulberry32(hashSeed(line));
+  if (rng() < 0.25) return 0;
+  return Math.floor(rng() * EXITS.length);
 }
 
 export async function demoCheckLine(line: string): Promise<CheckResult> {

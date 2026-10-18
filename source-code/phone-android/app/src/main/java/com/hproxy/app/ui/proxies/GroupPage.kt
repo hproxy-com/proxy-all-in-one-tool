@@ -110,6 +110,14 @@ fun GroupPage(nav: Nav, onBack: () -> Unit) {
             AppState.toast(e.message ?: "The name was not saved")
         }
     }
+    // Its last day, kept when picked, and its note, a moment after the last key.
+    var expires by remember(id) { mutableStateOf(g.expires) }
+    var note by remember(id) { mutableStateOf(g.note ?: "") }
+    LaunchedEffect(id, note) {
+        if (note.trim() == (g.note ?: "").trim()) return@LaunchedEffect
+        delay(500)
+        describeGroup(id, "note" to note.trim())
+    }
     var sure by remember(id) { mutableStateOf(false) }
     LaunchedEffect(sure) {
         if (sure) {
@@ -139,6 +147,13 @@ fun GroupPage(nav: Nav, onBack: () -> Unit) {
                         type(14.sp, FontWeight.SemiBold, C.ink2, lineHeight = 20.sp),
                     )
                     Field(name, { name = it.take(60) }, placeholder = "Its name", label = "Name", height = 52.dp, surface = C.bg, style = type(15.5.sp, FontWeight.Bold, C.ink))
+                    ExpiryField(expires, { day ->
+                        expires = day
+                        scope.launch { describeGroup(id, "expires" to (day ?: "")) }
+                        // A last day is a reminder three days before it: Android shows it once allowed.
+                        if (day != null) nav.askNotifications()
+                    })
+                    Field(note, { note = it.take(500) }, placeholder = "Where it is from, what it is for", label = "Note", height = 52.dp, surface = C.bg)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         LineBtn("Check all $count", {
                             scope.launch {

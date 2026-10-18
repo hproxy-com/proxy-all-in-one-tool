@@ -7,15 +7,18 @@
    (components/connect/connection.tsx, usePlaces). Tests make their own store
    over a pretend app (placesStore.test.ts). */
 
-import { EMPTY_LIBRARY, type GroupInput, type LibraryView, type Place, type ProxyView } from "./places";
+import { EMPTY_LIBRARY, type Details, type GroupInput, type LibraryView, type Place, type ProxyView } from "./places";
 import {
   placesAdd,
   placesCheck,
+  placesDescribe,
   placesForget,
   placesGet,
+  placesGroupDescribe,
   placesGroupForget,
   placesGroupSave,
   placesMoveFromWindow,
+  placesNameEach,
   placesPick,
   placesRename,
 } from "./tauri";
@@ -36,6 +39,9 @@ export type PlacesBridge = {
   move: typeof placesMoveFromWindow;
   add: typeof placesAdd;
   rename: typeof placesRename;
+  nameEach: typeof placesNameEach;
+  describe: typeof placesDescribe;
+  describeGroup: typeof placesGroupDescribe;
   forget: typeof placesForget;
   pick: typeof placesPick;
   saveGroup: typeof placesGroupSave;
@@ -112,6 +118,17 @@ export function createPlacesStore(app: PlacesBridge, readOld: () => WindowStorag
     async rename(id: string, name: string): Promise<void> {
       await ask(app.rename(id, name), same);
     },
+    /** Each its own name, `names[i]` for `ids[i]`, in one change. */
+    async nameEach(ids: string[], names: string[]): Promise<void> {
+      if (ids.length) await ask(app.nameEach(ids, names), same);
+    },
+    /** Name, last day and note of saved proxies, one or many. Rejects a date that is not a day. */
+    async describe(ids: string[], details: Details): Promise<void> {
+      await ask(app.describe(ids, details), same);
+    },
+    async describeGroup(id: string, details: Details): Promise<void> {
+      await ask(app.describeGroup(id, details), same);
+    },
     async forget(id: string): Promise<void> {
       await ask(app.forget(id), same);
     },
@@ -145,6 +162,9 @@ export const placesStore = createPlacesStore(
     move: placesMoveFromWindow,
     add: placesAdd,
     rename: placesRename,
+    nameEach: placesNameEach,
+    describe: placesDescribe,
+    describeGroup: placesGroupDescribe,
     forget: placesForget,
     pick: placesPick,
     saveGroup: placesGroupSave,

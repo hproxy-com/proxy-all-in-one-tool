@@ -1,4 +1,6 @@
 <resources>
     <!-- The app's ink, the night it starts in (ui/theme/Tokens.kt says the same). -->
     <color name="bg">#FF070A12</color>
+    <!-- The blue (Tokens.kt C.blue), for what Android draws itself: its calendar. -->
+    <color name="blue">#FF0158FF</color>
 </resources>

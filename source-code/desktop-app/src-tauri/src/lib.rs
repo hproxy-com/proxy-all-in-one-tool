@@ -24,7 +24,10 @@ mod files;
 mod fraud;
 mod phone;
 mod places;
+#[cfg(desktop)]
+mod reminders;
 mod store;
+mod support;
 mod timezone;
 mod tool;
 mod tray;
@@ -115,7 +118,9 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--background"]),
-        ));
+        ))
+        // The computer's own notifications: a plan near its last day (reminders.rs).
+        .plugin(tauri_plugin_notification::init());
 
     // On Android, which app installed this copy (Google Play or a download): channel.rs.
     // And the phone's own controls for the window (the status bar's colours, a buzz,
@@ -158,6 +163,7 @@ pub fn run() {
             app.manage(tray::TrayState::default());
             app.manage(update::Pending::default());
             app.manage(timezone::ZoneState::default());
+            app.manage(support::SupportChat::new(app.handle()));
             // A previous run that died while connected left the system proxy
             // pointing at a relay that no longer exists. Put it back first.
             if let Some(notice) = connect::repair_on_start(app.handle()) {
@@ -177,6 +183,8 @@ pub fn run() {
                 }
                 // Quick connect in the tray's menu, from the library.
                 tray::places_changed(app.handle());
+                // Proxies near the day they expire say so (reminders.rs).
+                reminders::start(app.handle());
                 // The AI assistant's tool: its own copy, which updates never
                 // end (src/tool.rs), brought up to date with this build. The
                 // Microsoft Store copy has the package's `hproxy` command
@@ -224,6 +232,9 @@ pub fn run() {
             places::places_move_from_window,
             places::places_add,
             places::places_rename,
+            places::places_name_each,
+            places::places_describe,
+            places::places_group_describe,
             places::places_forget,
             places::places_pick,
             places::places_group_save,
@@ -264,6 +275,10 @@ pub fn run() {
             update::update_install_quietly,
             store::store_install,
             store::store_update_at_start,
+            support::chat_open,
+            support::chat_send,
+            support::chat_read,
+            support::chat_close,
             versions::versions_check,
             tool_command,
         ])

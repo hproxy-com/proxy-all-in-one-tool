@@ -241,6 +241,18 @@
   outline-offset: 3px;
   border-radius: 4px;
 }
+/* Connected to a place past the day it expires (it still works): amber on the
+   dark page, white once the page is blue. */
+.mix-ended {
+  margin-top: 4px;
+  max-width: 460px;
+  text-align: center;
+  font: 700 14px/20px var(--font-sans);
+  color: var(--warn);
+}
+.mix[data-on] .mix-ended {
+  color: #ffffff;
+}
 /* Why the last connect did not go through, in two lines at most. */
 .mix-where.is-bad {
   display: -webkit-box;
@@ -382,6 +394,34 @@
 .mix-tile .ux-flag {
   width: 30px;
   height: 22px;
+}
+/* Change (2026-10-18): the card opens Quick change; the word says so on its right. */
+.mix-change {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding-left: 10px;
+  font: 700 14px/1 var(--font-sans);
+  color: var(--accent-ink, var(--digi));
+  transition: color 420ms ease;
+}
+.mix-change svg {
+  width: 15px;
+  height: 15px;
+  transition: transform 200ms ease;
+}
+.mix-place:hover .mix-change,
+.mix-place:focus-visible .mix-change {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.mix[data-on] .mix-change {
+  color: var(--mix-blue);
+}
+.mix-change-body {
+  padding-bottom: 18px;
 }
 .mix-menu {
   width: 0;
