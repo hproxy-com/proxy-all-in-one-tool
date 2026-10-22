@@ -24,8 +24,8 @@
      · Every control gives way under the finger and springs back,
        with a light from where it was pressed (press.ts).
 
-   The design source is hproxy-website/components/design/app-look
-   (looks.module.css) in the HProxy monorepo. Layout is Tailwind;
+   The design source is the website's design book, its app look.
+   Layout is Tailwind;
    every visual decision is a `ux-*` class here, applied by the
    components in src/components/ui. Screens never style a control
    themselves.
@@ -556,7 +556,9 @@ body {
   line-height: 1.75;
   font-family: var(--font-sans);
   font-variant-numeric: lining-nums proportional-nums;
-  background: var(--well);
+  /* White with a hairline in every look (2026-10-22: the well's tint read as a sandy green on
+     Paper); the dark look's card colour in dark. */
+  background: var(--surface);
   color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--hairline);
   transition: box-shadow 160ms ease;
@@ -942,16 +944,33 @@ body {
   border-radius: 50%;
   background: var(--tone, var(--ok));
 }
-.ux-dot.is-live {
+/* Live: a halo grows out of the dot and fades, drawn apart from the dot so the graphics card moves
+   it alone. Until 2026-10-23 a box-shadow pulsed instead, which repaints the page every frame for
+   as long as the connection lasts. The card's dot (.ux-live > i) breathes the same way. */
+.ux-dot.is-live,
+.ux-live > i {
+  position: relative;
+}
+.ux-dot.is-live::after,
+.ux-live > i::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: inherit;
+  opacity: 0;
+  pointer-events: none;
   animation: ux-breathe 2.4s ease-in-out infinite;
 }
 @keyframes ux-breathe {
   0%,
   100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--tone, var(--ok)) 55%, transparent);
+    transform: scale(1);
+    opacity: 0.55;
   }
   50% {
-    box-shadow: 0 0 0 6px color-mix(in srgb, var(--tone, var(--ok)) 0%, transparent);
+    transform: scale(2.3);
+    opacity: 0;
   }
 }
 @media (max-width: 720px) {
@@ -1174,8 +1193,7 @@ html[data-phone] .ux-statusline > .ux-pagetabs {
 
 /* A filter's button (ui/Popover.tsx): its icon and words with no fill, a
    hairline on hover; once it narrows the list, our blue words and how many
-   things it narrows in a solid blue badge (2026-10-12: "everything got those
-   grey boxes"). */
+   things it narrows in a solid blue badge (2026-10-12: fewer grey boxes). */
 .ux-pop {
   position: relative;
 }
@@ -1446,8 +1464,8 @@ html[data-phone] .ux-statusline > .ux-pagetabs {
   background-size: cover;
 }
 
-/* The table stands on the page, its rows between hairlines (2026-10-12: "less
-   boxy", "everything got those grey boxes"; it was a filled panel). The bar,
+/* The table stands on the page, its rows between hairlines (2026-10-12: fewer
+   boxes; it was a filled panel). The bar,
    the proxy (its name or address, and under it the flag, place and network),
    its protocols, the grade, the latency. */
 .ux-head,
@@ -2195,7 +2213,6 @@ html[data-phone] .ux-statusline > .ux-pagetabs {
   flex: none;
   border-radius: 50%;
   background: var(--ok);
-  animation: ux-breathe 2.4s ease-in-out infinite;
 }
 .ux-conn[data-phase="off"] .ux-live,
 .ux-conn[data-phase="leaving"] .ux-live {
@@ -2204,6 +2221,9 @@ html[data-phone] .ux-statusline > .ux-pagetabs {
 .ux-conn[data-phase="off"] .ux-live > i,
 .ux-conn[data-phase="leaving"] .ux-live > i {
   background: var(--ink-soft);
+}
+.ux-conn[data-phase="off"] .ux-live > i::after,
+.ux-conn[data-phase="leaving"] .ux-live > i::after {
   animation: none;
 }
 .ux-conn[data-phase="connecting"] .ux-live,
@@ -2215,6 +2235,10 @@ html[data-phone] .ux-statusline > .ux-pagetabs {
 .ux-conn[data-phase="rotating"] .ux-live > i,
 .ux-conn[data-failing] .ux-live > i {
   background: var(--warn);
+}
+.ux-conn[data-phase="connecting"] .ux-live > i::after,
+.ux-conn[data-phase="rotating"] .ux-live > i::after,
+.ux-conn[data-failing] .ux-live > i::after {
   animation: ux-pulse-warn 900ms ease-out infinite;
 }
 
@@ -2429,6 +2453,7 @@ html[data-phone] .ux-statusline > .ux-pagetabs {
 /* The track stays dashed until something runs on it. */
 .ux-wire {
   position: relative;
+  container-type: inline-size;
   flex: 1;
   min-width: 24px;
   height: 2px;
@@ -3090,6 +3115,7 @@ html[data-theme="midnight"] .ux-conn[data-look="card"] .ux-status::before {
 }
 .ux-hswitch .rail > .lit {
   position: absolute;
+  container-type: inline-size;
   top: 0;
   bottom: 0;
   left: 0;
@@ -3487,9 +3513,12 @@ html[data-theme="midnight"] .ux-conn[data-look="card"] .ux-status::before {
     background-position: 12px 0;
   }
 }
+/* The light runs by transform across its wire (a size container, so 100cqw is the wire's width),
+   which the graphics card moves alone; until 2026-10-23 it ran by `left`, laid out and painted
+   again every frame for as long as the connection lasts. */
 @keyframes ux-travel {
   0% {
-    left: 0;
+    transform: translateX(0);
     opacity: 0;
   }
   15% {
@@ -3499,7 +3528,7 @@ html[data-theme="midnight"] .ux-conn[data-look="card"] .ux-status::before {
     opacity: 1;
   }
   100% {
-    left: calc(100% - 6px);
+    transform: translateX(calc(100cqw - 6px));
     opacity: 0;
   }
 }
@@ -3513,10 +3542,12 @@ html[data-theme="midnight"] .ux-conn[data-look="card"] .ux-status::before {
 }
 @keyframes ux-pulse-warn {
   0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 60%, transparent);
+    transform: scale(1);
+    opacity: 0.6;
   }
   100% {
-    box-shadow: 0 0 0 7px color-mix(in srgb, var(--warn) 0%, transparent);
+    transform: scale(2.75);
+    opacity: 0;
   }
 }
 @keyframes ux-flag-pop {
@@ -3669,9 +3700,9 @@ html[data-theme="midnight"] .ux-conn[data-look="card"] .ux-status::before {
    <html>). Every page is solid: a neutral colour, or that colour with lines
    and dots drawn on it in solid colours (connect-designs.css), or the
    person's own picture. Never a light, a haze or a tint: Aura's blue and
-   violet haze in the corners and its six studies went on 2026-10-02 (his
-   "I'm still unhappy with the background"; the house rule, nothing
-   see-through, which the haze broke from inside a variable).
+   violet haze in the corners and its six studies went on 2026-10-02 (the
+   house rule, nothing see-through, which the haze broke from inside a
+   variable).
 
      soft    the default: a calm grey page, white cards with a hairline and
              a breath of shadow, like a phone's settings
@@ -3930,35 +3961,133 @@ html[data-bg="picture"] .ux-summary {
   animation: ux-press-spring 520ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-/* "Drop a file": inside the list box on the Check tab. */
-.drop-hint {
-  position: absolute;
-  top: 0;
-  right: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 11px;
-  border-radius: 11px 4px 11px 4px;
-  font-size: 12.5px;
-  font-weight: 700;
-  color: var(--ink-soft);
-  box-shadow: inset 0 0 0 1.5px var(--hairline);
-  pointer-events: none;
+/* The Check tab's list box: the list on the left, "Drop a file" on the right half, a hairline
+   between (since 2026-10-22). One white box with a hairline; the box clips its two halves, so
+   neither draws its own edge. */
+.ux-listbox {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--surface);
 }
-.drop-hint svg {
+.ux-listbox .ux-textarea {
+  border-radius: 0;
+  box-shadow: none;
+}
+.ux-listbox .ux-textarea:focus {
+  box-shadow: inset 0 0 0 1.5px var(--digi);
+}
+.ux-dropzone {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px;
+  border: 0;
+  border-left: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font: inherit;
+  cursor: pointer;
+}
+.ux-dropzone svg {
+  width: 34px;
+  height: 34px;
+  margin-bottom: 6px;
   color: var(--accent-ink);
 }
-.drop-hint.is-inside {
-  top: 10px;
-  right: 10px;
-  background: var(--card-solid);
+/* "or", then Choose a file as a button (the whole half is that button), then what it takes. */
+.ux-dropzone .or {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
 }
-/* A phone cannot drop a file, and in a narrow box the badge would sit on the
-   words in the box. Open a file is the way in there. */
+.ux-dropzone .choose {
+  display: inline-flex;
+  height: 36px;
+  align-items: center;
+  padding: 0 16px;
+  border: 1px solid var(--bar);
+  border-radius: 11px 4px 11px 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 700;
+  transition:
+    border-color 140ms ease,
+    color 140ms ease;
+}
+.ux-dropzone:hover .choose,
+.ux-dropzone:focus-visible .choose {
+  border-color: var(--digi);
+  color: var(--accent-ink);
+}
+.ux-dropzone .kinds {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+/* A file held over the window (since 2026-10-22): a blue edge, the words in blue, and the arrow
+   dropping into the tray again and again.
+   Transform only; the quiet setting of Windows keeps it still. */
+.ux-dropzone.is-dragging {
+  box-shadow: inset 0 0 0 2px var(--digi);
+}
+.ux-dropzone.is-dragging b {
+  color: var(--accent-ink);
+  font-size: 19px;
+}
+.ux-dropzone.is-dragging .arrow {
+  animation: ux-drop-arrow 900ms cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@keyframes ux-drop-arrow {
+  0%,
+  100% {
+    transform: translateY(-3px);
+  }
+  50% {
+    transform: translateY(4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ux-dropzone.is-dragging .arrow {
+    animation: none;
+  }
+}
+.ux-dropzone b {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--ink);
+  transition: color 160ms ease;
+}
+.ux-dropzone span {
+  font-size: 13px;
+  font-weight: 600;
+}
+/* A hover changes the words' colour, nothing behind them. */
+.ux-dropzone:hover b,
+.ux-dropzone:focus-visible b {
+  color: var(--accent-ink);
+}
+.ux-dropzone:focus-visible {
+  outline: 2px solid var(--digi);
+  outline-offset: -4px;
+}
+/* A narrow window: the file under the list, the hairline on top. */
 @media (max-width: 767px) {
-  .drop-hint.is-inside {
-    display: none;
+  .ux-listbox {
+    flex-direction: column;
+  }
+  .ux-dropzone {
+    flex: 0 0 auto;
+    padding: 16px;
+    border-left: 0;
+    border-top: 1px solid var(--hairline);
   }
 }
 /* A file held over the page: the whole page says where it goes. */
@@ -4071,7 +4200,7 @@ html[data-bg="picture"] .ux-summary {
   .row-in .ux-bar,
   .rise-in,
   .ux-poppanel,
-  .ux-dot.is-live {
+  .ux-dot.is-live::after {
     animation: none;
   }
   .ux-btn,
@@ -4126,8 +4255,8 @@ html[data-bg="picture"] .ux-summary {
 }
 
 /* ── Connect, one control (2026-10-01) ───────────────────────────────────
-   After the connector study (monorepo docs/research-2026-09-30-proxy-
-   connector-apps): one obvious button, the place you go through pressed to
+   After a study of how proxy connectors and VPN apps work (2026-09-30):
+   one obvious button, the place you go through pressed to
    change it, and the live speed in view. The H button carries its word under
    it; the place at the route's end is a button while off; the foot line
    names how programs reach the relay and the speed beside the round trip. */

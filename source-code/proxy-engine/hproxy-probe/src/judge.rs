@@ -206,8 +206,8 @@ impl Ladder {
 
     /// Cloudflare's own trace on its own domain, for a person who would
     /// rather the proxies they check never ask HProxy anything (the phone's
-    /// checker, 2026-10-11: "they can change the judge, but that's about
-    /// it"). It names the exit (`ip=`) and reflects the User-Agent only, so a
+    /// checker, 2026-10-11: the judge is its one choice). It names the exit
+    /// (`ip=`) and reflects the User-Agent only, so a
     /// grade stops at anonymous. Answers plain HTTP with no redirect
     /// (measured 2026-10-11), which a plain-HTTP proxy needs.
     pub fn cloudflare() -> Self {

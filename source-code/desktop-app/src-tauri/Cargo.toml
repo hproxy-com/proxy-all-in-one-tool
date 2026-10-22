@@ -53,6 +53,9 @@ log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+# Today on the device's own calendar: the reminders (src/reminders.rs, a computer's) and the
+# usage counts' days (src/usage.rs, every build).
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Geolocation (our free public IP API) and API-mode checking (our streaming
 # checker). rustls-tls keeps the binary free of an OpenSSL system dependency;
@@ -85,8 +88,6 @@ tauri-plugin-autostart = "2"
 # The computer's own notifications, used from Rust only (src/reminders.rs): a
 # proxy or a group near the day it expires says so, also from the tray.
 tauri-plugin-notification = "2"
-# Today on the computer's own calendar, for those reminders.
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Counting the other running copies of this program (src/update.rs): the tool
 # an AI assistant starts is this same program, and the Windows installer ends

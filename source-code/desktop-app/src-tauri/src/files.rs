@@ -30,9 +30,9 @@ pub async fn import_proxy_file(app: AppHandle) -> Result<Option<String>, String>
         return Ok(None);
     };
     let path = path.into_path().map_err(|e| e.to_string())?;
-    std::fs::read_to_string(&path)
-        .map(Some)
-        .map_err(|e| format!("could not read {}: {e}", path.display()))
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    crate::usage::feature(&app, "import_file");
+    Ok(Some(text))
 }
 
 /// Open the native save dialog and write `content` where the person says.

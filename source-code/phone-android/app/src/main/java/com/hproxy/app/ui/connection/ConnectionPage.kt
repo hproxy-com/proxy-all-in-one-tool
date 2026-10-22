@@ -54,7 +54,6 @@ import com.hproxy.app.state.Phase
 import com.hproxy.app.state.Settings
 import com.hproxy.app.ui.Nav
 import com.hproxy.app.ui.Page
-import com.hproxy.app.ui.Tab
 import com.hproxy.app.ui.home.masked
 import com.hproxy.app.ui.home.whereOf
 import com.hproxy.app.ui.kit.Btn
@@ -112,7 +111,7 @@ fun ConnectionPage(nav: Nav, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val ref = AppState.switchTarget()
+    val ref = AppState.target()
     val where = whereOf(ref, conn, health)
     val on = conn.phase == Phase.On && conn.running
     val busy = conn.phase is Phase.Connecting || conn.phase is Phase.Switching
@@ -248,9 +247,9 @@ fun ConnectionPage(nav: Nav, onBack: () -> Unit) {
                 busy -> Btn("Cancel", { AppState.disconnect() }, Modifier.fillMaxWidth(), kind = BtnKind.Raised)
                 on -> Btn("Disconnect", { AppState.disconnect() }, Modifier.fillMaxWidth(), kind = BtnKind.Raised)
                 ref != null -> Btn("Connect", { nav.askVpn { AppState.connect(ref) } }, Modifier.fillMaxWidth())
-                else -> Btn("Pick a proxy", {
+                else -> Btn("Add proxies", {
                     onBack()
-                    nav.go(Tab.Proxies)
+                    nav.addFirst()
                 }, Modifier.fillMaxWidth())
             }
         }

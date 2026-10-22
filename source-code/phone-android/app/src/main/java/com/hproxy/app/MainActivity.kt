@@ -2,17 +2,20 @@ package com.hproxy.app
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
-import android.graphics.Color
+import android.content.res.Configuration
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
-import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.gms.common.ConnectionResult
+import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.common.moduleinstall.ModuleInstall
 import com.google.android.gms.common.moduleinstall.ModuleInstallRequest
 import com.google.mlkit.vision.barcode.common.Barcode
@@ -64,22 +67,38 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
-        )
+        // Edge to edge from Android 7 on: the screens draw under the status bar and the nav bar and
+        // keep clear of them themselves. The bars' colours, their light icons and the camera cutout
+        // come from the theme (res/values*/themes.xml), so no window call Android 15 retired is
+        // made (Google Play lists those).
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         super.onCreate(savedInstanceState)
+        followScreen(resources.configuration)
         AppState.start(applicationContext)
+        // The usage counts' answer for the screens, and an opening (never a turn of the phone).
+        com.hproxy.app.state.Usage.load()
+        if (savedInstanceState == null) com.hproxy.app.state.Usage.opened()
         nav.showShelf(if (com.hproxy.app.state.Settings.shelf == "Mine") com.hproxy.app.ui.Shelf.Mine else com.hproxy.app.ui.Shelf.Free)
 
-        nav.askVpn = { then ->
-            val ask = VpnService.prepare(this)
-            if (ask == null) {
+        nav.askVpn = ask@{ then ->
+            // A few phones throw here, or lack Android's own VPN permission screen
+            // (com.android.vpndialogs, missing on some TV boxes and pared-down ROMs): a word, not a crash.
+            val consent = try {
+                VpnService.prepare(this)
+            } catch (e: Exception) {
+                return@ask noVpn(e)
+            }
+            if (consent == null) {
                 then()
                 askNotificationsOnce()
-            } else {
-                afterVpn = then
-                vpnConsent.launch(ask)
+                return@ask
+            }
+            afterVpn = then
+            try {
+                vpnConsent.launch(consent)
+            } catch (e: Exception) {
+                afterVpn = null
+                noVpn(e)
             }
         }
         nav.askNotifications = { askNotificationsOnce(force = true) }
@@ -97,6 +116,20 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handle(intent)
+    }
+
+    // A foldable opening or closing, a window resized: the screen stays, only the size changes.
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        followScreen(newConfig)
+    }
+
+    /** Upright on a phone, which the screens are drawn for; any way round on a tablet or an open
+     *  foldable (its shorter side 600 dp or more), where the app keeps a phone's width in the
+     *  middle (ui/Root.kt). Android 16 turns big screens whatever an app asks. */
+    private fun followScreen(config: Configuration) {
+        val want = if (config.smallestScreenWidthDp < 600) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        if (requestedOrientation != want) requestedOrientation = want
     }
 
     override fun onResume() {
@@ -126,6 +159,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun noVpn(e: Exception) {
+        Log.w("HProxy", "the VPN permission could not be asked for", e)
+        AppState.toast("This phone does not let apps open a VPN, so HProxy cannot connect it.")
+    }
+
     private fun askNotificationsOnce(force: Boolean = false) {
         if (Build.VERSION.SDK_INT < 33) return
         if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
@@ -143,6 +181,11 @@ class MainActivity : ComponentActivity() {
         scanner.startScan()
             .addOnSuccessListener { code -> code.rawValue?.let(got) }
             .addOnFailureListener { e ->
+                // Phones sold without Google (some Huawei, some tablets) have no scanner to fetch.
+                if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(this) != ConnectionResult.SUCCESS) {
+                    AppState.toast("Scanning needs Google Play services on this phone. Paste the proxies instead.")
+                    return@addOnFailureListener
+                }
                 // The scanner is a part of Play services fetched the first time; ask for it.
                 ModuleInstall.getClient(this).installModules(ModuleInstallRequest.newBuilder().addApi(scanner).build())
                 AppState.toast("The scanner is getting ready. Try again in a moment. (${e.message ?: "Play services"})")

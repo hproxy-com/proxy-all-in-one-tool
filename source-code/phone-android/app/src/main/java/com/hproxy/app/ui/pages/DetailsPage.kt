@@ -75,7 +75,9 @@ fun DetailsPage(nav: Nav, onBack: () -> Unit) {
     val library by AppState.library.collectAsState()
     val status by AppState.status.collectAsState()
     val health by AppState.health.collectAsState()
-    val ref = status.place ?: library.picked
+    // The connection's place as on the Connection page that opened this one (AppState.target).
+    @Suppress("UNUSED_VARIABLE") val read = Pair(library, status)
+    val ref = com.hproxy.app.state.AppState.target()
     val shown = com.hproxy.app.state.AppState.show(ref)
     var proto by remember { mutableStateOf("http") }
     var format by remember { mutableStateOf(Format.Colon) }

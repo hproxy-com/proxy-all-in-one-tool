@@ -35,7 +35,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.hproxy.app.engine.Shown
 import com.hproxy.app.firewall.Firewall
 import com.hproxy.app.firewall.InstalledApp
 import com.hproxy.app.firewall.Net
@@ -83,7 +82,9 @@ fun AppsPage(nav: Nav, onBack: () -> Unit) {
         value = withContext(Dispatchers.IO) { Firewall.installed(context, fresh = true) }
     }
     val known = Settings.knownApps
-    val place = Shown.find(library, status.place ?: library.picked)?.name ?: "your proxy"
+    // "The connection" as everywhere (AppState.target): in use, else yours connected or used last.
+    @Suppress("UNUSED_VARIABLE") val read = Pair(library, status)
+    val place = AppState.current()?.name ?: "your proxy"
 
     fun set(pkg: String, next: AppRule) {
         Settings.setRule(pkg, next)
@@ -132,7 +133,10 @@ fun AppsPage(nav: Nav, onBack: () -> Unit) {
                         Spacer(Modifier.height(14.dp))
                     }
                 }
-                Field(search, { search = it }, placeholder = "Search your apps", lead = com.hproxy.app.ui.kit.I.search, plain = true)
+                Field(search, {
+                    search = it
+                    if (it.isNotBlank()) com.hproxy.app.state.Usage.feature("search")
+                }, placeholder = "Search your apps", lead = com.hproxy.app.ui.kit.I.search, plain = true)
                 Spacer(Modifier.height(8.dp))
             }
             val list = apps

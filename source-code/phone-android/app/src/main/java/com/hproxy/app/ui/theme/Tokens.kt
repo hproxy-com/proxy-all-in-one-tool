@@ -63,6 +63,11 @@ fun cut(big: Dp, small: Dp) = RoundedCornerShape(topStart = big, topEnd = small,
 val CutBig = cut(18.dp, 6.dp)
 val CutSmall = cut(14.dp, 5.dp)
 
+/** The widest the app gets: a phone's screens, kept to this width in the middle of a tablet, an
+ *  open foldable or a Chromebook window (ui/Root.kt), the sheets and the notes too. Every phone
+ *  is narrower, so on a phone nothing changes. */
+val AppWidth = 600.dp
+
 /** Inter (2026-10-11, in place of DM Sans), the
  *  Latin and Latin Extended letters of its static weights, from Google Fonts. SIL Open Font
  *  License: the licence travels in assets/licenses/Inter-OFL.txt, no credit line on any screen.

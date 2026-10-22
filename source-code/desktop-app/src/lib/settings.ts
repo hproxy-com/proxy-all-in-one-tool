@@ -48,8 +48,8 @@ export type Settings = {
    *  detail: timing breakdown, exit address, leaked headers, software, HTTPS
    *  interception. It is also the only mode that tells the truth about a proxy
    *  locked to this computer's IP address, which every other machine sees as
-   *  dead. The default since 2026-09-19, as asked on 2026-07-23: "checking
-   *  through the PC by default, but can also use our API to speed up".
+   *  dead. The default since 2026-09-19: checking through this computer, with
+   *  HProxy's servers there to speed a list up.
    *
    *  `both` splits the list across HProxy's servers and this machine over one
    *  shared queue, so whichever side is quicker gets through more of it: your
@@ -96,6 +96,9 @@ export type Settings = {
       back after (Windows; src-tauri/src/timezone.rs). Off until asked for: it
       changes a setting of the whole computer, which every program sees. */
   matchTimeZone: boolean;
+  /** The first start's "How do you want to start?" was answered or skipped (Welcome.tsx).
+      Settings kept before 2026-10-22 count as answered: only a new copy is asked. */
+  welcomed: boolean;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -121,6 +124,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fraudKeys: {},
   fraudOnConnect: true,
   matchTimeZone: false,
+  welcomed: false,
 };
 
 /** Where the Connect screen's probe goes while connected. Our judge by default,
@@ -162,6 +166,20 @@ export function whereChecked(s: Pick<Settings, "source">): string {
 export const GENTLE_CONCURRENCY_CEILING = 250;
 export const MAX_CONCURRENCY = 1000;
 
+/** The longest wait for one proxy's answer, two minutes (since 2026-10-22).
+    src-tauri/src/check.rs holds the same ceiling. */
+export const MAX_WAIT_SECONDS = 120;
+
+/** A wait the way people say it: "8 seconds", "1 minute", "1 minute and 20 seconds". */
+export function waitWords(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  const unit = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
+  const minutes = Math.floor(s / 60);
+  const rest = s % 60;
+  if (minutes === 0) return unit(rest, "second");
+  return rest === 0 ? unit(minutes, "minute") : `${unit(minutes, "minute")} and ${unit(rest, "second")}`;
+}
+
 const KEY = "hproxy-checker-settings";
 
 /* The app saves its defaults the moment it opens, so a stored theme is
@@ -199,6 +217,8 @@ export function loadSettings(): Settings {
         fraudKeys: keysOf(parsed.fraudKeys),
         fraudOnConnect: typeof parsed.fraudOnConnect === "boolean" ? parsed.fraudOnConnect : DEFAULT_SETTINGS.fraudOnConnect,
         matchTimeZone: typeof parsed.matchTimeZone === "boolean" ? parsed.matchTimeZone : DEFAULT_SETTINGS.matchTimeZone,
+        // Kept settings without it are from before the first-start screen: someone who knows the app.
+        welcomed: typeof parsed.welcomed === "boolean" ? parsed.welcomed : true,
         protocols: { ...DEFAULT_SETTINGS.protocols, ...(parsed.protocols ?? {}) },
       };
     }

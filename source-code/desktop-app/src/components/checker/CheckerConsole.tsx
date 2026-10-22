@@ -30,7 +30,8 @@ import { toCsv, toJson, toList } from "../../lib/export";
 import { setCheckRunning } from "../../lib/runState";
 import { fraudScoresAll, fraudService, scoredIp, withAnswer, type FraudSet } from "../../lib/fraud";
 import { geoApiUrl, protocolList, whatLeaves, whereChecked, type Settings } from "../../lib/settings";
-import { Button, Card, Dropdown, Icon, InfoTip, Input, Roll, TextArea, useCrossbar } from "../ui";
+import { countFeature } from "../../lib/usage";
+import { Button, Card, Dropdown, DropZone, Icon, InfoTip, Input, Roll, TextArea, useCrossbar } from "../ui";
 import { ANONS, ActiveFilters, EMPTY_FILTERS, FilterButton, LATENCY_MAX, PROTOS, activeFilterCount, type Filters, type Status } from "./FilterBar";
 
 /* The Checker screen, in look D (chosen 2026-09-23); results first since
@@ -63,9 +64,9 @@ const spaced = (n: number) => n.toLocaleString("en-US").replace(/,/g, " ");
 const append = (prev: string, more: string) => (prev.trim() ? prev.replace(/\s*$/, "") + "\n" + more : more);
 
 /* The empty box: what to do, then one line of each format (lib/proxyExamples.ts,
-   documentation addresses only). Two lines in the morning of 2026-10-12 ("too much
-   text everywhere"), five since that afternoon ("make sure it has a proper
-   placeholder"; he saw it and said "it looks much better now"). */
+   documentation addresses only). Two lines in the morning of 2026-10-12, five since
+   that afternoon: a placeholder that shows every format reads better than one that
+   explains them. */
 const PASTE_HERE = PASTE_LIST_HERE;
 
 /* Why a line is not a proxy, as the parser said it. The parser writes its
@@ -94,9 +95,8 @@ function Unreadable({ line, reason }: { line: string; reason: string }) {
   );
 }
 
-/** After a check, the working ones shown, one press from your proxy list (2026-10-17: "what if
-    people wanna add those proxies to their proxy list ... you can add all those to your personal
-    proxy list"). Once they are in it says so, with the way there. A new set of rows asks again. */
+/** After a check, the working ones shown, one press from your proxy list (since 2026-10-17). Once
+    they are in it says so, with the way there. A new set of rows asks again. */
 function KeepLine({ lines, onKeep, onOpenList }: { lines: string[]; onKeep: (lines: string[]) => Promise<void>; onOpenList?: () => void }) {
   const key = lines.join("\n");
   const [kept, setKept] = useState<string | null>(null);
@@ -638,27 +638,20 @@ export default function CheckerConsole({
                 </Button>
               )}
             </div>
-            <div className="relative mt-4 min-h-[260px] flex-1">
-              <TextArea value={text} onChange={setText} placeholder={PASTE_HERE} label="Proxy list" inputRef={textRef} />
-              {/* The file can be dropped right here too. Only on the empty box:
-                  over a list the badge would sit on the first line. */}
-              {!text.trim() && (
-                <span className="drop-hint is-inside" aria-hidden="true">
-                  <Icon.drop className="h-4 w-4" />
-                  Drop a file
-                </span>
-              )}
+            {/* The list on the left, a file on the right, a hairline between (since 2026-10-22: the
+                file's side is a big half of the box, no small button). A click on the right half opens
+                a file, so it is the way in without dragging. */}
+            <div className="ux-listbox mt-4 min-h-[260px] flex-1">
+              <div className="relative min-h-[200px] min-w-0 flex-1">
+                <TextArea value={text} onChange={setText} placeholder={PASTE_HERE} label="Proxy list" inputRef={textRef} />
+              </div>
+              <DropZone dragging={dragActive} onChoose={() => void onUpload()} />
             </div>
 
             <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2">
               <Button variant="solid" size="lg" onClick={() => void run()} title="Ctrl+Enter" disabled={parsedCount === 0}>
                 <Icon.listCheck className="h-[18px] w-[18px]" />
                 {parsedCount > 0 ? `Check ${spaced(parsedCount)}` : "Check"}
-              </Button>
-              {/* A phone cannot drop a file: this is its way in. */}
-              <Button variant="text" onClick={() => void onUpload()}>
-                <Icon.file className="h-4 w-4" />
-                Open a file
               </Button>
               {/* What the box holds, and Clear beside it: one group, so on a
                   phone it moves under the buttons as one line. The count may
@@ -707,15 +700,8 @@ export default function CheckerConsole({
               since 2026-09-24: it read as noise); it is in git history. */}
 
         </div>
-
-        {dragActive && (
-          <div className="drop-veil" aria-hidden="true">
-            <span>
-              <Icon.drop className="h-7 w-7" />
-              Drop your proxy file to load it
-            </span>
-          </div>
-        )}
+        {/* A file held over the page: the box's right half says where it goes (ui/DropZone.tsx);
+            a drop anywhere on the page still loads it. */}
       </div>
     );
   }
@@ -833,7 +819,10 @@ export default function CheckerConsole({
               <Input
                 icon="search"
                 value={filters.search}
-                onChange={(v) => setFilters((f) => ({ ...f, search: v }))}
+                onChange={(v) => {
+                  setFilters((f) => ({ ...f, search: v }));
+                  if (v.trim()) countFeature("search");
+                }}
                 placeholder="Search address or country"
                 label="Search the results (address, country, city, network)"
                 inputRef={searchRef}

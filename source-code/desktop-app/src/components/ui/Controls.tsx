@@ -151,16 +151,19 @@ export type TextAreaProps = {
   /** Required: the accessible name. */
   label: string;
   inputRef?: RefObject<HTMLTextAreaElement | null>;
+  /** Keys pressed in it (Add's box: Ctrl+Enter adds). */
+  onKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
 };
 
-/** The tinted text area. It fills its positioned parent, so the screen decides
-    how tall it is by sizing the box around it. */
-export function TextArea({ value, onChange, placeholder, label, inputRef }: TextAreaProps) {
+/** The text area: a white box with a hairline. It fills its positioned parent, so the screen
+    decides how tall it is by sizing the box around it. */
+export function TextArea({ value, onChange, placeholder, label, inputRef, onKeyDown }: TextAreaProps) {
   return (
     <textarea
       ref={inputRef}
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      onKeyDown={onKeyDown}
       placeholder={placeholder}
       aria-label={label}
       spellCheck={false}

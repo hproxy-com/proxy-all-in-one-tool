@@ -34,3 +34,5 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 jni = { version = "0.21", default-features = false }
 # The support chat (src/chat.rs): proxy-engine/hproxy-chat, shared with the desktop app.
 hproxy-chat = { workspace = true }
+# Today on the phone's own calendar and time zone, for the usage counts' days (engine.rs).
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

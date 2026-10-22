@@ -56,6 +56,7 @@ import com.hproxy.app.engine.jsonOf
 import com.hproxy.app.engine.spelled
 import com.hproxy.app.state.AppState
 import com.hproxy.app.state.JustAdded
+import com.hproxy.app.ui.ADD_FIRST
 import com.hproxy.app.ui.Nav
 import com.hproxy.app.ui.Shelf
 import com.hproxy.app.ui.kit.Btn
@@ -211,6 +212,7 @@ fun ColumnScope.AddSheet(nav: Nav) {
         when (mode) {
             AddMode.Start -> Start(
                 clip = clip,
+                asked = nav.addAsked,
                 adding = adding,
                 onAdd = { asGroup -> clip?.let { add(it.first, asGroup) } },
                 onScan = { nav.scan { got -> text = got; mode = AddMode.Type } },
@@ -237,6 +239,7 @@ fun ColumnScope.AddSheet(nav: Nav) {
 @Composable
 private fun Start(
     clip: Pair<String, Review>?,
+    asked: Boolean,
     adding: Boolean,
     onAdd: (asGroup: Boolean) -> Unit,
     onScan: () -> Unit,
@@ -245,6 +248,8 @@ private fun Start(
 ) {
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Txt("Add proxies", type(22.sp, FontWeight.Bold, spacing = (-0.015).em), modifier = Modifier.padding(top = 4.dp, bottom = 2.dp))
+        // Opened by the switch with nothing to connect: it says why.
+        if (asked) Txt(ADD_FIRST, type(15.sp, FontWeight.SemiBold, C.ink2, lineHeight = 21.sp), modifier = Modifier.padding(bottom = 4.dp))
         if (clip != null) {
             val (t, r) = clip
             val lines = t.lines().map { it.trim() }.filter { it.isNotEmpty() }

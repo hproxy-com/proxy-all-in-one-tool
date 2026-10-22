@@ -12,7 +12,8 @@
 // wants four numbers with the last one 0, so version 0.2.3 is packed as 0.2.3.0.
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +26,14 @@ const OUT = join(ROOT, "target", "msix");
 const LAYOUT = join(OUT, "layout");
 // No large (310 x 310) tile: Windows then wants a wide 310 x 150 one too, and the H has none.
 const ASSETS = ["StoreLogo.png", "Square44x44Logo.png", "Square71x71Logo.png", "Square150x150Logo.png"];
+/* The taskbar's and Start's own sizes, each also "without a plate" (2026-10-22: the blue H sat on a
+   pink plate in the taskbar). With only Square44x44Logo.png,
+   Windows drew the H on a plate in the person's accent colour (the manifest's BackgroundColor is
+   "transparent"); `_altform-unplated` (dark taskbar) and `_altform-lightunplated` (light taskbar)
+   say "this size, no plate", and resources.pri (makepri, below) tells Windows these files exist.
+   Drawn at pack time from the H's vector master, icons/source/desktop.svg (scripts/app-icons.mjs). */
+const TARGET_SIZES = [16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 256];
+const TARGET_VARIANTS = ["", "_altform-unplated", "_altform-lightunplated"];
 const PACKAGE_NAME = "HProxy.HProxyProxyConnectorandChecker";
 
 const args = process.argv.slice(2);
@@ -44,16 +53,27 @@ if (args.includes("--unregister")) {
   process.exit(0);
 }
 
-/** makeappx.exe from the newest Windows SDK on this PC. */
-function makeappx() {
+/** A tool (makeappx.exe, makepri.exe) from the newest Windows SDK on this PC that has it. */
+function sdkTool(name) {
   const base = "C:\\Program Files (x86)\\Windows Kits\\10\\bin";
   const versions = existsSync(base) ? readdirSync(base).filter((v) => /^10\.\d+\.\d+\.\d+$/.test(v)) : [];
   versions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   for (const v of versions.reverse()) {
-    const tool = join(base, v, "x64", "makeappx.exe");
+    const tool = join(base, v, "x64", name);
     if (existsSync(tool)) return tool;
   }
-  throw new Error("makeappx.exe not found: install the Windows SDK (its App Certification Kit part)");
+  throw new Error(`${name} not found: install the Windows SDK (its App Certification Kit part)`);
+}
+
+/** Runs an SDK tool; on a refusal, the lines where it says why. */
+function runSdk(name, toolArgs) {
+  try {
+    execFileSync(sdkTool(name), toolArgs, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch (e) {
+    // The tools say why on stdout ("App manifest validation error: Line 64 ...").
+    const said = `${e.stdout ?? ""}${e.stderr ?? ""}`.split("\n").filter((l) => /error/i.test(l));
+    throw new Error(`${name} refused:\n${said.join("\n")}`);
+  }
 }
 
 if (!existsSync(PROGRAM)) throw new Error(`no release build at ${PROGRAM}: run \`npx tauri build --no-bundle\` first`);
@@ -65,16 +85,32 @@ rmSync(LAYOUT, { recursive: true, force: true });
 mkdirSync(join(LAYOUT, "Assets"), { recursive: true });
 copyFileSync(PROGRAM, join(LAYOUT, "hproxy-checker.exe"));
 for (const name of ASSETS) copyFileSync(join(ICONS, name), join(LAYOUT, "Assets", name));
+const drawn = mkdtempSync(join(tmpdir(), "hproxy-msix-icons-"));
+try {
+  const sizes = TARGET_SIZES.flatMap((s) => ["--png", String(s)]);
+  execFileSync("npx", ["tauri", "icon", join(ICONS, "source", "desktop.svg"), "-o", drawn, ...sizes], {
+    cwd: APP,
+    stdio: ["ignore", "ignore", "pipe"],
+    shell: true,
+  });
+  for (const s of TARGET_SIZES) {
+    for (const variant of TARGET_VARIANTS) {
+      copyFileSync(join(drawn, `${s}x${s}.png`), join(LAYOUT, "Assets", `Square44x44Logo.targetsize-${s}${variant}.png`));
+    }
+  }
+} finally {
+  rmSync(drawn, { recursive: true, force: true });
+}
 writeFileSync(join(LAYOUT, "AppxManifest.xml"), readFileSync(MANIFEST, "utf8").replace("{VERSION}", version));
 
+// The index of the package's files by size and form, without which Windows never looks for the
+// taskbar sizes above.
+const priConfig = join(OUT, "priconfig.xml");
+runSdk("makepri.exe", ["createconfig", "/cf", priConfig, "/dq", "en-US", "/pv", "10.0.0", "/o"]);
+runSdk("makepri.exe", ["new", "/pr", LAYOUT, "/cf", priConfig, "/mn", join(LAYOUT, "AppxManifest.xml"), "/of", join(LAYOUT, "resources.pri"), "/o"]);
+
 const msix = join(OUT, `HProxy_${version}_x64.msix`);
-try {
-  execFileSync(makeappx(), ["pack", "/d", LAYOUT, "/p", msix, "/o"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-} catch (e) {
-  // makeappx says why on stdout ("App manifest validation error: Line 64 ...").
-  const said = `${e.stdout ?? ""}${e.stderr ?? ""}`.split("\n").filter((l) => /error/i.test(l));
-  throw new Error(`makeappx refused the package:\n${said.join("\n")}`);
-}
+runSdk("makeappx.exe", ["pack", "/d", LAYOUT, "/p", msix, "/o"]);
 console.log(`${msix} (${(statSync(msix).size / 1048576).toFixed(1)} MB, version ${version})`);
 
 if (args.includes("--register")) {

@@ -1,0 +1,8 @@
+<resources>
+    <!-- Android 10 and later lay a shade of their own behind clear bars: none here, the screens
+         under them are dark and the icons light. -->
+    <style name="Theme.HProxy" parent="Base.Theme.HProxy">
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+    </style>
+</resources>

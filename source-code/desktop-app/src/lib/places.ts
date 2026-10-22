@@ -220,8 +220,8 @@ export const placeOfChange = (c: ChangePlace): Place =>
 const answered = (p: ProxyView) => p.last?.ok === true;
 const fastestFirst = (a: ProxyView, b: ProxyView) => (a.last?.latencyMs ?? Infinity) - (b.last?.latencyMs ?? Infinity);
 
-/** What Change on Connect offers, at most `max` (2026-10-18: "quick change it or view the full
-    list"): the place in use first, whatever its speed, so it is always in sight; then your
+/** What Change on Connect offers, at most `max` (Quick change, since 2026-10-18): the place in
+    use first, whatever its speed, so it is always in sight; then your
     proxies that answered their last check, the fastest first; then what Quick connect would
     show of the rest (used last, then added last), and groups not used yet. A proxy whose last
     check got no answer is never offered (the full list has it). `working`: how many answered. */
@@ -256,9 +256,8 @@ export function changePlaces(
 }
 
 /** What the switch connects to when the pick is no help (none, a free one, or one that is gone):
-    the place used last, else the proxy or group added last (2026-10-18: "when someone wants to
-    connect it connects to his recently connected proxy, it should have nothing to do with free
-    proxies"). Never a free proxy: with none of yours it asks you to add them. The app's library
+    the place used last, else the proxy or group added last (since 2026-10-18). Never a free
+    proxy: with none of yours it asks you to add them. The app's library
     says the same for the tray (proxy-engine/hproxy-places, `switch_place`). */
 export function firstPlace(proxies: ProxyView[], groups: GroupView[]): Place | null {
   type At = { at: number; place: Place };

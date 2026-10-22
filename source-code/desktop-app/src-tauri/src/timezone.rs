@@ -201,7 +201,8 @@ pub fn follow_exit(app: &AppHandle, session: u64, zone: &str) {
     match (&m.problem, &m.snapshot) {
         (Some(p), _) => log::warn!("the time zone could not be matched to {zone}: {p}"),
         (None, Some(s)) if before.as_ref() != Some(s) => {
-            log::info!("time zone matched to the exit: {} ({zone})", s.ours)
+            log::info!("time zone matched to the exit: {} ({zone})", s.ours);
+            crate::usage::feature(app, "timezone");
         }
         _ => {}
     }

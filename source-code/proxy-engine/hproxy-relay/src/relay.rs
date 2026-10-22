@@ -37,7 +37,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::stats::{Counted, Stats};
+use crate::stats::{Counted, Stats, Why};
 use crate::switchable::Ticket;
 use crate::upstream::{self, Scheme, Upstream};
 
@@ -89,6 +89,39 @@ fn wrong_protocol(why: impl Into<String>) -> io::Error {
 
 fn is_wrong_protocol(e: &io::Error) -> bool {
     e.get_ref().is_some_and(|inner| inner.is::<WrongProtocol>())
+}
+
+/// Why a dial failed, in one fixed word (stats.rs, `Why`). Read from the error's
+/// kind and from the words this file writes itself; the system's own part of a
+/// message is in the device's language, so only Rust's English around it is
+/// read ("(os error 11001)", "failed to lookup address information").
+fn why_of(e: &io::Error) -> Why {
+    match e.kind() {
+        io::ErrorKind::TimedOut => return Why::Timeout,
+        io::ErrorKind::ConnectionRefused => return Why::Refused,
+        _ => {}
+    }
+    let text = e.to_string();
+    let says = |w: &str| text.contains(w);
+    // Windows' "host not found" codes (WSAHOST_NOT_FOUND, WSATRY_AGAIN, WSANO_DATA), and the
+    // words Rust puts before a failed lookup elsewhere.
+    if says("failed to lookup address")
+        || ["11001", "11002", "11004"]
+            .iter()
+            .any(|c| says(&format!("(os error {c})")))
+    {
+        return Why::Dns;
+    }
+    if says("CONNECT: 407") || says("login rejected") || says("wants a login") || says("rejected every login method") {
+        return Why::Login;
+    }
+    if says("CONNECT: 403") || says("not allowed by ruleset") {
+        return Why::Blocked;
+    }
+    if says("refused the connection: connection refused") {
+        return Why::Refused;
+    }
+    Why::Other
 }
 
 /// How a plain http:// request reached its server: through the HTTP proxy
@@ -663,7 +696,7 @@ async fn socks5_client(mut client: TcpStream, ticket: &mut Ticket, verbose: bool
             Counted::new(d.stream, Arc::clone(stats))
         }
         Err(e) => {
-            stats.failed();
+            stats.failed_for(why_of(&e));
             let code = match e.kind() {
                 io::ErrorKind::ConnectionRefused => 0x05,
                 io::ErrorKind::TimedOut => 0x04,
@@ -753,7 +786,7 @@ pub async fn handle(mut client: TcpStream, mut ticket: Ticket, verbose: bool, st
             Err(e) => {
                 // 502 rather than a silent drop: a browser showing "the proxy
                 // refused the connection" is a debuggable symptom, a hang is not.
-                stats.failed();
+                stats.failed_for(why_of(&e));
                 reply_error(&mut client, "502 Bad Gateway", &e.to_string()).await;
                 if verbose {
                     eprintln!("  upstream: {e}");
@@ -824,7 +857,7 @@ pub async fn handle(mut client: TcpStream, mut ticket: Ticket, verbose: bool, st
             (Counted::new(stream, Arc::clone(stats)), d.used, leg)
         }
         Err(e) => {
-            stats.failed();
+            stats.failed_for(why_of(&e));
             reply_error(&mut client, "502 Bad Gateway", &e.to_string()).await;
             return;
         }
@@ -924,6 +957,29 @@ mod tests {
     fn socks_reply_codes_are_named() {
         assert_eq!(socks_reply(0x05), "connection refused");
         assert_eq!(socks_reply(0x99), "unknown error");
+    }
+
+    #[test]
+    fn a_failed_dial_is_named_in_one_word() {
+        let other = |m: &str| io::Error::other(m.to_string());
+        let cases = [
+            (io::Error::new(io::ErrorKind::TimedOut, "the proxy at 203.0.113.9:80 did not answer within 10 s"), Why::Timeout),
+            (io::Error::new(io::ErrorKind::ConnectionRefused, "could not reach the proxy at 203.0.113.9:80: refused"), Why::Refused),
+            (other("upstream refused CONNECT: 407"), Why::Login),
+            (other("SOCKS5 login rejected: check the username and password"), Why::Login),
+            (other("upstream wants a login and none was given"), Why::Login),
+            (other("SOCKS5 upstream rejected every login method we offered"), Why::Login),
+            (other("upstream refused CONNECT: 403"), Why::Blocked),
+            (other(&format!("SOCKS5 upstream refused the connection: {}", socks_reply(0x02))), Why::Blocked),
+            (other(&format!("SOCKS5 upstream refused the connection: {}", socks_reply(0x05))), Why::Refused),
+            (other("could not reach the proxy at gw.example:80: Der angegebene Host ist unbekannt. (os error 11001)"), Why::Dns),
+            (other("could not reach the proxy at gw.example:80: failed to lookup address information: Name or service not known"), Why::Dns),
+            (other("upstream refused CONNECT: 502"), Why::Other),
+            (wrong_protocol("upstream is not a SOCKS5 proxy"), Why::Other),
+        ];
+        for (e, why) in cases {
+            assert_eq!(why_of(&e), why, "{e}");
+        }
     }
 
     #[test]

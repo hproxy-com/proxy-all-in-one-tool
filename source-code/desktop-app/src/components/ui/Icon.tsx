@@ -73,6 +73,12 @@ export const Icon = {
       <path d="M5 12h12m-4.5-4.5L17 12l-4.5 4.5" />
     </svg>
   ),
+  /** Up and to the right: a website, opened in the browser. */
+  external: ({ className }: IconProps) => (
+    <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
+      <path d="M8 16 16 8m-6.5 0H16v6.5" />
+    </svg>
+  ),
   /** The right arrow turned round: Back. */
   arrowLeft: ({ className }: IconProps) => (
     <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">

@@ -49,7 +49,7 @@ import {
 } from "../../lib/leaks";
 import type { View } from "../TitleBar";
 import type { ConnectionCardProps } from "./ConnectionCard";
-import type { DestinationsProps, DestTab } from "./Destinations";
+import type { DestinationsProps, DestTab, Incoming } from "./Destinations";
 import { useExitChecks } from "./useExitChecks";
 import { useLineCheck } from "./useLineCheck";
 import { usePasteAnywhere } from "./usePasteAnywhere";
@@ -178,9 +178,8 @@ export function ConnectionProvider({
      goes through. */
   const [placesProblem, setPlacesProblem] = useState<string | null>(null);
 
-  /* Remove the ones that don't answer, then Restore for 5 seconds (2026-10-18: "when you remove
-     the ones that aren't working sometimes it's risky ... there should be a restore button that
-     pops up shortly after and lasts for 5 seconds"). They leave the list at once and are
+  /* Remove the ones that don't answer, then Restore for 5 seconds (since 2026-10-18: a proxy that
+     failed one test may only be down a while, so a remove can be taken back). They leave the list at once and are
      forgotten when the time is up (lib/undoRemove.ts); a page change in between keeps the clock
      running, a closed app forgets nothing. Everything below reads `listed`, so Test all and the
      counts never see the ones waiting to go. */
@@ -200,10 +199,9 @@ export function ConnectionProvider({
   /* What the switch connects to: the place connected last (a connect makes its place the pick;
      adding proxies leaves the pick alone), unless that was a free proxy or it is gone; else the
      place used last, else the one added last. The card names it, so a press never surprises.
-     With none of yours, nothing: never a free proxy by itself (2026-10-17: "the H button
-     shouldn't be for free proxies"; 2026-10-18: "when someone wants to connect it connects to
-     his recently connected proxy, it should have nothing to do with free proxies"). The tray's
-     Connect follows the same rule (hproxy-places, `switch_place`). */
+     With none of yours, nothing: never a free proxy by itself (since 2026-10-17; the place
+     connected last since 2026-10-18). The tray's Connect follows the same rule (hproxy-places,
+     `switch_place`). */
   const pickStays = picked && picked.kind !== "free" && knows(picked, listed, groups) ? picked : null;
   const chosen: Place | null = pickStays ?? firstPlace(listed, groups);
 
@@ -237,7 +235,7 @@ export function ConnectionProvider({
   const [useSystem, setUseSystem] = useState(true);
   const [advanced, setAdvanced] = useState(false);
   const [listen, setListen] = useState("");
-  const { status, setStatus, running, connected, zone, setZone, rate, now } = useRelayStatus();
+  const { status, setStatus, running, connected, zone, setZone, now } = useRelayStatus();
   /** The place a connect is under way to, while it is. */
   const [goingTo, setGoingTo] = useState<Place | null>(null);
   /** The member of a group being moved to, while that is under way. */
@@ -247,15 +245,15 @@ export function ConnectionProvider({
   // Connected to a place past the day it expires: said until the next connect or stop.
   const [ended, setEnded] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [incoming, setIncoming] = useState<{ text: string; at: number } | null>(null);
+  const [incoming, setIncoming] = useState<Incoming | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const lineRef = useRef<HTMLInputElement>(null);
   const quickRef = useRef<HTMLInputElement>(null);
   const [quickAsk, setQuickAsk] = useState(0);
   const askQuick = () => setQuickAsk(Date.now());
-  /* The switch pressed with none of yours (2026-10-18: "whenever someone presses on the H it
-     says ... add your proxies first to start connecting!"): Proxies says so, popping in on each
-     press (`addAsked`, the time of the last press), and once they are in, the first that works
+  /* The switch pressed with none of yours (since 2026-10-18): Proxies says "Add your proxies first
+     to start connecting!", popping in on each press (`addAsked`, the time of the last press), and
+     once they are in, the first that works
      connects (`thenConnect`). Both end when you leave the Proxies page. */
   const [addAsked, setAddAsked] = useState(0);
   const thenConnect = useRef(false);
@@ -265,7 +263,7 @@ export function ConnectionProvider({
     thenConnect.current = false;
     setAddAsked(0);
   }, [onProxiesPage]);
-  const takeText = (text: string) => {
+  const takeText = (text: string, how: Incoming["how"] = "paste") => {
     if (!text.trim()) return;
     // One proxy pasted or dropped on Connect goes into Connect's own field, checked at once,
     // and you stay where the switch is: its Connect, or Enter, connects through it. (It
@@ -277,7 +275,7 @@ export function ConnectionProvider({
     }
     // On Groups a paste starts a group there; anywhere else it goes to My proxies.
     setPane((cur) => (cur === "groups" ? "groups" : "proxies"));
-    setIncoming({ text, at: Date.now() });
+    setIncoming({ text, at: Date.now(), how });
     // The field and the review are on the Proxies page.
     setView("proxies");
   };
@@ -579,8 +577,8 @@ export function ConnectionProvider({
   const { exitFraud, dnsLeak, retestDns } = useExitChecks(exitIp, settings);
 
   // The leak check's lines, while connected and the last check answered. The
-  // clock is read on every render (once a second while connected), so the
-  // line follows the zone as the browsers see it.
+  // clock is the window's, once a minute, so the line follows the zone as the
+  // browsers see it.
   const health = status?.health;
   const leaks: LeakRow[] | null =
     phase === "on" && health?.ok
@@ -613,8 +611,9 @@ export function ConnectionProvider({
     leaks,
     onLeakAction,
     failing,
+    // The traffic, its speed and the second-by-second clock are added by the Connect page
+    // itself (ConnectPanel.tsx, lib/liveRelay.ts), the one page that shows them.
     status,
-    rate,
     view,
     now,
     busy: busy !== "",
@@ -658,6 +657,8 @@ export function ConnectionProvider({
     proxies: listed,
     dead,
     onRemoveDead: () => removes.current?.remove(dead.map((x) => x.id)),
+    onRemoveMany: (ids) => removes.current?.remove(ids),
+    onNameMany: (ids, names) => changed(placesStore.nameEach(ids, names)),
     removing,
     onRestore: () => removes.current?.restore(),
     line,
@@ -667,10 +668,6 @@ export function ConnectionProvider({
     onAdd: () => void addLine(),
     onAddAndConnect: () => void addAndConnect(),
     onAddMany: (lines, details, name) => void saveProxies(lines, details, name).then(connectAsked),
-    onGroupFromLines: (lines, details) =>
-      void makeGroup("Pasted", lines, details).then((made) => {
-        if (made) setPane("groups");
-      }),
     onRecheck: lineCheck.recheck,
     onForget: forgetProxy,
     onRename: renameProxy,
@@ -680,6 +677,7 @@ export function ConnectionProvider({
     onCheckOne: (p) => void checkSaved(p.id),
     testing,
     onTestAll: () => void testAll(),
+    onTestSome: (ids) => void testAll(ids),
     groups,
     onSaveGroup: saveGroup,
     onForgetGroup: forgetGroup,
@@ -701,12 +699,13 @@ export function ConnectionProvider({
       if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
       setDragActive(false);
     },
+    // Whatever is dropped joins what is in Add's box (2026-10-22), a file or dragged text alike.
     onDrop: (e) => {
       e.preventDefault();
       setDragActive(false);
       const file = e.dataTransfer.files?.[0];
-      if (file) void file.text().then(takeText);
-      else takeText(e.dataTransfer.getData("text"));
+      if (file) void file.text().then((t) => takeText(t, "file"));
+      else takeText(e.dataTransfer.getData("text"), "file");
     },
   };
 

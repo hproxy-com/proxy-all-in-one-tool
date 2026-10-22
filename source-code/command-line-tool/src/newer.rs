@@ -75,7 +75,7 @@ fn for_a_person(cmd: &str, rest: &[String]) -> bool {
 
 /// The copy of this program the desktop app hands an AI assistant carries a note beside it
 /// (app.rs, COPIED_FROM); the app keeps that copy current itself.
-fn copy_of_the_app() -> bool {
+pub(crate) fn copy_of_the_app() -> bool {
     std::env::current_exe()
         .ok()
         .and_then(|me| me.parent().map(|dir| dir.join(crate::app::COPIED_FROM)))

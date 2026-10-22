@@ -61,10 +61,12 @@ object Vpn {
     }
 
     private fun start(context: Context, action: String): Boolean {
-        val intent = Intent(context, HProxyVpnService::class.java).setAction(action)
+        // In front when no VPN runs yet: Android then gives the service a few seconds to show its
+        // notification, or it closes the app. The intent says so, and the service answers it first.
+        val inFront = Build.VERSION.SDK_INT >= 26 && HProxyVpnService.running == null
+        val intent = Intent(context, HProxyVpnService::class.java).setAction(action).putExtra(HProxyVpnService.IN_FRONT, inFront)
         return try {
-            if (Build.VERSION.SDK_INT >= 26 && HProxyVpnService.running == null) context.startForegroundService(intent)
-            else context.startService(intent)
+            if (inFront) context.startForegroundService(intent) else context.startService(intent)
             true
         } catch (e: Exception) {
             Log.e("HProxy", "the VPN service could not start", e)
@@ -93,6 +95,8 @@ class HProxyVpnService : VpnService() {
         const val ACTION_APPLY = "com.hproxy.app.vpn.APPLY"
         const val ACTION_CONNECT = "com.hproxy.app.vpn.CONNECT"
         const val ACTION_DISCONNECT = "com.hproxy.app.vpn.DISCONNECT"
+        /** Started with startForegroundService: the notification is owed, whatever comes after. */
+        const val IN_FRONT = "com.hproxy.app.vpn.IN_FRONT"
         private const val CHANNEL = "connection"
         private const val NOTIFICATION_ID = 1
 
@@ -108,25 +112,30 @@ class HProxyVpnService : VpnService() {
     private var outside: Set<String> = emptySet()
     private var netCallback: ConnectivityManager.NetworkCallback? = null
     private var packages: BroadcastReceiver? = null
+    /** The newest start Android handed over: closing stops the service only when no newer one is on
+     *  its way, so a Connect that lands while a Disconnect closes is never cut off. */
+    @Volatile private var lastStart = 0
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStart = startId
         AppState.start(applicationContext)
         when (intent?.action) {
             ACTION_APPLY -> {
-                // Started to open a VPN: in front at once, as Android wants of a service started
-                // that way. One that only closes it has nothing to show.
-                if (AppState.plan().mode != Firewall.Mode.None) foreground(notification())
+                // In front at once when it was started that way, even when the plan is off by now (a
+                // Disconnect right after Connect): Android closes the app over a missing notification.
+                // Also when it opens a VPN. One started plainly, only to close it, has nothing to show.
+                if (intent.getBooleanExtra(IN_FRONT, false) || AppState.plan().mode != Firewall.Mode.None) foreground(notification())
                 work.execute { apply() }
             }
             ACTION_DISCONNECT -> AppState.disconnect()
             // The quick tile, the start of the phone, or Android itself (an always-on VPN set in
-            // the phone's settings): the place connected last, or picked last. Without one, only
-            // the firewall runs (when a rule blocks something).
+            // the phone's settings): what the switch connects, yours used last, never a free proxy
+            // by itself. Without one, only the firewall runs (when a rule blocks something).
             else -> {
                 foreground(notification())
                 AppState.scope.launch {
                     val lib = AppState.refreshLibrary()
-                    val place = AppState.status.value.place ?: lib.picked
+                    val place = AppState.status.value.place ?: lib.switchTo
                     if (place != null) AppState.connect(place) else work.execute { apply() }
                 }
             }
@@ -234,7 +243,7 @@ class HProxyVpnService : VpnService() {
         unwatch()
         running = null
         stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        stopSelfResult(lastStart)
     }
 
     /** Another VPN app took over, or the person turned HProxy off in the phone's settings. */

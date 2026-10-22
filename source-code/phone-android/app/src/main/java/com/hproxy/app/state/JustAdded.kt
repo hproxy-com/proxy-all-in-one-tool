@@ -35,9 +35,39 @@ object JustAdded {
      *  run is over). */
     val answers: StateFlow<Map<String, Answer>> = answersFlow.asStateFlow()
 
+    // The switch had nothing to connect and opened Add (Nav.addFirst): the first of what is added
+    // next that works is connected, as on the computer. Armed until something is added (or Add
+    // closes empty), then it waits on exactly those proxies.
+    @Volatile private var armed = false
+    @Volatile private var waitingFor: Set<String> = emptySet()
+    private val readyFlow = MutableStateFlow<String?>(null)
+    /** The proxy to connect now that it answered (Root connects it once Add is closed). */
+    val ready: StateFlow<String?> = readyFlow.asStateFlow()
+
+    fun arm() {
+        armed = true
+        waitingFor = emptySet()
+        readyFlow.value = null
+    }
+
+    /** Add closed: with nothing added, nothing will connect. */
+    fun closedAdd() {
+        armed = false
+    }
+
+    /** Taken once, by the one connect. */
+    fun takeReady(): String? = readyFlow.value?.also {
+        readyFlow.value = null
+        waitingFor = emptySet()
+    }
+
     /** New proxies, by id, in the order of the paste: on top, and checked now. */
     fun added(fresh: List<String>) {
         if (fresh.isEmpty()) return
+        if (armed) {
+            armed = false
+            waitingFor = fresh.toSet()
+        }
         idsFlow.value = fresh + idsFlow.value.filterNot { it in fresh }
         checkingFlow.value = checkingFlow.value + fresh
         answersFlow.value = answersFlow.value - fresh.toSet()
@@ -85,12 +115,20 @@ object JustAdded {
             "check" -> {
                 val row = e.optJSONObject("row") ?: return
                 val id = index[row.optInt("i")] ?: return
-                answersFlow.value = answersFlow.value + (id to Answer.of(row))
+                val answer = Answer.of(row)
+                answersFlow.value = answersFlow.value + (id to answer)
                 checkingFlow.value = checkingFlow.value - id
+                // Works: it answers, carries, and reads nothing on the way (never one that opens HTTPS).
+                if (id in waitingFor && readyFlow.value == null && (answer.face == Face.Good || answer.face == Face.Slow)) {
+                    waitingFor = emptySet()
+                    readyFlow.value = id
+                }
             }
             "checkDone" -> {
                 runs.remove(run)
                 checkingFlow.value = checkingFlow.value - index.values.toSet()
+                // None of them worked: nothing connects; their rows say why.
+                if (waitingFor.isNotEmpty() && index.values.any { it in waitingFor }) waitingFor = emptySet()
                 // The answers are kept on the proxies now: the library has them.
                 AppState.scope.launch { AppState.refreshLibrary() }
             }

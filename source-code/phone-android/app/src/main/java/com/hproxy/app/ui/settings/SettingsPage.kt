@@ -40,6 +40,7 @@ import com.hproxy.app.state.CheckerId
 import com.hproxy.app.state.FraudScores
 import com.hproxy.app.state.Settings
 import com.hproxy.app.state.SupportChat
+import com.hproxy.app.state.Usage
 import com.hproxy.app.ui.Nav
 import com.hproxy.app.ui.Page
 import com.hproxy.app.ui.kit.Glyph
@@ -54,6 +55,7 @@ import com.hproxy.app.ui.proxies.Field
 import com.hproxy.app.ui.proxies.TextBtn
 import com.hproxy.app.ui.theme.C
 import com.hproxy.app.ui.theme.type
+import com.hproxy.app.vpn.Autostart
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 
@@ -68,6 +70,7 @@ fun SettingsPage(nav: Nav, onBack: () -> Unit) {
     val prefs by Settings.prefs.collectAsState()
     val rules by Settings.rules.collectAsState()
     val checkers by Settings.checkers.collectAsState()
+    val usage by Usage.view.collectAsState()
     val using = CheckerId.entries.filter { checkers[it]?.answers(it) == true }.joinToString(", ") { it.label }
     val special = if (prefs.allThroughProxy) rules.values.count { it.proxy == false } else rules.values.count { it.proxy == true }
     val apps = when {
@@ -101,6 +104,22 @@ fun SettingsPage(nav: Nav, onBack: () -> Unit) {
             SetRow(I.bolt, "Connect when the phone starts", end = {
                 Toggle(prefs.connectOnStartup, { v -> Settings.update { it.copy(connectOnStartup = v) } })
             })
+            // A few makers keep apps from starting with the phone unless they may (vpn/Autostart.kt):
+            // one line in their own word for it, and the way there.
+            val maker = remember { Autostart.maker() }
+            if (prefs.connectOnStartup && maker != null) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .pressable({ Autostart.open(context) }, scale = 0.985f)
+                        .padding(start = 52.dp, end = 12.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Txt("${maker.name} phones need ${maker.setting} on for this.", type(13.5.sp, FontWeight.Medium, C.ink2), modifier = Modifier.weight(1f), maxLines = 2)
+                    Txt("Open", type(14.sp, FontWeight.SemiBold, C.blueInk))
+                }
+            }
             SetRow(I.again, "Always on", value = "Phone settings", more = true) {
                 context.startActivity(Intent(AndroidSettings.ACTION_VPN_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
@@ -109,6 +128,7 @@ fun SettingsPage(nav: Nav, onBack: () -> Unit) {
                 SupportChat.setDraft("Idea: ")
                 nav.go(com.hproxy.app.ui.Tab.Help)
             }
+            SetRow(I.info, "Usage counts", value = if (usage?.answer == Usage.Answer.Yes) "On" else "Off", more = true) { nav.push(Page.Usage) }
             Row(
                 Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,

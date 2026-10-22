@@ -1,6 +1,5 @@
-// The native phone app (Track P, docs/plan-2026-10-03-one-account-and-app-rebuild
-// in the monorepo): Kotlin and Jetpack Compose, Android's own toolkit, on the
-// Rust engine of this repository (proxy-engine/hproxy-mobile).
+// The native phone app: Kotlin and Jetpack Compose, Android's own toolkit, on
+// the Rust engine of this repository (proxy-engine/hproxy-mobile).
 pluginManagement {
     repositories {
         google()

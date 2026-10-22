@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useBack } from "../../lib/back";
 import { aboutWords, lineParts, proxyTitle, spacedN } from "../../lib/connect";
-import { expiryOf, MAX_GROUP_LINES, type Details } from "../../lib/places";
+import { expiryOf, type Details } from "../../lib/places";
 import {
   NAME_EXAMPLES,
   REVIEW_AT_ONCE,
@@ -11,13 +11,14 @@ import {
   linesToAdd,
   nameExample,
   namesPreview,
+  notProxyWords,
   reviewOrder,
   reviewStatus,
   testOf,
   type LineTest,
 } from "../../lib/review";
 import { checkLine } from "../../lib/tauri";
-import { BlockTitle, Button, Flag, Icon, Input, cx } from "../ui";
+import { Button, Flag, Icon, Input, cx } from "../ui";
 import { useReadable, useTargeting } from "./lineReading";
 import { Speed } from "./PlaceRow";
 
@@ -26,10 +27,9 @@ import { Speed } from "./PlaceRow";
    the unreadable ones shown with the engine's reason and left out. Then each line is tested the
    way the paste field tests one (check_line), a dozen at a time, the count on top ("9 work · 3
    failed"); Skip testing ends the wait. Then the add step asks: only the ones that work, or all
-   of them anyway (a proxy that does not answer may only be down a while), or the lot as one
-   group. Adding asks "Name them?": one name for all, numbered, or Skip (2026-10-17: "make it
-   clearer that you can name them or you can skip the naming ... it asks you"). What a test found
-   stays with the proxy once saved (src-tauri/src/places.rs, `checked`). One day and one note for
+   of them anyway (a proxy that does not answer may only be down a while). Adding asks "Name
+   them?": one name for all, numbered, or Skip, both said plainly (since 2026-10-17). What a test
+   found stays with the proxy once saved (src-tauri/src/places.rs, `checked`). One day and one note for
    all of them, as before. A batch of sessions shows each session, never the address they share. */
 
 /** The lines tested, REVIEW_AT_ONCE at a time, the first REVIEW_TESTS of them; Skip stops
@@ -77,7 +77,6 @@ export default function PasteReview({
   room,
   onCancel,
   onAdd,
-  onGroup,
 }: {
   lines: string[];
   /** How many more proxies can be saved. */
@@ -86,7 +85,6 @@ export default function PasteReview({
   /** The lines kept, what goes on every one of them (a day, a note), and one name for all of
       them, numbered (none: they keep their addresses). */
   onAdd: (lines: string[], details?: Details, name?: string) => void;
-  onGroup: (lines: string[], details?: Details) => void;
 }) {
   // A phone's Back leaves the review, as Cancel does.
   useBack(true, onCancel);
@@ -105,7 +103,9 @@ export default function PasteReview({
   // "N don't work right now" stands over the first that failed, when some worked.
   const firstFailed = settled && count.failed && count.failed < count.n ? shown.find((l) => tests.get(l)?.ok === false) : undefined;
 
-  // A batch is bought together and ends together: one day and one note for all of it.
+  // A batch is bought together and ends together: one day and one note for all of it. Asked only
+  // when wanted (since 2026-10-22); a paste's ⋯ in the list sets them later too.
+  const [extras, setExtras] = useState(false);
   const [day, setDay] = useState("");
   const [note, setNote] = useState("");
   const details = (): Details | undefined =>
@@ -114,57 +114,97 @@ export default function PasteReview({
   // The add button pressed, while "Name them?" asks.
   const [naming, setNaming] = useState<string[] | null>(null);
 
+  // How far the tests are, for the line under the title.
+  const toTest = Math.min(ok.length, REVIEW_TESTS);
+  const progress = toTest ? (count.worked + count.failed) / toTest : 0;
+  const testingNow = done && ok.length > 0 && !settled;
+
+  // A line that is not a proxy is said here and left out; it stops nothing (since 2026-10-22: one
+  // stray line never blocks the rest). The title counts the proxies only.
   const status = !done
     ? `reading ${spacedN(lines.length)} lines`
     : !ok.length
-      ? "none can be read"
-      : `${reviewStatus(count)}${bad.length ? ` · ${spacedN(bad.length)} unreadable` : ""}`;
+      ? lines.length === 1
+        ? "this line isn't a proxy"
+        : "none of these lines is a proxy"
+      : `${reviewStatus(count)}${bad.length ? ` · ${notProxyWords(bad.length)}` : ""}`;
 
+  const proxies = done ? ok.length : lines.length;
+  const title = testingNow
+    ? `Testing ${ok.length === 1 ? "1 proxy" : `${spacedN(ok.length)} proxies`}`
+    : done && !ok.length
+      ? lines.length === 1
+        ? "1 line pasted"
+        : `${spacedN(lines.length)} lines pasted`
+      : proxies === 1
+        ? "1 proxy to add"
+        : `${spacedN(proxies)} proxies pasted`;
+  const naming$ = naming && (
+    <NameThem
+      count={naming.length}
+      onBack={() => setNaming(null)}
+      onAdd={(name) => {
+        onAdd(naming, details(), name);
+        setNaming(null);
+      }}
+    />
+  );
+  /* Being checked (since 2026-10-22): the list rises in, its rows one after another, each spins
+     while it is tested, and when its answer lands it comes in again at the top with its flag, so
+     the newest answers are always in view; the line under the title fills as the answers come.
+     The title is the size the blue band gave it; the count stands at its right. */
   return (
     <div className="flex flex-col gap-3">
-      {naming && (
-        <NameThem
-          count={naming.length}
-          onBack={() => setNaming(null)}
-          onAdd={(name) => {
-            onAdd(naming, details(), name);
-            setNaming(null);
-          }}
-        />
-      )}
-      <BlockTitle name={`${spacedN(lines.length)} proxies pasted`} value={status} />
+      {naming$}
+      <div className="ux-reviewhead" role="status">
+        <div className="top">
+          <h2>{title}</h2>
+          <p className="num">{status.charAt(0).toUpperCase() + status.slice(1)}</p>
+        </div>
+        <i className="ux-progress" aria-hidden="true">
+          <i style={{ transform: `scaleX(${settled ? 1 : progress})` }} />
+        </i>
+      </div>
       {/* As tall as the window allows, never under 330 px. */}
-      <div className="ux-dests max-h-[max(330px,calc(100vh-400px))] overflow-y-auto rounded-[14px] bg-[var(--well)] p-1.5">
-        {shown.map((l) => {
+      <div className="ux-dests ux-review-rise max-h-[max(330px,calc(100vh-400px))] overflow-y-auto rounded-[14px] bg-[var(--well)] p-1.5">
+        {shown.map((l, index) => {
           const r = read.get(l);
           const t = tests.get(l);
           const parts = lineParts(l);
           const about = targeting.get(l) ?? null;
           const waiting = r === true && !t && !skipped && ok.indexOf(l) < REVIEW_TESTS;
           const said = aboutWords(about) || (parts.user ? `login ${parts.user}` : "no login");
+          // A row whose answer landed is a new row: it comes in at the top, rising.
           return (
-            <Fragment key={l}>
+            <Fragment key={t ? `${l}\n${t.ok ? "works" : "failed"}` : l}>
               {l === firstFailed && (
                 <p className="ux-review-failed">
                   {count.failed === 1 ? "1 doesn't work right now" : `${spacedN(count.failed)} don't work right now`}
                 </p>
               )}
-              <div className="ux-dest !min-h-[44px]">
+              <div className="ux-dest ux-rowrise !min-h-[44px]" style={{ animationDelay: `${Math.min(index, 24) * 32}ms` }}>
                 <span className="pick !cursor-default">
                   {t?.ok && t.cc ? (
-                    <span className="lead is-flag">
+                    <span key="flag" className="lead is-flag is-pop">
                       <Flag cc={t.cc} />
                     </span>
+                  ) : waiting ? (
+                    <span key="wait" className="lead">
+                      <i className="ux-spin" aria-label="Testing" />
+                    </span>
                   ) : (
-                    <span className={cx("lead", t?.ok ? "is-ok" : typeof r === "string" || t?.ok === false ? "is-bad" : "")}>
-                      {typeof r === "string" || t?.ok === false ? <Icon.cross /> : t?.ok ? <Icon.check /> : r === true && !waiting ? <Icon.globe /> : <Icon.clock />}
+                    <span
+                      key={t ? (t.ok ? "ok" : "bad") : "read"}
+                      className={cx("lead", t && "is-pop", t?.ok ? "is-ok" : typeof r === "string" || t?.ok === false ? "is-bad" : "")}
+                    >
+                      {typeof r === "string" || t?.ok === false ? <Icon.cross /> : t?.ok ? <Icon.check /> : r === true ? <Icon.globe /> : <Icon.clock />}
                     </span>
                   )}
                   <span className="text">
                     <span className="name num">{proxyTitle({ address: parts.address, about })}</span>
                     <span className="sub">
                       {typeof r === "string" ? (
-                        <span className="bad">{r}</span>
+                        <span className="bad">{r.charAt(0).toUpperCase() + r.slice(1)}</span>
                       ) : t?.ok === false ? (
                         <span className="bad">{t.why ? t.why.charAt(0).toUpperCase() + t.why.slice(1) : "Not answering"}</span>
                       ) : t?.ok ? (
@@ -184,57 +224,60 @@ export default function PasteReview({
         })}
         {lines.length > shown.length && <p className="px-3 py-2 text-[13px] font-medium text-ink-mute">and {spacedN(lines.length - shown.length)} more</p>}
       </div>
-      {ok.length > REVIEW_TESTS && (
-        <p className="px-1 text-[12.5px] font-medium text-ink-mute">
-          The first {spacedN(REVIEW_TESTS)} are tested here; the Checker tests any number.
-        </p>
+      {extras ? (
+        <div className="grid gap-3 sm:grid-cols-[190px_minmax(0,1fr)]">
+          <label className="flex flex-col gap-1">
+            <span className="px-1 text-[12.5px] font-semibold text-ink-mute">
+              Expires on{left ? ` · ${left.words}` : ", if they do"}
+            </span>
+            <Input type="date" value={day} onChange={setDay} label="Expires on, for all of them" />
+          </label>
+          <label className="flex min-w-0 flex-col gap-1">
+            <span className="px-1 text-[12.5px] font-semibold text-ink-mute">{proxies === 1 ? "Note" : "Note for all of them"}</span>
+            <Input
+              value={note}
+              onChange={setNote}
+              placeholder={proxies === 1 ? "Where it is from, what it is for" : "Where they are from, what they are for"}
+              label={proxies === 1 ? "Note" : "Note for all of them"}
+            />
+          </label>
+        </div>
+      ) : (
+        <button type="button" className="ux-link self-start px-1" onClick={() => setExtras(true)} title="One end date and one note for all of them, if you like">
+          Add an end date or a note
+        </button>
       )}
-      <div className="grid gap-3 sm:grid-cols-[190px_minmax(0,1fr)]">
-        <label className="flex flex-col gap-1">
-          <span className="px-1 text-[12.5px] font-semibold text-ink-mute">
-            Expires on{left ? ` · ${left.words}` : ", if they do"}
-          </span>
-          <Input type="date" value={day} onChange={setDay} label="Expires on, for all of them" />
-        </label>
-        <label className="flex min-w-0 flex-col gap-1">
-          <span className="px-1 text-[12.5px] font-semibold text-ink-mute">Note for all of them</span>
-          <Input value={note} onChange={setNote} placeholder="Where they are from, what they are for" label="Note for all of them" />
-        </label>
-      </div>
+      {/* Big buttons, easy to press. "Save as a rotating group" went on 2026-10-22: every paste is
+          its own group in My proxies already, and the Groups tab makes rotating groups. */}
       <div className="flex flex-wrap items-center gap-2">
         {done && ok.length > 0 && !settled ? (
-          <Button onClick={skip} title="Add them now; the ones not tested yet are tested in your list">
+          <Button size="lg" onClick={skip} title="Add them now; the ones not tested yet are tested in your list">
             Skip testing
           </Button>
         ) : (
           <>
             <Button
+              size="lg"
               variant="solid"
               disabled={!done || mainLines.length === 0 || mainLines.length > room}
               onClick={() => setNaming(mainLines)}
               title="Each line becomes its own saved proxy"
             >
-              <Icon.plus className="h-4 w-4" />
+              <Icon.plus className="h-5 w-5" />
               {done && ok.length ? labels.main : "Add them"}
             </Button>
             {labels.anyway && (
-              <Button disabled={ok.length > room} onClick={() => setNaming(ok)} title="The ones that did not answer too: they may only be down a while">
+              <Button size="lg" disabled={ok.length > room} onClick={() => setNaming(ok)} title="The ones that did not answer too: they may only be down a while">
                 {labels.anyway}
               </Button>
             )}
-            <Button disabled={!done || mainLines.length === 0} onClick={() => onGroup(mainLines, details())} title="One group you connect to in one click">
-              <Icon.layers className="h-4 w-4" />
-              Make them one group
-            </Button>
           </>
         )}
-        <Button variant="text" onClick={onCancel}>
+        <Button size="lg" variant="text" onClick={onCancel}>
           Cancel
         </Button>
         {settled && mainLines.length > room && (
-          <span className="text-[13px] font-semibold text-warn">
-            Room for {spacedN(Math.max(0, room))} more saved proxies; a group holds up to {spacedN(MAX_GROUP_LINES)}.
-          </span>
+          <span className="text-[13px] font-semibold text-warn">Room for {spacedN(Math.max(0, room))} more saved proxies.</span>
         )}
       </div>
     </div>
@@ -276,6 +319,7 @@ function NameThem({ count, onBack, onAdd }: { count: number; onBack: () => void;
         <label className="flex flex-col gap-1">
           <span className="px-1 text-[12.5px] font-semibold text-ink-mute">{one ? "Its name" : "One name for all, numbered"}</span>
           <Input
+            size="lg"
             inputRef={box}
             value={name}
             onChange={(v) => setName(v.slice(0, 60))}
@@ -287,13 +331,16 @@ function NameThem({ count, onBack, onAdd }: { count: number; onBack: () => void;
         <p className="num px-1 text-[13px] font-semibold text-ink-mute">
           {label ? namesPreview(label, count) : one ? "It keeps its address as its name." : "They keep their addresses as names."}
         </p>
+        {/* Big buttons, a pop-up's most of all. */}
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button variant="text" onClick={onBack}>
+          <Button size="lg" variant="text" onClick={onBack}>
             Back
           </Button>
-          <Button onClick={() => onAdd()}>Skip</Button>
-          <Button variant="solid" disabled={!label} onClick={() => onAdd(label)}>
-            <Icon.plus className="h-4 w-4" />
+          <Button size="lg" onClick={() => onAdd()}>
+            Skip
+          </Button>
+          <Button size="lg" variant="solid" disabled={!label} onClick={() => onAdd(label)}>
+            <Icon.plus className="h-5 w-5" />
             {one ? "Add it with this name" : `Add ${spacedN(count)} with names`}
           </Button>
         </div>

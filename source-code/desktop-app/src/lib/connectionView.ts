@@ -8,8 +8,8 @@ import { lastCheckWords, samePlace, type GroupView, type Place, type ProxyView }
 import type { ConnectStatus } from "./tauri";
 import type { Phase, TargetView } from "../components/connect/ConnectionCard";
 
-/** What the switch says when it was pressed with none of yours (2026-10-18: "add your proxies
-    first to start connecting! ... it needs to be stupidly easy to understand"). */
+/** What the switch says when it was pressed with none of yours (since 2026-10-18): what to do,
+    in one line anyone understands. */
 export const ADD_FIRST = "Add your proxies first to start connecting!";
 
 /** What is under way. "switching" is a connect while already connected: the

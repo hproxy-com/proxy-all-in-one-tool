@@ -23,6 +23,7 @@ mod newer;
 pub mod places;
 mod probe;
 mod rows;
+mod usage;
 mod web;
 
 pub use app::{set_inside_app, COPIED_FROM};
@@ -53,6 +54,7 @@ USAGE
   hproxy ip <address>...
   hproxy app [--background]
   hproxy mcp
+  hproxy usage [on|off]
   hproxy --version
 
 ";
@@ -71,7 +73,8 @@ and a row is printed the moment it settles.
   --geo                  add each exit's country and network (sends the exit
                          addresses, nothing else, to hproxy.com's IP lookup)
   --timeout <SECONDS>    time for each attempt (default 8). A silent proxy is
-                         tried once per judge, so it can take twice this:
+                         tried once per judge, the next judge starting 2.5 s
+                         into the silence, so it can take this plus 2.5 s:
                          cutting that short reports flaky working proxies dead
   --protocols <LIST>     only some of: http,https,socks4,socks5
   --concurrency <N>      ceiling on proxies in flight (default 64; the
@@ -157,9 +160,30 @@ NEW VERSIONS
   with --json or --fields, never for the MCP server, never in a pipe.
   HPROXY_NO_UPDATE_CHECK=1 turns it off.
 ";
+const USAGE_COUNTS: &str = "USAGE shows whether hproxy sends its usage counts and the last report, exactly
+as it went; `hproxy usage on` and `hproxy usage off` change it. Asked once,
+after a command run at a terminal; no answer is no. Never asked or counted in
+a pipe or a script, with --json or --fields; the MCP server counts after a yes.
+Once a day, a few counts about the day before: commands run, checks and how
+long the lists were, which features were used. Never a proxy, a login, an
+address you check or anything you type. HPROXY_NO_USAGE=1 keeps a run out.
+
+";
 
 fn usage() -> String {
-    [HEAD, CHECK, CONNECT, PLACES, STATUS, LIST, app::USAGE, MCP, EXIT].concat()
+    [
+        HEAD,
+        CHECK,
+        CONNECT,
+        PLACES,
+        STATUS,
+        LIST,
+        app::USAGE,
+        MCP,
+        USAGE_COUNTS,
+        EXIT,
+    ]
+    .concat()
 }
 
 /// One command's help: its section, its examples, the exit codes.
@@ -172,6 +196,7 @@ fn help_for(cmd: &str) -> Option<String> {
         "list" | "ip" => [LIST, EXIT].concat(),
         "app" => [app::USAGE, EXIT].concat(),
         "mcp" => MCP.to_string(),
+        "usage" => USAGE_COUNTS.to_string(),
         "help" | "version" => usage(),
         _ => return None,
     })
@@ -212,6 +237,7 @@ pub fn is_command(word: &str) -> bool {
             | "ip"
             | "app"
             | "mcp"
+            | "usage"
             | "help"
             | "-h"
             | "--help"
@@ -275,6 +301,12 @@ pub fn run(args: Vec<String>) -> u8 {
     };
     // A newer `hproxy`, once a day, beside a command a person runs (newer.rs).
     let look = newer::start(&rt, cmd, rest);
+    // Usage counts, only after a yes (usage.rs): this run's opening and what the command uses.
+    usage::begin(cmd, rest);
+    count_command(cmd, rest);
+    if cmd == "mcp" {
+        usage::send_soon(&rt);
+    }
     let outcome = match cmd {
         "check" => rt.block_on(check::command(rest)),
         "list" => rt.block_on(web::list(rest)),
@@ -282,6 +314,7 @@ pub fn run(args: Vec<String>) -> u8 {
         "app" => rt.block_on(app::command(rest)),
         "mcp" => rt.block_on(mcp::serve()),
         "places" => places::command(rest),
+        "usage" => usage::command(rest),
         "status" => rt.block_on(connect::status(rest)),
         "stop" => rt.block_on(connect::stop(rest)),
         "connect" | "free" => {
@@ -296,6 +329,8 @@ pub fn run(args: Vec<String>) -> u8 {
     if let Some(look) = look {
         newer::finish(&rt, look);
     }
+    // The usage counts' one question (a person at a terminal), and the days that wait.
+    usage::end(&rt);
     // Leftover probes of a stopped run must not hold the process open.
     rt.shutdown_timeout(std::time::Duration::from_millis(200));
     match outcome {
@@ -305,6 +340,20 @@ pub fn run(args: Vec<String>) -> u8 {
             eprintln!("hproxy: {e}");
             2
         }
+    }
+}
+
+/// What a command uses, for the usage counts (a check counts its own run, check.rs).
+fn count_command(cmd: &str, rest: &[String]) {
+    let free = cmd == "free" || rest.iter().any(|a| a == "--free");
+    if cmd == "list" || ((cmd == "connect" || cmd == "free") && free) {
+        usage::feature("free");
+    }
+    if (cmd == "connect" || cmd == "free") && free {
+        usage::count(hproxy_api::usage::Event::FreeUsed);
+    }
+    if cmd == "places" && rest.iter().any(|a| !a.starts_with('-')) {
+        usage::feature("search");
     }
 }
 

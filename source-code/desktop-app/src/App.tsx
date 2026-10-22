@@ -10,6 +10,7 @@ import CheckerPage from "./components/CheckerPage";
 import HelpPage from "./components/HelpPage";
 import Settings from "./components/Settings";
 import UseWithAi from "./components/UseWithAi";
+import Welcome from "./components/Welcome";
 import PhoneShell from "./components/phone/PhoneShell";
 import { loadSettings, saveSettings, type Settings as SettingsType } from "./lib/settings";
 import { applyLook, loadPicture, previewConnectDesign, previewConnectLook, previewHubStyle } from "./lib/look";
@@ -136,6 +137,10 @@ export default function App() {
         {view === "ai" && <UseWithAi />}
         {view === "settings" && <Settings settings={settings} setSettings={setSettings} />}
       </ErrorBoundary>
+      {/* A new copy's first start: how do you want to start? (Welcome.tsx). No question about usage
+          counts follows (since 2026-10-22): they stay off until switched on in Settings, App
+          (lib/usage.ts). */}
+      {!settings.welcomed && <Welcome setView={openView} onDone={() => onSettings({ welcomed: true })} />}
     </StartGate>
   );
 

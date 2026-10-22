@@ -24,34 +24,58 @@ export type FraudService = {
   key?: { label: string; placeholder: string; optional?: boolean };
   /** What its number is, in a few words. */
   about: string;
+  /** Its website, as Settings shows it and opens it. */
+  site: { domain: string; url: string };
+  /** What it gives for free, in one line (each read on the service's own page, 2026-10-22). */
+  free: string;
+  /** Where a free key is made; none for FFraud. */
+  getKey?: string;
 };
 
 /** In the order Settings shows them, the default first. */
 export const FRAUD_SERVICES: readonly FraudService[] = [
-  { id: "ffraud", name: "FFraud", about: "Free, no key needed. A score from 0 to 100, a risk word and the reason." },
+  {
+    id: "ffraud",
+    name: "FFraud",
+    about: "Free, no key needed. A score from 0 to 100, a risk word and the reason.",
+    site: { domain: "ffraud.com", url: "https://ffraud.com/" },
+    free: "Free, no key needed",
+  },
   {
     id: "ipqs",
     name: "IPQualityScore",
     key: { label: "API key", placeholder: "Your IPQualityScore API key" },
     about: "Its fraud score, 0 to 100.",
+    site: { domain: "ipqualityscore.com", url: "https://www.ipqualityscore.com/" },
+    free: "1,000 free lookups a month with a free account",
+    getKey: "https://www.ipqualityscore.com/create-account",
   },
   {
     id: "scamalytics",
     name: "Scamalytics",
     key: { label: "API address, or username:key", placeholder: "https://api11.scamalytics.com/v3/you/?key=…" },
     about: "Its score, 0 to 100, and its risk word.",
+    site: { domain: "scamalytics.com", url: "https://scamalytics.com/" },
+    free: "5,000 free lookups a month with a free key",
+    getKey: "https://scamalytics.com/ip/api/pricing",
   },
   {
     id: "proxycheck",
     name: "proxycheck.io",
     key: { label: "API key", placeholder: "Works without one, 100 lookups a day", optional: true },
     about: "Its risk score, 0 to 100.",
+    site: { domain: "proxycheck.io", url: "https://proxycheck.io/" },
+    free: "100 lookups a day without a key, 1,000 with a free one",
+    getKey: "https://proxycheck.io/dashboard/",
   },
   {
     id: "abuseipdb",
     name: "AbuseIPDB",
     key: { label: "API key", placeholder: "Your AbuseIPDB API key" },
     about: "Its abuse confidence, 0 to 100, and how often the address was reported.",
+    site: { domain: "abuseipdb.com", url: "https://www.abuseipdb.com/" },
+    free: "1,000 free checks a day with a free key",
+    getKey: "https://www.abuseipdb.com/register",
   },
 ];
 

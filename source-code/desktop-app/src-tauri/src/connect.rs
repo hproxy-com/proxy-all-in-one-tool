@@ -34,10 +34,11 @@
 use crate::check::AppState;
 use crate::places::{place_words, PlacesState};
 use hproxy_api::geo::Geo;
+use hproxy_api::usage::Event;
 use hproxy_places::{Place, Verdict};
 use hproxy_relay::pool::Pool;
 use hproxy_relay::upstream::Upstream;
-use hproxy_relay::{Rotation, Source, SourceKind, Stats, StatsSnapshot, SwitchableSource};
+use hproxy_relay::{Rotation, Source, SourceKind, Stats, StatsSnapshot, SwitchableSource, Why};
 use hproxy_system::{ProxySetting, RestoreOutcome, Snapshot, Support};
 use serde::Serialize;
 use std::net::SocketAddr;
@@ -52,7 +53,7 @@ const PROBE_EVERY: Duration = Duration::from_secs(20);
 /// The default probe target, our TLS judge, and the helpers a probe uses:
 /// one copy for every door (proxy-engine/hproxy-connection, health.rs).
 pub use hproxy_connection::health::DEFAULT_PROBE_URL;
-use hproxy_connection::health::{probe_url_from, Health, HealthState};
+use hproxy_connection::health::{failure_word, probe_url_from, Health, HealthState};
 
 #[derive(Default)]
 pub struct RelayState {
@@ -344,10 +345,71 @@ fn verdict_of_health(h: &Health) -> Verdict {
     }
 }
 
+/// The route of the newest Connect (the window's, the tray's), counted once on its first probe
+/// (usage.rs, "connects"). Next IP, Back and a member picked are moves within the place
+/// connected through, never a connection of their own.
+static CONNECT_TO_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// A Connect worked, or failed and why: the probe's own words, else the relay's, which saw
+/// the proxy behind it fail (hproxy-relay, `Stats::take_why`).
+fn count_connect(app: &AppHandle, h: &Health) {
+    let event = if h.ok {
+        Event::ConnectOk
+    } else {
+        let relay_why = || {
+            let state = app.try_state::<RelayState>()?;
+            let guard = state.inner.lock().ok()?;
+            guard.as_ref()?.stats.take_why().map(Why::as_str)
+        };
+        let reason = h
+            .error
+            .as_deref()
+            .and_then(failure_word)
+            .or_else(relay_why)
+            .unwrap_or("other");
+        Event::ConnectFailed { reason: reason.into() }
+    };
+    crate::usage::count(app, event);
+}
+
+/// What a Connect uses, for the usage counts: a free proxy, a group and its rotation, the
+/// system proxy setting.
+fn count_place(app: &AppHandle, place: &Place, system_proxy: bool) {
+    match place {
+        Place::Free { .. } => {
+            crate::usage::count(app, Event::FreeUsed);
+            crate::usage::feature(app, "free");
+        }
+        Place::Group { id } => {
+            crate::usage::feature(app, "groups");
+            let rotates = app.try_state::<PlacesState>().is_some_and(|places| {
+                places.read(|lib| {
+                    lib.groups
+                        .iter()
+                        .any(|g| &g.id == id && g.rule != hproxy_places::Rule::OnFailure)
+                })
+            });
+            if rotates {
+                crate::usage::feature(app, "rotation");
+            }
+        }
+        Place::Proxy { .. } => {}
+    }
+    if system_proxy {
+        crate::usage::feature(app, "system_proxy");
+    }
+}
+
 /// A probe's answer: kept for the card, and the exit's zone handed to the
 /// time zone match (timezone.rs) while it is on, off the async threads
 /// because Windows' `tzutil` blocks.
 async fn took_probe(app: &AppHandle, session: u64, health: &Arc<Mutex<HealthState>>, h: Health) {
+    if CONNECT_TO_COUNT
+        .compare_exchange(session, 0, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
+    {
+        count_connect(app, &h);
+    }
     let zone = if h.ok { h.timezone.clone() } else { None };
     // A probe through a saved proxy is also the freshest word on it: its row
     // shows what the last probe found (places.rs keeps it).
@@ -459,7 +521,25 @@ pub async fn connect_start(
     probe_url: Option<String>,
     member: Option<usize>,
 ) -> Result<ConnectStatus, String> {
-    start_place(&app, place, listen, system_proxy, probe_url, member).await
+    counted_start(&app, place, listen, system_proxy, probe_url, member).await
+}
+
+/// `start_place`, counted: what the place uses, and a failure that came before any probe (no
+/// free exit, a port taken) as a Connect that failed.
+pub async fn counted_start(
+    app: &AppHandle,
+    place: Place,
+    listen: Option<String>,
+    system_proxy: bool,
+    probe_url: Option<String>,
+    member: Option<usize>,
+) -> Result<ConnectStatus, String> {
+    count_place(app, &place, system_proxy);
+    let started = start_place(app, place, listen, system_proxy, probe_url, member).await;
+    if started.is_err() {
+        crate::usage::count(app, Event::ConnectFailed { reason: "other".into() });
+    }
+    started
 }
 
 /// Connect from outside the window (the tray, the phone's quick tile): the
@@ -472,7 +552,7 @@ pub async fn connect_picked(app: &AppHandle) -> Result<ConnectStatus, String> {
         .state::<PlacesState>()
         .switch_place()
         .ok_or("add your proxies in HProxy first")?;
-    start_place(app, place, None, true, None, None).await
+    counted_start(app, place, None, true, None, None).await
 }
 
 /// Connect to `place`, from the window or the tray.
@@ -644,7 +724,7 @@ pub async fn start_place(
     let started_at_ms = now_ms();
     let health = Arc::new(Mutex::new(HealthState::default()));
     let route = Arc::new(AtomicU64::new(0));
-    start_route(&route, &health);
+    CONNECT_TO_COUNT.store(start_route(&route, &health), Ordering::SeqCst);
     let probe = {
         let health = Arc::clone(&health);
         let route = Arc::clone(&route);
@@ -726,7 +806,8 @@ async fn switch_in_place(
             r.place = place;
         }
     }
-    start_route(&live.route, &live.health);
+    live.stats.take_why();
+    CONNECT_TO_COUNT.store(start_route(&live.route, &live.health), Ordering::SeqCst);
     log::info!("switched in place to {described}, still listening on {}", live.listen);
     probe_route(app, geo, live.listen, &probe_url, &live.route, &live.health).await;
     let status = status_now(state, notice);
@@ -866,6 +947,7 @@ pub async fn connect_rotate(
 ) -> Result<ConnectStatus, String> {
     let live = live_now(&state)?;
     let label = live.source.next_ip().await?;
+    crate::usage::feature(&app, "new_ip");
     Ok(moved(&app, &state, &app_state.geo, live, label).await)
 }
 
@@ -881,6 +963,7 @@ pub async fn next_ip_from_outside(app: &AppHandle) {
     };
     match live.source.next_ip().await {
         Ok(label) => {
+            crate::usage::feature(app, "new_ip");
             moved(app, &state, &app_state.geo, live, label).await;
         }
         Err(e) => log::warn!("next IP from outside the window: {e}"),
@@ -973,7 +1056,12 @@ pub use hproxy_connection::leak::DnsLeakView;
 /// looks names up with, and where it is. The leak check runs it once a
 /// connection is up and again on "Test now".
 #[tauri::command]
-pub async fn leak_dns(state: State<'_, RelayState>, app_state: State<'_, AppState>) -> Result<DnsLeakView, String> {
+pub async fn leak_dns(
+    app: AppHandle,
+    state: State<'_, RelayState>,
+    app_state: State<'_, AppState>,
+) -> Result<DnsLeakView, String> {
+    crate::usage::feature(&app, "leak_checks");
     let listen = {
         let guard = state
             .inner

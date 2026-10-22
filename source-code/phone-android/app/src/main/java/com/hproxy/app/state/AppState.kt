@@ -159,21 +159,20 @@ object AppState {
         libraryFlow.value = Library.of(o)
     }
 
-    /** The place the switch connects to: the one connected through, else the one picked last. */
+    /** "The connection" as a place the screens show (target, below). */
     fun current(): Shown? = show(target())
 
-    /** The place every screen shows as "the connection": the one being connected or switched to,
-     *  else the one in use, else the one that just did not answer (its row and the nav say so, and
-     *  the switch tries it again), else the one picked last. */
+    /** The place every screen shows as "the connection", and the one the switch connects: the one
+     *  being connected or switched to, else the one in use, else one of yours that just did not
+     *  answer (its row and the nav say so, and the switch tries it again), else what the engine's
+     *  rule names (Library.switchTo: yours used last, else added last). Never a free proxy by
+     *  itself (since 2026-10-17): free ones are connected from their own tab. Null: none of
+     *  yours, and the switch asks for them first. */
     fun target(): PlaceRef? = when (val p = phaseFlow.value) {
         is Phase.Switching -> p.to
         is Phase.Connecting -> p.to
         else -> null
-    } ?: statusFlow.value.place ?: failedFlow.value?.ref ?: libraryFlow.value.picked
-
-    /** What the nav's switch connects: the place above, else the fastest free proxy (named, so
-     *  the switch never takes a random one). */
-    fun switchTarget(): PlaceRef? = target() ?: FreeList.fastest()?.ref
+    } ?: statusFlow.value.place ?: failedFlow.value?.ref?.takeIf { it !is PlaceRef.Free } ?: libraryFlow.value.switchTo
 
     /** A place as the screens show it: a free proxy by its row in the free list and the name it
      *  was given, a saved one from the library. */

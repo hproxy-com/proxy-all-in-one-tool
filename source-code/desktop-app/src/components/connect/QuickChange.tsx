@@ -6,9 +6,8 @@ import { useConnection } from "./connection";
 import { rowProblem, rowState } from "./Destinations";
 import PlaceRow from "./PlaceRow";
 
-/* Quick change (2026-10-18: "the blue button when you press change should let you quick change it
-   or view the full list"): Change on Connect opens the places to switch to without leaving the
-   page. The one in use comes first, whatever its speed, so it is always in sight and marked; then
+/* Quick change (since 2026-10-18): Change on Connect opens the places to switch to without leaving
+   the page. The one in use comes first, whatever its speed, so it is always in sight and marked; then
    your proxies that answered their last check, the fastest first; then the rest Quick connect
    would show (lib/places.ts changePlaces). A click connects there, or moves there while
    connected, as every row in the app does. "View the full list" is the Proxies page, on the tab

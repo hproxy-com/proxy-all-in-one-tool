@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { countWindowCrash } from "../lib/usage";
 
 /* Catches a render crash and shows something a human can act on.
  *
@@ -23,6 +24,8 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     this.setState({ info: info.componentStack ?? null });
+    // The usage counts, after a yes: that the window crashed, never what it said (lib/usage.ts).
+    countWindowCrash();
     // Into the rotating log file, so a user can send something useful.
     void import("@tauri-apps/plugin-log")
       .then(({ error: logError }) =>

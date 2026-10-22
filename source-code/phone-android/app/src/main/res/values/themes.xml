@@ -1,13 +1,17 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- The window Android shows while the app starts, in the app's own night colour (the app
-         starts dark), with light status bar icons. The screens draw everything else. -->
-    <style name="Theme.HProxy" parent="android:Theme.Material.NoActionBar">
+         starts dark), with light status bar icons. The screens draw everything else, under both
+         bars (MainActivity), so the bars themselves stay clear. values-v29 and values-v30 add what
+         later Androids ask for, from the same base. -->
+    <style name="Base.Theme.HProxy" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
     </style>
+
+    <style name="Theme.HProxy" parent="Base.Theme.HProxy" />
 
     <!-- Android's own calendar, where the last day of a plan is picked (ui/proxies/Rows.kt,
          pickDay): dark like the app, its day and buttons in the app's blue. -->

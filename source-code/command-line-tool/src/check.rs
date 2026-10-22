@@ -334,6 +334,15 @@ pub async fn command(argv: &[String]) -> Outcome {
     let opts = batch_options(a.concurrency, a.timeout, a.protocols, a.udp, a.speed, a.retries);
     let batch = Batch::new(lines, Arc::new(Checker::public()), opts);
     let total = batch.len();
+    // Usage counts, after a yes given at a terminal (usage.rs): a run and how long its list is.
+    crate::usage::count(hproxy_api::usage::Event::CheckRun { proxies: total as u64 });
+    crate::usage::feature("checker");
+    if a.file.is_some() {
+        crate::usage::feature("import_file");
+    }
+    if a.speed {
+        crate::usage::feature("speed_test");
+    }
     let geo = a.geo.then(|| Arc::new(geo_client()));
 
     let stdout = std::io::stdout();

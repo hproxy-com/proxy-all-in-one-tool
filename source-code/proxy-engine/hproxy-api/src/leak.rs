@@ -2,9 +2,7 @@
 //!
 //! The test: through the proxy, ask for a made-up name under `leak.hproxy.com`.
 //! The proxy's resolver asks our nameserver for it, and the nameserver writes
-//! down the resolver's address (the monorepo's `hproxy-dns-leak`; the design is
-//! `docs/plan-2026-09-28-dns-leak-test/PLAN.md` there). Then this asks the door
-//! who looked the name up. The connection attempt through the proxy fails on
+//! down the resolver's address. Then this asks the door who looked the name up. The connection attempt through the proxy fails on
 //! purpose: the nameserver answers "no such name", right after the lookup.
 //!
 //! A proxy that is handed the NAME (an HTTP proxy, SOCKS5 with the name) looks it

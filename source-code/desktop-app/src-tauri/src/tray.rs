@@ -60,6 +60,10 @@ impl Default for TrayState {
 #[cfg(desktop)]
 pub fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
+        // Back from the tray counts as an opening (usage.rs); a window already up does not.
+        if !w.is_visible().unwrap_or(true) {
+            crate::usage::opened(app);
+        }
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
@@ -175,7 +179,7 @@ fn connect_to_listed(app: &AppHandle, i: usize) {
     let Some(place) = place else { return };
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = crate::connect::start_place(&app, place, None, true, None, None).await {
+        if let Err(e) = crate::connect::counted_start(&app, place, None, true, None, None).await {
             log::warn!("the tray could not connect: {e}");
             show_main(&app);
         }

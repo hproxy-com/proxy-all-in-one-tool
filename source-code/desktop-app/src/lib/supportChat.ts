@@ -42,9 +42,10 @@ export type ChatState = {
 
 export const START: ChatState = { messages: [], link: "closed", online: false, typing: false, intro: null, conversation: null, token: null, unseen: 0 };
 
-/** The words the chat starts with when it has none of its own. */
+/** The words the chat starts with when it has none of its own (and while it connects): the live
+    chat's own welcome since 2026-10-19, so nothing changes once the chat answers. */
 export const HELLO =
-  "Hi! This is HProxy support. Ask us anything about your proxies, the app or an order, or tell us an idea: we answer right here.";
+  "Hey 👋 This is a live chat with HProxy: ask us anything and we'll help you instantly. If it's about an order, send your order ID too.";
 
 /** The three ways people start: an idea, a problem, a country. */
 export const STARTERS: readonly (readonly [string, string])[] = [

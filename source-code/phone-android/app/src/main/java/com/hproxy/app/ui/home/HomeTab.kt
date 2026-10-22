@@ -133,7 +133,7 @@ fun HomeTab(nav: Nav) {
     )
     LaunchedEffect(Unit) { FreeList.load() }
 
-    val ref = AppState.switchTarget()
+    val ref = AppState.target()
     val where = whereOf(ref, conn, health)
     val phase = conn.phase
     val switching = phase is Phase.Switching
@@ -168,7 +168,7 @@ fun HomeTab(nav: Nav) {
                             switching -> "Switching to"
                             on -> "Connected to"
                             failed -> "Didn't answer"
-                            AppState.target() == null -> "Fastest free proxy"
+                            ref == null -> "Your proxies"
                             else -> "Last used"
                         },
                         type(13.sp, FontWeight.SemiBold, if (failed) C.bad else C.ink2),
@@ -186,12 +186,13 @@ fun HomeTab(nav: Nav) {
                 }
                 PlaceCard(
                     where = where,
+                    empty = ref == null,
                     on = on,
                     busy = busy || switching,
                     failed = failed,
-                    onOpen = { nav.push(Page.Connection) },
+                    onOpen = { if (ref == null) nav.addFirst() else nav.push(Page.Connection) },
                     onConnect = {
-                        if (ref == null) nav.go(com.hproxy.app.ui.Tab.Proxies) else nav.askVpn { AppState.connect(ref) }
+                        if (ref == null) nav.addFirst() else nav.askVpn { AppState.connect(ref) }
                     },
                     onDisconnect = { AppState.disconnect() },
                 )
@@ -272,10 +273,12 @@ private fun Chip(cc: String?, text: String, light: Boolean) {
     }
 }
 
-/** The place you connect to: its flag, its country, its city and the proxy itself; one button. */
+/** The place you connect to: its flag, its country, its city and the proxy itself; one button.
+ *  Empty (none of yours yet): it asks for your proxies, since the switch never takes a free one. */
 @Composable
 private fun PlaceCard(
     where: Where?,
+    empty: Boolean,
     on: Boolean,
     busy: Boolean,
     failed: Boolean,
@@ -299,10 +302,10 @@ private fun PlaceCard(
         ) {
             if (where?.cc != null) Flag(where.cc, 36.dp, 27.dp) else Box(Modifier.size(36.dp, 27.dp), contentAlignment = Alignment.Center) { Ic(I.globe, 24.dp, C.ink3) }
             Column(Modifier.weight(1f)) {
-                Txt(where?.country ?: "Pick a proxy", type(18.sp, FontWeight.Bold, spacing = (-0.01).em), maxLines = 1)
+                Txt(where?.country ?: if (empty) "Add your proxies" else "Pick a proxy", type(18.sp, FontWeight.Bold, spacing = (-0.01).em), maxLines = 1)
                 Spacer(Modifier.height(2.dp))
                 Txt(
-                    where?.let { listOfNotNull(it.city, it.proxy).joinToString(" · ") } ?: "Your own, or a free one",
+                    where?.let { listOfNotNull(it.city, it.proxy).joinToString(" · ") } ?: if (empty) "Paste, scan or type them" else "One of yours",
                     type(13.5.sp, FontWeight.Medium, C.ink2, numbers = true),
                     maxLines = 1,
                 )
@@ -313,6 +316,7 @@ private fun PlaceCard(
             busy -> Btn("Cancel", onDisconnect, Modifier.fillMaxWidth(), kind = BtnKind.Raised)
             on -> Btn("Disconnect", onDisconnect, Modifier.fillMaxWidth(), kind = BtnKind.Raised)
             failed -> Btn("Try again", onConnect, Modifier.fillMaxWidth())
+            empty -> Btn("Add proxies", onConnect, Modifier.fillMaxWidth())
             else -> Btn("Connect", onConnect, Modifier.fillMaxWidth())
         }
     }

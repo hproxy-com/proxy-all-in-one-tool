@@ -39,7 +39,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 
 pub use source::{Dialed, List, Rotation, Source, SourceKind, REST_FOR};
-pub use stats::{Stats, StatsSnapshot};
+pub use stats::{Stats, StatsSnapshot, Why};
 pub use switchable::{SwitchableSource, Ticket};
 pub use upstream::{Scheme, Upstream};
 

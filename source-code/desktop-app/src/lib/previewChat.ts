@@ -20,7 +20,8 @@ let open = false;
 export function demoChatOpen(): void {
   if (open) return;
   open = true;
-  setTimeout(() => tell({ kind: "ready", token: "preview", conversation: null, online: false, replyTime: null }), 400);
+  // As the live chat opens while support is there: "online now", and its welcome (supportChat.HELLO).
+  setTimeout(() => tell({ kind: "ready", token: "preview", conversation: null, online: true, replyTime: null }), 400);
 }
 
 export function demoChatSend(id: string, body: string): void {

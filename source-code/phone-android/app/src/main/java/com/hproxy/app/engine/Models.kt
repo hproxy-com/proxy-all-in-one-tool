@@ -203,6 +203,9 @@ data class Library(
     val proxies: List<ProxyItem> = emptyList(),
     val groups: List<GroupItem> = emptyList(),
     val picked: PlaceRef? = null,
+    /** What the switch connects (the engine's rule, the computer app's too): yours connected or
+     *  used last, else added last; never a free proxy, so null with none of yours. */
+    val switchTo: PlaceRef? = null,
     val movedFromWindow: Boolean = false,
     val notice: String? = null,
 ) {
@@ -241,6 +244,7 @@ data class Library(
                 )
             },
             picked = PlaceRef.of(o.objOrNull("picked")),
+            switchTo = PlaceRef.of(o.objOrNull("switchTo")),
             movedFromWindow = o.optBoolean("movedFromWindow"),
             notice = o.str("notice"),
         )

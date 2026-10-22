@@ -18,7 +18,9 @@ import {
   listLines,
   maskLine,
   matchSaved,
+  mergeLines,
   placeOf,
+  withoutLines,
   ruleWords,
   sortSaved,
   spacedN,
@@ -120,6 +122,34 @@ describe("maskLine", () => {
 describe("listLines", () => {
   it("drops blank lines and trims the rest", () => {
     expect(listLines("  a:1 \n\n\r\nb:2\n   \n")).toEqual(["a:1", "b:2"]);
+  });
+});
+
+describe("withoutLines", () => {
+  it("empties a box whose every line was sent", () => {
+    expect(withoutLines("a:1\nb:2\n", ["a:1", "b:2"])).toBe("");
+  });
+  it("keeps what came in meanwhile, as typed", () => {
+    expect(withoutLines("a:1\n  b:2\n\nc:3\n", ["a:1", "c:3"])).toBe("  b:2");
+  });
+  it("matches lines whatever their spaces", () => {
+    expect(withoutLines("  a:1  \nd:4", ["a:1"])).toBe("d:4");
+  });
+});
+
+describe("mergeLines", () => {
+  it("puts a file into an empty box as it is, one per line", () => {
+    expect(mergeLines("", "a:1\r\n\nb:2\n")).toBe("a:1\nb:2");
+  });
+  it("adds a file after what was typed, without the lines the box already holds", () => {
+    expect(mergeLines("a:1\n", "a:1\nb:2\nb:2\nc:3")).toBe("a:1\nb:2\nc:3");
+  });
+  it("keeps what was typed as typed", () => {
+    expect(mergeLines("  a:1  \n\n", "c:3")).toBe("  a:1\nc:3");
+  });
+  it("leaves the box alone when the file brings nothing new", () => {
+    expect(mergeLines("a:1\n", "a:1\n\n")).toBe("a:1\n");
+    expect(mergeLines("a:1", "")).toBe("a:1");
   });
 });
 

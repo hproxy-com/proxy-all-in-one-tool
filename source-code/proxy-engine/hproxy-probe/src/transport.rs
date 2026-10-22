@@ -21,10 +21,12 @@ use crate::judge::{Judge, JudgeKind};
 use crate::line::b64;
 use crate::result::{Failure, FailureDetail, Phase, Timings};
 use std::collections::HashMap;
-use std::future::Future;
+use std::future::{poll_fn, Future};
 use std::io;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
+use std::task::Poll;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -32,6 +34,11 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// hundred bytes; anything vastly larger is an interstitial or an error page,
 /// and none of those become more informative at megabyte three.
 const MAX_RESPONSE: usize = 64 * 1024;
+
+/// How long a judge gets to answer before the next one on the ladder is tried
+/// beside it (`climb`). A healthy proxy answers the first judge in well under a
+/// second (median 0.37 s, 2026-10-22).
+pub const NEXT_RUNG_AFTER: Duration = Duration::from_millis(2500);
 
 /// The proxy under test.
 #[derive(Clone, Copy)]
@@ -123,34 +130,78 @@ struct Phases {
 ///
 /// The failure reported is the most informative one seen on any rung, not the
 /// last: "answered 407" on rung one beats "timed out" on rung three.
+///
+/// A rung that stays silent does not hold the next one back for its whole
+/// budget: after `NEXT_RUNG_AFTER` the next rung starts beside it, and the
+/// first to answer wins. Found 2026-10-22: many proxies let nothing out to the
+/// plain echo's odd port (4505) and sit silent until the deadline, then relay
+/// the port-80 trace at once; every probe through them waited 8 s on rung one
+/// first (a working proxy came back after 8.3 s, its answer taking 0.33 s).
+/// Every rung is still tried, so the retries above still find a flaky proxy.
 async fn climb<'a, F, Fut>(rungs: &'a [Judge], credentialed: bool, mut attempt: F) -> Probe
 where
     F: FnMut(&'a Judge) -> Fut,
     Fut: Future<Output = Probe>,
 {
     let mut best: Option<Probe> = None;
-    for rung in rungs {
-        let p = attempt(rung).await;
-        if p.alive {
-            return p;
+    let mut next = 0usize;
+    let mut flying: Vec<Pin<Box<Fut>>> = Vec::new();
+    let mut head_start = Box::pin(tokio::time::sleep(NEXT_RUNG_AFTER));
+    loop {
+        // Nothing in flight: the next rung starts now (at first, or once every
+        // rung so far failed), with its own head start.
+        if flying.is_empty() {
+            let Some(rung) = rungs.get(next) else { break };
+            flying.push(Box::pin(attempt(rung)));
+            next += 1;
+            head_start.as_mut().reset(tokio::time::Instant::now() + NEXT_RUNG_AFTER);
         }
-        let stop = match &p.failure {
-            Some(f) => {
-                (f.kind == Failure::Refused && f.phase == Phase::Connect && !credentialed)
-                    || (f.kind == Failure::Unresolved && f.phase == Phase::Dns)
+        // A rung's answer, or None when the head start ran out first.
+        let answered = poll_fn(|cx| {
+            for (i, f) in flying.iter_mut().enumerate() {
+                if let Poll::Ready(p) = f.as_mut().poll(cx) {
+                    return Poll::Ready(Some((i, p)));
+                }
             }
-            None => false,
-        };
-        let better = match (&best, &p.failure) {
-            (None, _) => true,
-            (Some(b), Some(f)) => b.failure.as_ref().is_none_or(|bf| f.kind.rank() < bf.kind.rank()),
-            (Some(_), None) => false,
-        };
-        if better {
-            best = Some(p);
-        }
-        if stop {
-            break;
+            if next < rungs.len() && head_start.as_mut().poll(cx).is_ready() {
+                return Poll::Ready(None);
+            }
+            Poll::Pending
+        })
+        .await;
+        match answered {
+            None => {
+                // The rung in flight is slow to answer: the next one starts beside it.
+                if let Some(rung) = rungs.get(next) {
+                    flying.push(Box::pin(attempt(rung)));
+                    next += 1;
+                }
+                head_start.as_mut().reset(tokio::time::Instant::now() + NEXT_RUNG_AFTER);
+            }
+            Some((i, p)) => {
+                drop(flying.remove(i));
+                if p.alive {
+                    return p;
+                }
+                let stop = match &p.failure {
+                    Some(f) => {
+                        (f.kind == Failure::Refused && f.phase == Phase::Connect && !credentialed)
+                            || (f.kind == Failure::Unresolved && f.phase == Phase::Dns)
+                    }
+                    None => false,
+                };
+                let better = match (&best, &p.failure) {
+                    (None, _) => true,
+                    (Some(b), Some(f)) => b.failure.as_ref().is_none_or(|bf| f.kind.rank() < bf.kind.rank()),
+                    (Some(_), None) => false,
+                };
+                if better {
+                    best = Some(p);
+                }
+                if stop {
+                    break;
+                }
+            }
         }
     }
     best.unwrap_or_default()

@@ -107,20 +107,57 @@
   border-top: 1px solid var(--hairline);
 }
 
-/* The fraud-score services: a tick per service; once on, its key and its test
-   on the same line. On a phone the key goes under the name. */
+/* The fraud-score services (a section of their own since 2026-10-22): on the left the tick, the
+   name and the website, what it gives for free under them; on the right its key, "Get a free key"
+   and, once on, its test. On a phone everything stacks under the name. */
 .ux-services {
   display: flex;
   flex-direction: column;
 }
 .ux-service {
   display: grid;
-  grid-template-columns: 230px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
+  grid-template-areas:
+    "pick setup"
+    "free setup";
   align-items: center;
-  gap: 8px 16px;
-  min-height: 44px;
-  padding: 6px 0;
+  gap: 2px 16px;
+  min-height: 56px;
+  padding: 10px 0;
   border-top: 1px solid var(--divider);
+}
+.ux-service .pick {
+  grid-area: pick;
+}
+.ux-service .setup {
+  grid-area: setup;
+}
+/* What it gives for free: one quiet line, starting where the name does. */
+.ux-service .free {
+  grid-area: free;
+  padding-left: 46px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+/* Its website: the words change colour on a hover, nothing behind them. */
+.ux-site {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  transition: color 160ms ease;
+}
+.ux-site svg {
+  width: 14px;
+  height: 14px;
+}
+.ux-site:hover,
+.ux-site:focus-visible {
+  color: var(--accent-ink);
 }
 .ux-service:first-child {
   border-top: 0;
@@ -201,10 +238,15 @@
   }
   .ux-service {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "pick"
+      "free"
+      "setup";
   }
   .ux-service .setup {
     flex-wrap: wrap;
     justify-content: flex-start;
+    margin-top: 6px;
   }
   /* Under the name, two by two from the left: right-aligned they broke
      into one line of three and a fourth alone. */

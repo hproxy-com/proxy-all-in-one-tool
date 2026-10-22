@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -47,19 +48,20 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hproxy.app.state.AppState
-import com.hproxy.app.state.FreeList
 import com.hproxy.app.state.Phase
 import com.hproxy.app.ui.Nav
 import com.hproxy.app.ui.Tab
+import com.hproxy.app.ui.kit.FitText
 import com.hproxy.app.ui.kit.Glyph
 import com.hproxy.app.ui.kit.HMark
 import com.hproxy.app.ui.kit.I
 import com.hproxy.app.ui.kit.Ic
-import com.hproxy.app.ui.kit.Txt
 import com.hproxy.app.ui.kit.pressable
 import com.hproxy.app.ui.theme.C
 import com.hproxy.app.ui.theme.Glide
@@ -82,8 +84,8 @@ private val RAISE = 20.dp
 @Composable
 fun NavBar(nav: Nav, modifier: Modifier = Modifier) {
     val conn by AppState.conn.collectAsState()
-    // Read so the button knows what it connects once the free list is in (AppState.switchTarget).
-    @Suppress("UNUSED_VARIABLE") val read = Pair(AppState.library.collectAsState().value, FreeList.list.collectAsState().value)
+    // Read so the button knows what it connects once the library is in (AppState.target).
+    @Suppress("UNUSED_VARIABLE") val read = AppState.library.collectAsState().value
     val phase = conn.phase
     val switching = phase is Phase.Switching
     val on = phase == Phase.On || switching
@@ -95,8 +97,9 @@ fun NavBar(nav: Nav, modifier: Modifier = Modifier) {
         if (on || busy) {
             AppState.disconnect()
         } else {
-            val target = AppState.switchTarget()
-            if (target != null) nav.askVpn { AppState.connect(target) } else nav.go(Tab.Proxies)
+            // Yours, connected or used last; with none of yours it asks for them (never a free one).
+            val target = AppState.target()
+            if (target != null) nav.askVpn { AppState.connect(target) } else nav.addFirst()
         }
     }
 
@@ -128,6 +131,16 @@ fun NavBar(nav: Nav, modifier: Modifier = Modifier) {
 
 @Composable
 private fun Tabs(tab: Tab, word: String, wordInk: Color, onTab: (Tab) -> Unit) {
+    // Five words on one row follow the phone's text size up to 1.3 times; past that only the
+    // screens' own text keeps growing (iOS keeps its tab bars the same way), so no word is cut.
+    val density = LocalDensity.current
+    CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale.coerceAtMost(1.3f))) {
+        TabRow(tab, word, wordInk, onTab)
+    }
+}
+
+@Composable
+private fun TabRow(tab: Tab, word: String, wordInk: Color, onTab: (Tab) -> Unit) {
     BoxWithConstraints(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 6.dp)) {
         val slot = maxWidth / SLOTS.size
         val at by animateDpAsState(slot * SLOTS.indexOf(tab) + (slot - 30.dp) / 2, tween(420, easing = Glide), label = "crossbar")
@@ -153,7 +166,7 @@ private fun Tabs(tab: Tab, word: String, wordInk: Color, onTab: (Tab) -> Unit) {
                             },
                             modifier = Modifier.clipToBounds(),
                             label = "hWord",
-                        ) { w -> Txt(w, type(12.sp, FontWeight.Bold), color = ink, maxLines = 1) }
+                        ) { w -> FitText(w, type(12.sp, FontWeight.Bold), color = ink, smallest = 9f) }
                     }
                 } else {
                     TabSlot(t, t == tab, Modifier.weight(1f)) { onTab(t) }
@@ -191,7 +204,8 @@ private fun TabSlot(t: Tab, chosen: Boolean, modifier: Modifier, onClick: () -> 
     ) {
         Box(Modifier.height(34.dp), contentAlignment = Alignment.Center) { Ic(glyphOf(t), 23.dp, glyph) }
         Spacer(Modifier.height(3.dp))
-        Txt(labelOf(t), type(12.sp, FontWeight.Bold), color = word, maxLines = 1)
+        // Its 12 sp wherever it fits; a little smaller on a narrow phone or with big text, never cut.
+        FitText(labelOf(t), type(12.sp, FontWeight.Bold), color = word, smallest = 9f)
     }
 }
 

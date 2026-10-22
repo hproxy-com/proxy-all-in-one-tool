@@ -31,10 +31,10 @@ export function useSavedChecks(proxies: ProxyView[]) {
     }
   };
 
-  /* Every saved proxy, four at a time, each row's verdict updated as its
-     answer lands. */
-  const testAll = async () => {
-    const ids = proxies.map((p) => p.id);
+  /* Every saved proxy, or the ones of `only` (a paste's own Test, 2026-10-22), four at a time,
+     each row's verdict updated as its answer lands. */
+  const testAll = async (only?: string[]) => {
+    const ids = only ?? proxies.map((p) => p.id);
     if (!ids.length) return;
     let done = 0;
     setTesting({ done, total: ids.length });

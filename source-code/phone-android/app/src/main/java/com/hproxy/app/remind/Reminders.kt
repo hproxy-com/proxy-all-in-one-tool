@@ -119,6 +119,8 @@ class RemindersReceiver : BroadcastReceiver() {
         Thread({
             try {
                 Reminders.look(app)
+                // The same twice-daily wake sends a finished day of usage counts (after a yes).
+                com.hproxy.app.state.Usage.sendNow()
             } finally {
                 done.finish()
             }

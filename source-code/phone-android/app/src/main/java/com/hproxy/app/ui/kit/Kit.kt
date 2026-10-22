@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,11 +36,14 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -76,6 +80,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hproxy.app.ui.theme.AppWidth
 import com.hproxy.app.ui.theme.C
 import com.hproxy.app.ui.theme.CutBig
 import com.hproxy.app.ui.theme.Glide
@@ -352,7 +357,8 @@ fun Sheet(open: Boolean, onClose: () -> Unit, heightFraction: Float? = 0.78f, co
         }
         AnimatedVisibility(
             open,
-            modifier = Modifier.align(Alignment.BottomCenter),
+            // The app's width in the middle of a big screen, clear of a bar or a cutout at the side.
+            modifier = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
             enter = slideInVertically(tween(460, easing = Glide)) { it },
             exit = slideOutVertically(tween(380, easing = Glide)) { it },
         ) {
@@ -360,6 +366,7 @@ fun Sheet(open: Boolean, onClose: () -> Unit, heightFraction: Float? = 0.78f, co
             val dragDp = with(LocalDensity.current) { drag.toDp() }
             Column(
                 Modifier
+                    .widthIn(max = AppWidth)
                     .fillMaxWidth()
                     .then(if (heightFraction != null) Modifier.fillMaxHeight(heightFraction) else Modifier.heightIn(max = tallest))
                     .offset(y = dragDp)
@@ -400,7 +407,13 @@ fun BoxScope.Toast(msg: String?) {
     AnimatedVisibility(
         msg != null,
         // Above the nav (its proxy row and its tabs).
-        modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(start = 20.dp, end = 20.dp, bottom = 140.dp).clipToBounds(),
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+            .widthIn(max = AppWidth)
+            .navigationBarsPadding()
+            .padding(start = 20.dp, end = 20.dp, bottom = 140.dp)
+            .clipToBounds(),
         enter = slideInVertically(tween(460, easing = Glide)) { it },
         exit = slideOutVertically(tween(300, easing = Glide)) { it },
     ) {

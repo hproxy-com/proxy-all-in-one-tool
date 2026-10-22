@@ -475,6 +475,7 @@ pub fn places_describe(
 ) -> Result<LibraryView, String> {
     let (described, view) = places.change(|lib| lib.describe_proxies(&ids, &details));
     described?;
+    count_details(&app, &details);
     crate::tray::places_changed(&app);
     Ok(view)
 }
@@ -489,8 +490,20 @@ pub fn places_group_describe(
 ) -> Result<LibraryView, String> {
     let (described, view) = places.change(|lib| lib.describe_group(&id, &details));
     described?;
+    count_details(&app, &details);
     crate::tray::places_changed(&app);
     Ok(view)
+}
+
+/// Usage counts (usage.rs): a last day or a note written counts as that feature used.
+fn count_details(app: &AppHandle, details: &Details) {
+    let written = |field: &Option<String>| field.as_deref().is_some_and(|v| !v.trim().is_empty());
+    if written(&details.expires) {
+        crate::usage::feature(app, "expiry");
+    }
+    if written(&details.note) {
+        crate::usage::feature(app, "notes");
+    }
 }
 
 #[tauri::command]
@@ -516,6 +529,9 @@ pub fn places_group_save(app: AppHandle, places: State<'_, PlacesState>, group: 
     let now = now_ms();
     let (saved, view) = places.change(|lib| lib.save_group(group, now));
     crate::tray::places_changed(&app);
+    if saved.is_ok() {
+        crate::usage::feature(&app, "groups");
+    }
     saved.map(|id| Added { view, ids: vec![id] })
 }
 

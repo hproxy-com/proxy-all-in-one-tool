@@ -947,9 +947,8 @@ impl Library {
         Ok(())
     }
 
-    /// What the switch connects to, the app's big button and the tray's Connect alike
-    /// (2026-10-18: "when someone wants to connect it connects to his recently connected proxy,
-    /// it should have nothing to do with free proxies"): the pick, when it is one of yours and
+    /// What the switch connects to, the app's big button and the tray's Connect alike (since
+    /// 2026-10-18): the pick, when it is one of yours and
     /// still here (a connect makes its place the pick); else the place used last; else the proxy
     /// or group added last. Never a free proxy: with none of yours, nothing, and the app asks
     /// for proxies first. desktop-app/src/lib/places.ts (`firstPlace`) says the same for the window.

@@ -34,14 +34,17 @@ const STORE = join(here, "..", "store", "google-play");
 const RAW = join(STORE, "raw");
 const FONTS = join(here, "..", "app", "src", "main", "res", "font");
 
-/** The pictures, in the order Play shows them: the raw screen, the words, and the second line, in blue. */
+/** The pictures, in the order Play shows them: the raw screen, the words, and the second line, in
+ *  blue. The raw screens of 0.4.1 (2026-10-19): ten free proxies shared to the pictures build as
+ *  example addresses, added, checked, one connected, one named with a last day. */
 const PHONES = [
   { name: "1-connect", raw: "connected.png", title: "One tap connects", blue: "the whole phone", sub: "Every app goes through the proxy you pick." },
-  { name: "2-places", raw: "connect-to.png", title: "Free proxies", blue: "by country", sub: "Next to your own proxies and groups." },
-  { name: "3-check", raw: "checker.png", title: "Check a list,", blue: "fastest first", sub: "Every line is tested from your phone." },
-  { name: "4-proxy", raw: "proxy-card.png", title: "See where", blue: "it comes out", sub: "Country, city, network and speed." },
-  { name: "5-sites", raw: "sites-see.png", title: "See what", blue: "sites see", sub: "Your IP, DNS, WebRTC and time zone." },
-  { name: "6-apps", raw: "which-apps.png", title: "Choose", blue: "which apps", sub: "Or block apps on Wi-Fi or mobile data." },
+  { name: "2-add", raw: "add.png", title: "Paste your proxies", blue: "all at once", sub: "Or share them, scan a QR code or type one." },
+  { name: "3-tested", raw: "my-proxies.png", title: "Every proxy tested,", blue: "fraud score included", sub: "Speed and fraud score the moment it is added." },
+  { name: "4-check", raw: "checker.png", title: "Check any list,", blue: "fastest first", sub: "Every line is tested from your phone." },
+  { name: "5-last-day", raw: "proxy-sheet.png", title: "A name, a last day", blue: "and a reminder", sub: "HProxy tells you 3 days before a plan ends." },
+  { name: "6-free", raw: "free.png", title: "Free proxies", blue: "by country", sub: "Sorted by fraud score, speed or reliability." },
+  { name: "7-help", raw: "help.png", title: "Talk to us", blue: "right in the app", sub: "A live chat with HProxy support." },
 ];
 
 // The colours of the earlier store pictures: the ink canvas, the raised device, its hairline.
@@ -54,27 +57,50 @@ const BLUE = "#3d7bff";
 /* The blue H, its own gradient (the app icon's), on nothing. */
 const H_MARK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21.4367 26"><defs><linearGradient id="h" x1="0" y1="0" x2="22" y2="26" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#8db1ff"/><stop offset="0.5" stop-color="#3d7bff"/><stop offset="1" stop-color="#2d63e6"/></linearGradient></defs><g fill="url(#h)"><path d="M0 0V0C3.98547 0 7.21633 3.23086 7.21633 7.21633V26H0V0Z"/><rect x="14.2188" width="7.21633" height="26"/><path d="M7.2349 26H0V15.9714C0 12.4548 2.85076 9.60408 6.36735 9.60408H14.2204V0H21.4367V10.4531C21.4367 13.9696 18.586 16.8204 15.0694 16.8204H7.2349V26Z"/></g></svg>`;
 
-// The part of a raw screen that shows: below the status bar, above the gesture bar.
+// The part of a raw screen that shows: below the status bar, above the gesture bar. The raw screens
+// come from the Android 15 emulator HProxy_Android15 (a Pixel 7 with its camera cutout): a status
+// bar of 136 px, a gesture bar of 63.
 const RAW_W = 1080;
-const CUT_TOP = 96;
+const CUT_TOP = 136;
 const CUT_BOTTOM = 64;
 const SHOWN_H = 2400 - CUT_TOP - CUT_BOTTOM;
 
+// Inter, the app's own font since 2026-10-11 (app/src/main/res/font).
 const fontFace = `
-@font-face { font-family: DM; src: url(/font/dm_sans_bold.ttf); font-weight: 700; }
-@font-face { font-family: DM; src: url(/font/dm_sans_semibold.ttf); font-weight: 600; }
-@font-face { font-family: DM; src: url(/font/dm_sans_medium.ttf); font-weight: 500; }`;
+@font-face { font-family: Inter; src: url(/font/inter_extrabold.ttf); font-weight: 800; }
+@font-face { font-family: Inter; src: url(/font/inter_bold.ttf); font-weight: 700; }
+@font-face { font-family: Inter; src: url(/font/inter_semibold.ttf); font-weight: 600; }
+@font-face { font-family: Inter; src: url(/font/inter_medium.ttf); font-weight: 500; }`;
+
+/** The phone's measures at a 1330 px screen (the store pictures), scaled with the screen. */
+function measures(screenH) {
+  const k = screenH / 1330;
+  return {
+    screenW: Math.round(RAW_W * (screenH / SHOWN_H)),
+    side: Math.round(16 * k),
+    head: Math.round(40 * k),
+    edge: Math.max(1, Math.round(2 * k)),
+    outer: Math.round(68 * k),
+    inner: Math.round(50 * k),
+    lens: Math.max(4, Math.round(14 * k)),
+    lensTop: Math.round(13 * k),
+  };
+}
+
+/** The whole phone's box, its edge included. */
+function phoneBox(screenH) {
+  const m = measures(screenH);
+  return { w: m.screenW + m.side * 2 + m.edge * 2, h: screenH + m.head + m.side + m.edge * 2 };
+}
 
 /** A phone around one raw screen, `screenH` tall, at (left, top). */
 function phone(raw, left, top, screenH) {
   const scale = screenH / SHOWN_H;
-  const screenW = Math.round(RAW_W * scale);
-  const side = 16;
-  const head = 40;
-  return `<div style="position:absolute;left:${left}px;top:${top}px;width:${screenW + side * 2}px;height:${screenH + head + side}px;background:${BEZEL};border:2px solid ${EDGE};border-radius:68px;box-sizing:content-box">
-    <div style="position:absolute;left:50%;top:13px;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:${CANVAS}"></div>
-    <div style="position:absolute;left:${side}px;top:${head}px;width:${screenW}px;height:${screenH}px;border-radius:50px;overflow:hidden;background:#070a12">
-      <img src="/raw/${raw}" style="position:absolute;left:0;top:${-Math.round(CUT_TOP * scale)}px;width:${screenW}px;height:${Math.round(2400 * scale)}px">
+  const m = measures(screenH);
+  return `<div style="position:absolute;left:${left}px;top:${top}px;width:${m.screenW + m.side * 2}px;height:${screenH + m.head + m.side}px;background:${BEZEL};border:${m.edge}px solid ${EDGE};border-radius:${m.outer}px;box-sizing:content-box">
+    <div style="position:absolute;left:50%;top:${m.lensTop}px;width:${m.lens}px;height:${m.lens}px;margin-left:${-m.lens / 2}px;border-radius:50%;background:${CANVAS}"></div>
+    <div style="position:absolute;left:${m.side}px;top:${m.head}px;width:${m.screenW}px;height:${screenH}px;border-radius:${m.inner}px;overflow:hidden;background:#070a12">
+      <img src="/raw/${raw}" style="position:absolute;left:0;top:${-Math.round(CUT_TOP * scale)}px;width:${m.screenW}px;height:${Math.round(2400 * scale)}px">
     </div>
   </div>`;
 }
@@ -85,9 +111,9 @@ function phonePage(p) {
   const deviceW = Math.round(RAW_W * scale) + 32 + 4;
   return `<!doctype html><meta charset=utf-8><style>${fontFace}
   html, body { margin: 0; width: 1080px; height: 1920px; background: ${CANVAS}; overflow: hidden; }
-  h1 { margin: 0; font: 700 84px/1.06 DM; letter-spacing: -0.025em; color: ${INK}; }
+  h1 { margin: 0; font: 700 80px/1.08 Inter; letter-spacing: -0.03em; color: ${INK}; white-space: nowrap; }
   h1 b { color: ${BLUE}; font-weight: 700; }
-  p { margin: 26px 0 0; font: 500 40px/1.3 DM; color: ${MUTE}; }
+  p { margin: 26px 0 0; font: 500 38px/1.3 Inter; color: ${MUTE}; white-space: nowrap; }
   </style><body>
   <div style="position:absolute;left:96px;top:118px;width:900px"><h1>${p.title}<br><b>${p.blue}</b></h1><p>${p.sub}</p></div>
   ${phone(p.raw, Math.round((1080 - deviceW) / 2), 470, screenH)}
@@ -95,15 +121,31 @@ function phonePage(p) {
 }
 
 function featurePage() {
-  // The phone runs off the bottom edge: the top of the connected screen, the map and the address.
+  // Three whole phones, every edge inside the banner (2026-10-19: the one that ran off the bottom
+  // looked cut off): a list pasted in, connected in the middle, the proxies with their fraud
+  // scores. The middle one stands taller; all three share one centre line.
+  const sideH = 312;
+  const mainH = 366;
+  const side = phoneBox(sideH);
+  const main = phoneBox(mainH);
+  const gap = 18;
+  const right = 1024 - 44;
+  const x3 = right - side.w;
+  const x2 = x3 - gap - main.w;
+  const x1 = x2 - gap - side.w;
+  const yMain = Math.round((500 - main.h) / 2);
+  const ySide = Math.round((500 - side.h) / 2);
   return `<!doctype html><meta charset=utf-8><style>${fontFace}
   html, body { margin: 0; width: 1024px; height: 500px; background: ${CANVAS}; overflow: hidden; }
   </style><body>
-  <div style="position:absolute;left:64px;top:166px;width:124px;height:150px">${H_MARK.replace("<svg ", '<svg width="124" height="150" ')}</div>
-  <div style="position:absolute;left:230px;top:150px;font:700 100px/1 DM;letter-spacing:-0.03em;color:${INK}">HProxy</div>
-  <div style="position:absolute;left:232px;top:270px;font:500 32px/1.2 DM;color:${MUTE}">Proxy check and connect</div>
-  <div style="position:absolute;left:232px;top:318px;font:600 28px/1.2 DM;color:${BLUE}">Free, no account, no ads</div>
-  ${phone("connected.png", 714, 58, 540)}
+  <div style="position:absolute;left:46px;top:150px;width:58px;height:70px">${H_MARK.replace("<svg ", '<svg width="58" height="70" ')}</div>
+  <div style="position:absolute;left:120px;top:146px;font:800 66px/1 Inter;letter-spacing:-0.035em;color:${INK}">HProxy</div>
+  <div style="position:absolute;left:48px;top:246px;font:600 25px/1.25 Inter;letter-spacing:-0.01em;color:${INK}">Proxy check and connect</div>
+  <div style="position:absolute;left:48px;top:284px;width:${x1 - 48 - 24}px;font:500 19px/1.4 Inter;color:${MUTE}">Paste a list, see every proxy's speed and fraud score, connect in one tap.</div>
+  <div style="position:absolute;left:48px;top:350px;font:700 19px/1.2 Inter;color:${BLUE}">Free, no ads, no account</div>
+  ${phone("add.png", x1, ySide, sideH)}
+  ${phone("connected.png", x2, yMain, mainH)}
+  ${phone("my-proxies.png", x3, ySide, sideH)}
   </body>`;
 }
 
@@ -112,7 +154,7 @@ function featurePage() {
 // ------------------------------------------------------------------------------------------
 
 for (const p of PHONES) if (!existsSync(join(RAW, p.raw))) throw new Error(`missing ${join(RAW, p.raw)}`);
-for (const f of ["dm_sans_bold.ttf", "dm_sans_semibold.ttf", "dm_sans_medium.ttf"]) {
+for (const f of ["inter_extrabold.ttf", "inter_bold.ttf", "inter_semibold.ttf", "inter_medium.ttf"]) {
   if (!existsSync(join(FONTS, f))) throw new Error(`missing font ${f}`);
 }
 

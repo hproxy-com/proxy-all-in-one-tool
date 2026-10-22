@@ -10,10 +10,12 @@ import {
   isSavedSort,
   listLines,
   matchSaved,
+  mergeLines,
   proxyTitle,
   sortSaved,
   spacedN,
   takesN,
+  withoutLines,
   type SavedSort,
   type Verdict,
 } from "../../lib/connect";
@@ -71,13 +73,16 @@ import {
   type ParsedLine,
 } from "../../lib/tauri";
 import { useBack } from "../../lib/back";
-import { AddProxies, TypeOne } from "./AddProxies";
+import { AddProxies } from "./AddProxies";
 import { UNDO_MS, type PendingRemove } from "../../lib/undoRemove";
-import { pasteOneHere } from "../../lib/proxyExamples";
 import { useReadable } from "./lineReading";
 import PasteReview from "./PasteReview";
-import { BlockTitle, Button, ButtonGroup, Dropdown, Flag, Icon, InfoTip, Input, Tag, TextArea } from "../ui";
-import PlaceRow, { type RowState } from "./PlaceRow";
+import { BlockTitle, Button, ButtonGroup, Dropdown, Flag, Icon, InfoTip, Input, Tag, TextArea, cx } from "../ui";
+import PlaceRow, { RowMenu, type RowMenuItem, type RowState } from "./PlaceRow";
+import { ONE_AT_A_TIME, pastedWhen, pastesOf, pasteTitle, type Paste } from "../../lib/pastes";
+import { PROXIES_ASK, type ProxiesAsk } from "../../lib/proxiesAsk";
+import { numberedNames } from "../../lib/review";
+import { countFeature } from "../../lib/usage";
 
 /* WHERE TO, read like a VPN's location list (the Proxies page since
    2026-09-30; ProxiesPage.tsx draws the tabs).
@@ -94,8 +99,7 @@ import PlaceRow, { type RowState } from "./PlaceRow";
    here is drawn from a view without passwords and names its place by id.
 
    Every row is a PlaceRow: a click connects, or moves you there while
-   connected, the way proxy connectors and VPN apps work (monorepo
-   docs/research-2026-09-30-proxy-connector-apps/PLAN.md). The rest of a
+   connected, the way proxy connectors and VPN apps work. The rest of a
    row's actions are behind its ⋯. */
 
 export type DestTab = "proxies" | "groups" | "free";
@@ -107,6 +111,10 @@ const GROUPS_INFO = (
     <p>Copy your proxies and press Ctrl+V here, or drop the file on this page. The working ones of a check can be saved as a group from the Checker&rsquo;s Export menu.</p>
   </>
 );
+
+/** Text from outside Add's box: pasted anywhere on the page, or dropped on it (a file, or text
+    dragged in). */
+export type Incoming = { text: string; at: number; how: "paste" | "file" };
 
 export type LineState = {
   parsed: ParsedLine | null;
@@ -151,6 +159,13 @@ export type DestinationsProps = {
       takes them out, Restore brings them back for 5 seconds (2026-10-18). */
   dead: ProxyView[];
   onRemoveDead: () => void;
+  /** Saved proxies taken out, Restore for 5 seconds after: a paste's Delete all, Select's Delete
+      (2026-10-22). */
+  onRemoveMany: (ids: string[]) => void;
+  /** A name for each of several saved proxies at once (a paste's name, numbered; "" takes it away). */
+  onNameMany: (ids: string[], names: string[]) => void;
+  /** These saved proxies checked again, four at a time (a paste's Test them). */
+  onTestSome: (ids: string[]) => void;
   /** A Remove waiting to happen: which ones, and since when. */
   removing: PendingRemove | null;
   onRestore: () => void;
@@ -167,8 +182,6 @@ export type DestinationsProps = {
   onAddMany: (lines: string[], details?: Details, name?: string) => void;
   /** Connect's paste field: save the line and connect through it at once. */
   onAddAndConnect: () => void;
-  /** The same lines as one group instead. */
-  onGroupFromLines: (lines: string[], details?: Details) => void;
   onRecheck: () => void;
   onForget: (p: ProxyView) => void;
   /** Name a saved proxy; an empty name takes the name away. */
@@ -200,9 +213,12 @@ export type DestinationsProps = {
   setFreeCountry: (code: string) => void;
   freeSocks5: boolean;
   setFreeSocks5: (v: boolean) => void;
-  /** Text pasted or dropped anywhere on Connect: one proxy fills the field,
-      several open the review. */
-  incoming: { text: string; at: number } | null;
+  /** Text pasted or dropped anywhere on the page: a drop joins what is in Add's box (2026-10-22);
+      a pasted list opens its test, one pasted proxy goes into the box. */
+  incoming: Incoming | null;
+  /** A file is held over the Proxies page (2026-10-22): My proxies opens Add, whose right half says
+      where it goes. */
+  dragging?: boolean;
 };
 
 export default function Destinations(p: DestinationsProps) {
@@ -266,19 +282,26 @@ function keepSort(s: SavedSort) {
 }
 
 /* Your own proxies (rebuilt 2026-09-30 on how proxy connectors build their
-   lists): a bar on top (search, order, Test all, Add), then one row per proxy.
-   A click connects; ⋯ holds Rename, Check again, Copy address and Remove. The
-   paste field waits behind Add once the list has something in it; while the
-   list is empty it is the first thing on the page. A paste anywhere opens it:
-   one proxy fills the field, a whole list opens the review, where every line
-   is read by the engine and accepted in one click. */
+   lists): a bar on top (search, order, Test all, Select), then one row per
+   proxy. A click connects; ⋯ holds Rename, Check again, Copy address and
+   Remove. Add's box waits behind the page's Add (top right, with Paste what I
+   copied, since 2026-10-22) once the list has something in it; while the list
+   is empty it is the first thing on the page. A paste anywhere: one proxy goes
+   into the box, a whole list straight to its test (PasteReview.tsx), where
+   every line is read by the engine and accepted in one click. A file, dropped
+   or chosen, joins what is in the box. */
 function ProxiesPane(p: DestinationsProps) {
   const [pasted, setPasted] = useState<string[] | null>(null);
   // The saved proxy whose name, expiry and note are open, by id.
   const [describing, setDescribing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  // "Type one" open, the paste field in its card; and why the last way in found nothing.
-  const [typing, setTyping] = useState(false);
+  // What is typed or pasted into Add's box (2026-10-22), and why the last way in found nothing.
+  const [boxText, setBoxText] = useState("");
+  const boxRef = useRef<HTMLTextAreaElement>(null);
+  /* The lines the box sent to the review: they leave the box only once they are kept, so Cancel
+     gives back everything typed, a line with a typo to fix too ("don't just make the whole system
+     break"). Null when the review came from a paste. */
+  const sentFromBox = useRef<string[] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [typed, setTyped] = useState("");
   const [sort, setSortState] = useState<SavedSort>(loadSort);
@@ -286,73 +309,136 @@ function ProxiesPane(p: DestinationsProps) {
     setSortState(s);
     keepSort(s);
   };
+  /* Select (since 2026-10-22, for deleting many added proxies at once): tick rows, or a whole paste
+     at its title, then Delete; Restore stays for 5 seconds. */
+  const [selecting, setSelecting] = useState(false);
+  const [ticked, setTicked] = useState<ReadonlySet<string>>(() => new Set());
+  const tick = (ids: string[], on: boolean) =>
+    setTicked((was) => {
+      const next = new Set(was);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  const stopSelecting = () => {
+    setSelecting(false);
+    setTicked(new Set());
+  };
+  useEffect(() => {
+    if (!selecting) return;
+    const key = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) stopSelecting();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [selecting]);
+  // A paste folded away, by its key; the paste whose name, expiry and note are open.
+  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
+  const [describingPaste, setDescribingPaste] = useState<string | null>(null);
   const empty = p.ready && p.proxies.length === 0;
   const takePaste = (text: string): boolean => {
     const lines = [...new Set(listLines(text))];
     if (lines.length < 2) return false;
+    sentFromBox.current = null;
     setPasted(lines);
     return true;
   };
-  /** Type one, open, with `line` in its field when one came (one proxy pasted, dropped or read). */
-  const typeOne = (line?: string) => {
-    if (line !== undefined) p.setLine(line);
+  /** Text that came in (a file, or one pasted proxy) joins what is in the box, without the lines it
+      holds already, to be looked at and added (since 2026-10-22). */
+  const intoBox = (text: string) => {
+    setBoxText((had) => mergeLines(had, text));
     setProblem(null);
-    setTyping(true);
-    setTimeout(() => p.lineRef.current?.focus(), 30);
+    setTimeout(() => boxRef.current?.focus(), 30);
   };
-  const closeType = () => {
-    setTyping(false);
-    p.setLine("");
-  };
-  // Pasted or dropped anywhere on the page.
+  // Dropped anywhere on the page: into the box. Pasted: a list opens its test, one proxy goes into the box.
   useEffect(() => {
     if (!p.incoming) return;
     setAdding(true);
-    if (!takePaste(p.incoming.text)) typeOne(p.incoming.text.trim());
+    if (p.incoming.how === "file" || !takePaste(p.incoming.text)) intoBox(p.incoming.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.incoming]);
+  // A file held over the list opens Add, so its right half can show where the file goes.
+  useEffect(() => {
+    if (p.dragging) setAdding(true);
+  }, [p.dragging]);
+  // The page's top-right Add and Paste what I copied (ProxiesPage.tsx, lib/proxiesAsk.ts).
+  const asks = useRef({ paste: () => {}, add: () => {} });
+  useEffect(() => {
+    const hear = (e: Event) => {
+      const what = (e as CustomEvent<ProxiesAsk>).detail;
+      if (what === "paste") asks.current.paste();
+      else asks.current.add();
+    };
+    window.addEventListener(PROXIES_ASK, hear);
+    return () => window.removeEventListener(PROXIES_ASK, hear);
+  }, []);
 
-  // Paste: what was copied. A list opens the review, one proxy goes into Type one; a clipboard the
-  // window may not read leaves Type one open, where Ctrl+V works.
+  // Paste what I copied: a list opens the review, one proxy goes into the box; a clipboard the
+  // window may not read leaves the box waiting, where Ctrl+V works.
   const pasteList = () =>
     void navigator.clipboard
       .readText()
       .then((t) => {
         if (!t.trim()) return setProblem("Nothing is copied yet: copy your proxies, then press Paste.");
         setProblem(null);
-        if (!takePaste(t)) typeOne(t.trim());
+        if (!takePaste(t)) intoBox(t);
       })
-      .catch(() => typeOne());
-  // A file of proxies: a list opens the review, one proxy goes into Type one.
+      .catch(() => {
+        setProblem("Press Ctrl+V in the box.");
+        boxRef.current?.focus();
+      });
+  // A file of proxies, chosen: into the box with the rest, as a dropped one goes.
   const uploadList = () =>
     void importProxyFile()
       .then((t) => {
-        if (!t?.trim()) return;
-        setProblem(null);
-        if (!takePaste(t)) typeOne(t.trim());
+        if (t?.trim()) intoBox(t);
       })
       .catch(() => {});
+  // Add: whatever is in the box, one proxy or many, tested before it is kept; the box keeps its
+  // text until they are.
+  const addFromBox = () => {
+    const lines = [...new Set(listLines(boxText))];
+    if (!lines.length) return;
+    sentFromBox.current = lines;
+    setPasted(lines);
+  };
   const openAdd = () => {
     setAdding(true);
-    setTyping(false);
     setProblem(null);
+    setTimeout(() => boxRef.current?.focus(), 30);
+  };
+  asks.current = {
+    paste: () => {
+      setAdding(true);
+      pasteList();
+    },
+    add: openAdd,
   };
 
   if (pasted) {
+    // Once they are kept, what the box sent leaves it, and Add closes, unless something was
+    // dropped into its box meanwhile.
+    const done = () => {
+      const sent = sentFromBox.current;
+      sentFromBox.current = null;
+      const left = sent ? withoutLines(boxText, sent) : boxText;
+      if (sent) setBoxText(left);
+      setPasted(null);
+      setAdding(!!left.trim());
+    };
     return (
       <PasteReview
         lines={pasted}
         room={MAX_PROXIES - p.proxies.length}
-        onCancel={() => setPasted(null)}
+        onCancel={() => {
+          sentFromBox.current = null;
+          setPasted(null);
+        }}
         onAdd={(kept, details, name) => {
           p.onAddMany(kept, details, name);
-          setPasted(null);
-          setAdding(false);
-        }}
-        onGroup={(ok, details) => {
-          p.onGroupFromLines(ok, details);
-          setPasted(null);
-          setAdding(false);
+          done();
         }}
       />
     );
@@ -361,74 +447,200 @@ function ProxiesPane(p: DestinationsProps) {
   const shown = matchSaved(sortSaved(p.proxies, sort), typed);
   const sortName = SAVED_SORTS.find(([s]) => s === sort)?.[1] ?? "Recently used";
   const some = p.proxies.length > 0;
+  // Adding is a clean page of its own: the saved list steps aside meanwhile (since 2026-10-22; the
+  // old rows beside the box only got in the way).
+  const listShown = some && !adding;
+  // Every paste its own group; with no paste among them, the list as it always was.
+  const pastes = pastesOf(shown);
+  const sectioned = pastes.some((x) => x.key !== ONE_AT_A_TIME);
+  const tickedShown = shown.filter((s) => ticked.has(s.id));
+  const allTicked = shown.length > 0 && tickedShown.length === shown.length;
+  const deleteTicked = () => {
+    p.onRemoveMany(tickedShown.map((s) => s.id));
+    stopSelecting();
+  };
+  const rowOf = (s: ProxyView) => (
+    <ProxyRow
+      key={s.id}
+      s={s}
+      p={p}
+      describing={describing === s.id}
+      setDescribing={setDescribing}
+      select={selecting ? { on: ticked.has(s.id), onToggle: () => tick([s.id], !ticked.has(s.id)) } : undefined}
+    />
+  );
 
   return (
     <>
       <PlacesNote p={p} what="proxies" />
-      {some && (
-        <div className="ux-listbar">
-          <span className="grow">
-            <Input icon="search" value={typed} onChange={setTyped} placeholder="Search by name, address or place" label="Search your proxies" />
-          </span>
-          <Dropdown label={sortName} items={SAVED_SORTS.map(([s, name]) => ({ label: name, onClick: () => setSort(s) }))} />
-          <Button variant="text" disabled={!!p.testing} onClick={p.onTestAll} title="Check every saved proxy again">
-            <Icon.refresh className="h-4 w-4" />
-            {p.testing ? `Testing ${p.testing.done} of ${p.testing.total}` : "Test all"}
-          </Button>
-          <Button variant="solid" onClick={openAdd} title="Paste a proxy, or a whole list">
-            <Icon.plus className="h-4 w-4" />
-            Add
-          </Button>
-        </div>
-      )}
-
-      <DeadLine p={p} />
-
-      {/* Adding: the big place to start (AddProxies.tsx), or Type one's card with the field. */}
-      {(adding || empty) &&
-        (typing ? (
-          <TypeOne
-            field={
-              <LineField
-                p={p}
-                inputRef={p.lineRef}
-                solid
-                placeholder={pasteOneHere(isMobile())}
-                onMany={takePaste}
-                onEscape={closeType}
-                after={
-                  <Button variant="text" onClick={closeType} title="Back (Escape)">
-                    Cancel
-                  </Button>
-                }
-              />
-            }
-          />
+      {listShown &&
+        (selecting ? (
+          <div className="ux-listbar is-selecting" role="toolbar" aria-label="Selected proxies">
+            <span className="grow ux-selectcount">
+              {tickedShown.length ? `${spacedN(tickedShown.length)} selected` : "Tick the ones to delete, or a whole paste at its name"}
+            </span>
+            <Button variant="text" onClick={() => tick(shown.map((s) => s.id), !allTicked)}>
+              {allTicked ? "Untick all" : "Select all"}
+            </Button>
+            <Button variant="danger" disabled={!tickedShown.length} onClick={deleteTicked} title="Restore stays for 5 seconds after">
+              <Icon.trash className="h-4 w-4" />
+              {tickedShown.length ? `Delete ${spacedN(tickedShown.length)}` : "Delete"}
+            </Button>
+            <Button variant="text" onClick={stopSelecting} title="Done (Escape)">
+              Cancel
+            </Button>
+          </div>
         ) : (
-          <AddProxies
-            asked={empty ? p.asked : 0}
-            compact={!empty}
-            problem={problem}
-            onPaste={pasteList}
-            onUpload={uploadList}
-            onType={() => typeOne()}
-            onClose={empty ? undefined : () => setAdding(false)}
-          />
+          <div className="ux-listbar">
+            <span className="grow">
+              <Input
+                icon="search"
+                value={typed}
+                onChange={(v) => {
+                  setTyped(v);
+                  if (v.trim()) countFeature("search");
+                }}
+                placeholder="Search by name, address or place"
+                label="Search your proxies"
+              />
+            </span>
+            <Dropdown label={sortName} items={SAVED_SORTS.map(([s, name]) => ({ label: name, onClick: () => setSort(s) }))} />
+            <Button variant="text" disabled={!!p.testing} onClick={p.onTestAll} title="Check every saved proxy again">
+              <Icon.refresh className="h-4 w-4" />
+              {p.testing ? `Testing ${p.testing.done} of ${p.testing.total}` : "Test all"}
+            </Button>
+            <Button variant="text" onClick={() => setSelecting(true)} title="Tick several and delete them at once">
+              <Icon.check className="h-4 w-4" />
+              Select
+            </Button>
+          </div>
         ))}
 
-      {!some ? null : shown.length === 0 ? (
+      {listShown && <DeadLine p={p} />}
+
+      {/* Adding: the box to type or paste into, a file beside it (AddProxies.tsx), the whole page
+          for it; the page's top right opens it and pastes (ProxiesPage.tsx). */}
+      {(adding || empty) && (
+        <AddProxies
+          asked={empty ? p.asked : 0}
+          problem={problem}
+          text={boxText}
+          setText={setBoxText}
+          boxRef={boxRef}
+          onUpload={uploadList}
+          onAdd={addFromBox}
+          onClose={empty ? undefined : () => setAdding(false)}
+          dragging={!!p.dragging}
+        />
+      )}
+
+      {!listShown ? null : shown.length === 0 ? (
         <p className="px-1 text-[13.5px] font-medium text-ink-mute">None of your proxies matches &ldquo;{typed.trim()}&rdquo;.</p>
-      ) : (
+      ) : !sectioned ? (
         <div className="ux-places" role="list" aria-label="Your proxies">
-          {shown.map((s) => (
-            <ProxyRow key={s.id} s={s} p={p} describing={describing === s.id} setDescribing={setDescribing} />
-          ))}
+          {shown.map(rowOf)}
+        </div>
+      ) : (
+        <div className="ux-pastes">
+          {pastes.map((paste) => {
+            const ids = paste.proxies.map((x) => x.id);
+            // A search opens every paste: what it found is never folded away.
+            const open = !folded.has(paste.key) || !!typed.trim();
+            const toggleFold = () =>
+              setFolded((was) => {
+                const next = new Set(was);
+                if (next.has(paste.key)) next.delete(paste.key);
+                else next.add(paste.key);
+                return next;
+              });
+            const all = ids.every((id) => ticked.has(id));
+            return (
+              <section key={paste.key} className="ux-paste" aria-label={pasteTitle(paste, p.now)}>
+                <PasteHead
+                  paste={paste}
+                  p={p}
+                  open={open}
+                  onFold={toggleFold}
+                  select={selecting ? { on: all, onToggle: () => tick(ids, !all) } : undefined}
+                  onDescribe={() => setDescribingPaste(paste.key)}
+                />
+                {describingPaste === paste.key && (
+                  <DetailsEditor
+                    name={paste.name}
+                    expires={sameOf(paste.proxies.map((x) => x.expires))}
+                    note={sameOf(paste.proxies.map((x) => x.note))}
+                    nameHint={`One name for all ${spacedN(ids.length)}, numbered, like "Shop account"`}
+                    onSave={async (d) => {
+                      const name = (d.name ?? "").trim();
+                      if (name !== paste.name) p.onNameMany(ids, name ? numberedNames(name, ids.length) : ids.map(() => ""));
+                      return p.onDescribe(ids, { expires: d.expires, note: d.note });
+                    }}
+                    onDone={() => setDescribingPaste(null)}
+                  />
+                )}
+                {open && (
+                  <div className="ux-places" role="list" aria-label={pasteTitle(paste, p.now)}>
+                    {paste.proxies.map(rowOf)}
+                  </div>
+                )}
+              </section>
+            );
+          })}
         </div>
       )}
 
-      {some && <p className="px-1 text-[12.5px] font-medium text-ink-mute">Kept on {thisDevice()} only.</p>}
+      {listShown && <p className="px-1 text-[12.5px] font-medium text-ink-mute">Kept on {thisDevice()} only.</p>}
       <RestoreBar p={p} />
     </>
+  );
+}
+
+/** The value every one of them has, or nothing when they differ. */
+const sameOf = (values: (string | undefined)[]): string | undefined => (values.every((v) => v === values[0]) ? values[0] : undefined);
+
+/** A paste's title (2026-10-22): its name, or when it came in, and how many; a click folds it away.
+    ⋯ holds Name them (numbered), expiry and note; Test; Delete all with Restore. While selecting, a
+    tick that takes all of it. */
+function PasteHead({
+  paste,
+  p,
+  open,
+  onFold,
+  select,
+  onDescribe,
+}: {
+  paste: Paste;
+  p: DestinationsProps;
+  open: boolean;
+  onFold: () => void;
+  select?: { on: boolean; onToggle: () => void };
+  onDescribe: () => void;
+}) {
+  const ids = paste.proxies.map((x) => x.id);
+  const n = ids.length;
+  const one = paste.key === ONE_AT_A_TIME;
+  const title = pasteTitle(paste, p.now);
+  const count = `${spacedN(n)} ${n === 1 ? "proxy" : "proxies"}`;
+  const meta = !one && paste.name ? `${count} · pasted ${pastedWhen(paste.addedAt, p.now)}` : count;
+  const menu: RowMenuItem[] = [
+    ...(one ? [] : [{ label: "Name them, expiry and note", onClick: onDescribe }]),
+    { label: n === 1 ? "Test it" : `Test all ${spacedN(n)}`, onClick: () => p.onTestSome(ids) },
+    { label: n === 1 ? "Delete it" : `Delete all ${spacedN(n)}`, onClick: () => p.onRemoveMany(ids), danger: true },
+  ];
+  return (
+    <div className="ux-pastehead">
+      {select && (
+        <button type="button" className={cx("tick", select.on && "is-on")} onClick={select.onToggle} aria-pressed={select.on} aria-label={`Select all of ${title}`}>
+          <Icon.check />
+        </button>
+      )}
+      <button type="button" className="fold" aria-expanded={open} onClick={onFold} title={open ? "Fold them away" : "Show them"}>
+        <Icon.chevronRight className="chev" />
+        <span className="title">{title}</span>
+        <span className="meta num">{meta}</span>
+      </button>
+      {!select && <RowMenu items={menu} title={title} />}
+    </div>
   );
 }
 
@@ -448,8 +660,7 @@ function DeadLine({ p }: { p: DestinationsProps }) {
 }
 
 /** After a Remove: how many went, and Restore, for 5 seconds, at the window's foot; a line runs
-    out meanwhile (2026-10-18: "a restore button that pops up shortly after and lasts for 5
-    seconds ... at the bottom"). */
+    out meanwhile (since 2026-10-18). */
 function RestoreBar({ p }: { p: DestinationsProps }) {
   const r = p.removing;
   if (!r) return null;
@@ -552,7 +763,20 @@ export function LineField({
 /** One of your proxies: its flag and name, the address under a name, how it
     did when last checked, its note, how many days it has left, and ⋯. The
     login, its last day and how often it was used are in the row's tooltip. */
-function ProxyRow({ s, p, describing, setDescribing }: { s: ProxyView; p: DestinationsProps; describing: boolean; setDescribing: (id: string | null) => void }) {
+function ProxyRow({
+  s,
+  p,
+  describing,
+  setDescribing,
+  select,
+}: {
+  s: ProxyView;
+  p: DestinationsProps;
+  describing: boolean;
+  setDescribing: (id: string | null) => void;
+  /** Select is on: its tick, and a click ticks it. */
+  select?: { on: boolean; onToggle: () => void };
+}) {
   const place: Place = { kind: "proxy", id: s.id };
   const title = proxyTitle(s);
   const said = lastCheckWords(s.last);
@@ -599,6 +823,7 @@ function ProxyRow({ s, p, describing, setDescribing }: { s: ProxyView; p: Destin
       problem={rowProblem(place, p)}
       tooltip={s.note ? `${tooltip}\n${s.note}` : tooltip}
       onConnect={() => p.onConnect(place)}
+      select={select}
       below={
         describing ? (
           <DetailsEditor

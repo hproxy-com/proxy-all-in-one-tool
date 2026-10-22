@@ -242,6 +242,26 @@ fn in_words(e: &reqwest::Error, target: &str) -> String {
     words_for(kind, &chain, target)
 }
 
+/// Why a probe failed, in the fixed words of the apps' usage counts (hproxy-api,
+/// `usage::FAILURES`), read from the sentences this file writes. None when the probe cannot
+/// know: the relay answered that the proxy behind it failed ("did not open", a 502), and the
+/// relay itself keeps why (hproxy-relay, `Stats::take_why`).
+pub fn failure_word(error: &str) -> Option<&'static str> {
+    if error.starts_with("no answer from ") {
+        Some("timeout")
+    } else if error.contains("false certificate") {
+        Some("tls")
+    } else if error.contains(" answered 407") {
+        Some("login")
+    } else if error.contains(" answered 403") || error.contains(" answered 451") {
+        Some("blocked")
+    } else if error.starts_with("the proxy did not open ") || error.contains(" answered 502") {
+        None
+    } else {
+        Some("other")
+    }
+}
+
 /// The words for a failed probe. The system's part is read by its kind, never its text: that text
 /// is in the device's language ("Es konnte keine Verbindung hergestellt werden" on a German
 /// computer). reqwest's and hyper's own words are always English, so they may be read.
@@ -293,6 +313,31 @@ mod tests {
         assert!(probe_url_from(Some("google.com".into())).is_err());
         assert!(probe_url_from(Some("ftp://x.example/".into())).is_err());
         assert_eq!(host_of("https://www.google.com/generate_204"), "www.google.com");
+    }
+
+    #[test]
+    fn a_failed_probe_is_named_in_one_word_or_left_to_the_relay() {
+        use std::io::ErrorKind as K;
+        let t = "hproxy.com";
+        let answered = |s: reqwest::StatusCode| format!("{t} answered {s}");
+        assert_eq!(failure_word(&words_for(Some(K::TimedOut), "", t)), Some("timeout"));
+        assert_eq!(
+            failure_word(&words_for(None, "invalid peer certificate: UnknownIssuer | ", t)),
+            Some("tls")
+        );
+        assert_eq!(
+            failure_word(&answered(reqwest::StatusCode::PROXY_AUTHENTICATION_REQUIRED)),
+            Some("login")
+        );
+        assert_eq!(failure_word(&answered(reqwest::StatusCode::FORBIDDEN)), Some("blocked"));
+        assert_eq!(
+            failure_word(&words_for(Some(K::ConnectionRefused), "", t)),
+            Some("other")
+        );
+        assert_eq!(failure_word("the answer did not come from our judge"), Some("other"));
+        // The relay's 502: the proxy behind it failed, and the relay knows why.
+        assert_eq!(failure_word(&words_for(None, "tunnel error: unsuccessful | ", t)), None);
+        assert_eq!(failure_word(&answered(reqwest::StatusCode::BAD_GATEWAY)), None);
     }
 
     #[test]

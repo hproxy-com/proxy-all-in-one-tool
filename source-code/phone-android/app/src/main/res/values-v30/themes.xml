@@ -1,0 +1,9 @@
+<resources>
+    <!-- Android 11 and later: as on Android 10 (values-v29), and the screens also reach around
+         the camera cutout on every side of the screen, the way Android 15 draws every app. -->
+    <style name="Theme.HProxy" parent="Base.Theme.HProxy">
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">always</item>
+    </style>
+</resources>

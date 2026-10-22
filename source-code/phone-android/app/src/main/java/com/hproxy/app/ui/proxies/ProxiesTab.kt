@@ -502,9 +502,10 @@ private fun ExpiryLine(soon: Int, ended: Int) {
 private fun EmptyMine(nav: Nav) {
     Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 34.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Txt("No proxies of your own yet", type(22.sp, FontWeight.Bold, spacing = (-0.015).em))
-        Txt("Add your own, or start with a free one.", type(15.sp, FontWeight.Medium, C.ink2, lineHeight = 22.sp), modifier = Modifier.padding(bottom = 10.dp))
+        // Someone who has proxies pastes them (2026-10-17: no "or try a free one" line); the free
+        // ones stay on their own tab, right above.
+        Txt("Paste them, scan a QR code or type one.", type(15.sp, FontWeight.Medium, C.ink2, lineHeight = 22.sp), modifier = Modifier.padding(bottom = 10.dp))
         Btn("Add proxies", { nav.open(SheetKind.Add) }, Modifier.fillMaxWidth(), icon = I.paste)
-        LineBtn("See the free ones", { nav.showShelf(Shelf.Free) }, Modifier.fillMaxWidth(), icon = I.globe)
     }
 }
 

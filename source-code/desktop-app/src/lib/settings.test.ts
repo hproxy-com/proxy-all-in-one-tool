@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS, loadSettings, saveSettings, whatLeaves } from "./settings";
+import { DEFAULT_SETTINGS, MAX_WAIT_SECONDS, loadSettings, saveSettings, waitWords, whatLeaves } from "./settings";
 
 /* Vitest runs in node, which has no localStorage. A tiny in-memory stand-in. */
 const store = new Map<string, string>();
@@ -63,5 +63,37 @@ describe("what a check sends off this computer", () => {
     expect(whatLeaves({ source: "local", geoLookup: false })).toContain("nothing about your list leaves");
     expect(whatLeaves({ source: "both", geoLookup: false })).toContain("logins included");
     expect(whatLeaves({ source: "api", geoLookup: true })).toContain("logins included");
+  });
+});
+
+/* Wait per proxy goes up to two minutes and says it in words, "1 minute and 20 seconds" (since
+   2026-10-22). */
+describe("the wait per proxy in words", () => {
+  it("says seconds, minutes, and both", () => {
+    expect(waitWords(1)).toBe("1 second");
+    expect(waitWords(8)).toBe("8 seconds");
+    expect(waitWords(60)).toBe("1 minute");
+    expect(waitWords(80)).toBe("1 minute and 20 seconds");
+    expect(waitWords(61)).toBe("1 minute and 1 second");
+    expect(waitWords(MAX_WAIT_SECONDS)).toBe("2 minutes");
+  });
+});
+
+/* The first start's "How do you want to start?" (2026-10-22): asked of a new copy only. */
+describe("the first-start screen", () => {
+  it("is asked on a fresh install", () => {
+    expect(loadSettings().welcomed).toBe(false);
+  });
+
+  it("counts settings kept before it as answered", () => {
+    localStorage.setItem("hproxy-checker-settings", JSON.stringify({ concurrency: 32, look: "dark-2026-10-05" }));
+    expect(loadSettings().welcomed).toBe(true);
+  });
+
+  it("stays answered once answered, and asked until then", () => {
+    saveSettings({ ...DEFAULT_SETTINGS, welcomed: false });
+    expect(loadSettings().welcomed).toBe(false);
+    saveSettings({ ...DEFAULT_SETTINGS, welcomed: true });
+    expect(loadSettings().welcomed).toBe(true);
   });
 });

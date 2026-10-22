@@ -3,7 +3,6 @@ import javax.inject.Inject
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -89,20 +88,17 @@ android {
             buildConfigField("boolean", "PICTURES", "true")
         }
     }
-    sourceSets["preview"].res.srcDir("src/debug/res")
+    sourceSets["preview"].res.directories += "src/debug/res"
 
+    // Java 17, and the Kotlin with it (built-in Kotlin takes its JVM target from here).
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions {
-        jvmTarget = "17"
     }
     buildFeatures {
         compose = true
         buildConfig = true
     }
-    sourceSets["main"].jniLibs.srcDir(layout.buildDirectory.dir("engine"))
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/*.version", "DebugProbesKt.bin")
     }
@@ -129,10 +125,11 @@ dependencies {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The engine: proxy-engine/hproxy-mobile, built by cargo for each Android chip type into
-// build/engine/<abi>/libhproxy_mobile.so, which the app packs. The NDK's compilers link it (and
-// compile ring's C parts). `-Pabis=x86_64` builds one chip type only (an emulator); the default
-// is the two every phone uses, `-Pabis=all` adds the two emulator ones.
+// The engine: proxy-engine/hproxy-mobile, built by cargo for each Android chip type, its
+// libhproxy_mobile.so laid out per chip type in the folder AGP gives each build of the app for
+// native libraries made during the build (and packs). The NDK's compilers link it (and compile
+// ring's C parts). `-Pabis=x86_64` builds one chip type only (an emulator); the default is the two
+// every phone uses, `-Pabis=all` adds the two emulator ones.
 // ---------------------------------------------------------------------------------------------
 
 abstract class BuildEngine @Inject constructor(private val exec: org.gradle.process.ExecOperations) : DefaultTask() {
@@ -190,17 +187,20 @@ val engineAbis: List<String> = when (val asked = (findProperty("abis") as String
     else -> asked.split(",").map { it.trim() }.filter { it.isNotEmpty() }
 }
 
-val buildEngine = tasks.register<BuildEngine>("buildEngine") {
-    abis.set(engineAbis)
-    ndk.set(android.ndkDirectory.absolutePath)
-    workspace.set(rootProject.layout.projectDirectory.dir(".."))
-    out.set(layout.buildDirectory.dir("engine"))
-    // cargo knows when nothing changed; Gradle asks it every time.
-    outputs.upToDateWhen { false }
-}
-
-android.applicationVariants.configureEach {
-    tasks.named("merge${name.replaceFirstChar { it.uppercase() }}JniLibFolders") { dependsOn(buildEngine) }
+// One task per build of the app (debug, release, preview, pictures): AGP picks each one's folder
+// and runs it before packing, so nothing is tied to AGP's own task names. cargo builds a chip type
+// once; a second build of the app only copies.
+androidComponents {
+    onVariants { variant ->
+        val engine = tasks.register<BuildEngine>("buildEngine${variant.name.replaceFirstChar { it.uppercase() }}") {
+            abis.set(engineAbis)
+            ndk.set(androidComponents.sdkComponents.ndkDirectory.map { it.asFile.absolutePath })
+            workspace.set(rootProject.layout.projectDirectory.dir(".."))
+            // cargo knows when nothing changed; Gradle asks it every time.
+            outputs.upToDateWhen { false }
+        }
+        variant.sources.jniLibs?.addGeneratedSourceDirectory(engine, BuildEngine::out)
+    }
 }
 
 android.defaultConfig.ndk.abiFilters.addAll(engineAbis)

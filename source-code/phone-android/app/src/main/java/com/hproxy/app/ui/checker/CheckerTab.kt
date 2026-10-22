@@ -176,9 +176,8 @@ private enum class Show { Working, All }
  * The checker (5 · Flip, the version chosen in the design rounds). Every proxy is a card,
  * face down: its flag and the end of its address. The moment its answer lands, the card turns over:
  * green with its milliseconds, amber when slow, red with the reason, grey when it never answered.
- * When the run is over, the cards make way for the proxies themselves (2026-10-11: "in the end it
- * should list the proxies itself"), working ones first, each a row to connect to. "A checker is a
- * check, they can change the judge but that's about it": the judge is its one choice.
+ * When the run is over, the cards make way for the proxies themselves (since 2026-10-11), working
+ * ones first, each a row to connect to. A checker only checks: the judge is its one choice.
  */
 @Composable
 fun CheckerTab(nav: Nav) {

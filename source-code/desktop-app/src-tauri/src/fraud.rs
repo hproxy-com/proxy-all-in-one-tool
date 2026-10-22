@@ -25,7 +25,10 @@ pub struct FraudRow {
 }
 
 #[tauri::command]
-pub async fn fraud_lookup(ips: Vec<String>, service: FraudService) -> Vec<FraudRow> {
+pub async fn fraud_lookup(app: tauri::AppHandle, ips: Vec<String>, service: FraudService) -> Vec<FraudRow> {
+    if !ips.is_empty() {
+        crate::usage::feature(&app, "fraud_score");
+    }
     let http = hproxy_api::http_client("hproxy-checker", Duration::from_secs(12));
     let mut seen = HashSet::new();
     let ips: Vec<String> = ips

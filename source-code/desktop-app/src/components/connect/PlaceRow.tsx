@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { speedOf } from "../../lib/connect";
 import { isMobile } from "../../lib/tauri";
 import PhoneSheet, { SheetItem } from "../phone/PhoneSheet";
@@ -56,14 +57,23 @@ export type PlaceRowProps = {
   /** Under the row, while something about it is being edited (its name,
       last day and note). */
   below?: ReactNode;
+  /** Select (since 2026-10-22, for deleting many at once): a tick box before the flag, a click
+      ticks it and nothing connects; no ⋯ meanwhile. */
+  select?: { on: boolean; onToggle: () => void };
 };
 
 export default function PlaceRow(p: PlaceRowProps) {
   const state = p.state ?? "idle";
   const on = state === "connected";
-  const clickable = !!p.onConnect && !on && !p.busy && !p.editing;
+  const selecting = !!p.select;
+  const clickable = !selecting && !!p.onConnect && !on && !p.busy && !p.editing;
   const body = (
     <>
+      {p.select && (
+        <span className={cx("tick", p.select.on && "is-on")} aria-hidden="true">
+          <Icon.check />
+        </span>
+      )}
       <span className="lead">{p.lead}</span>
       <span className="text">
         {p.editing ?? <span className={cx("name", p.mono && "num")}>{p.name}</span>}
@@ -77,7 +87,7 @@ export default function PlaceRow(p: PlaceRowProps) {
       ) : state === "connecting" ? (
         <span className="word is-busy">Connecting…</span>
       ) : (
-        p.onConnect && !p.editing && <span className="word">{p.running ? "Switch here" : "Connect"}</span>
+        p.onConnect && !p.editing && !selecting && <span className="word">{p.running ? "Switch here" : "Connect"}</span>
       )}
       {p.chosen && !on && state !== "connecting" && (
         <span className="chosen" title="The switch connects this one">
@@ -99,11 +109,22 @@ export default function PlaceRow(p: PlaceRowProps) {
   return (
     <div
       role="listitem"
-      className={cx("ux-place", on && "is-on", state === "connecting" && "is-connecting", p.expand?.open && "is-open", p.tone === "bad" && "is-bad")}
+      className={cx(
+        "ux-place",
+        on && "is-on",
+        state === "connecting" && "is-connecting",
+        p.expand?.open && "is-open",
+        p.tone === "bad" && "is-bad",
+        p.select?.on && "is-ticked",
+      )}
     >
       <div className="line">
         {p.editing ? (
           <div className="main">{body}</div>
+        ) : p.select ? (
+          <button type="button" className="main" onClick={p.select.onToggle} aria-pressed={p.select.on} title={p.tooltip}>
+            {body}
+          </button>
         ) : (
           <button
             type="button"
@@ -127,7 +148,7 @@ export default function PlaceRow(p: PlaceRowProps) {
             <Icon.chevronRight />
           </button>
         )}
-        {p.menu && p.menu.length > 0 && <RowMenu items={p.menu} title={typeof p.name === "string" ? p.name : undefined} />}
+        {!selecting && p.menu && p.menu.length > 0 && <RowMenu items={p.menu} title={typeof p.name === "string" ? p.name : undefined} />}
       </div>
       {p.below && <div className="more">{p.below}</div>}
       {p.expand?.open && p.children && <div className="more">{p.children}</div>}
@@ -151,11 +172,20 @@ export function Speed({ ms }: { ms: number }) {
   );
 }
 
+/** About how tall a menu is, to open it upward when it would not fit below (styles/pages.css
+    .ux-rowmenu: 6 px around, about 38 px an item). */
+const menuHeight = (n: number) => n * 38 + 12;
+
 /** ⋯ and the row's other actions under it. Escape or a click anywhere else
     closes it. On a phone they come up from the bottom in a sheet, the row's
-    name above them, within the thumb's reach. */
-function RowMenu({ items, title }: { items: RowMenuItem[]; title?: string }) {
+    name above them, within the thumb's reach. On a computer the menu opens in
+    a layer of its own over the page, placed by the button: a long list draws
+    only the rows in view (pages.css, .ux-places > .ux-place), and that clips
+    whatever a row holds to the row. It opens upward when there is no room
+    below, and a scroll or a resize under it closes it (its row moved). */
+export function RowMenu({ items, title }: { items: RowMenuItem[]; title?: string }) {
   const [open, setOpen] = useState(false);
+  const [at, setAt] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
   const button = useRef<HTMLButtonElement>(null);
   const phone = isMobile();
   useEffect(() => {
@@ -168,6 +198,27 @@ function RowMenu({ items, title }: { items: RowMenuItem[]; title?: string }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
+  useEffect(() => {
+    if (!open || phone) return;
+    const close = () => setOpen(false);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [open, phone]);
+  const toggle = () => {
+    if (open) return setOpen(false);
+    const r = button.current?.getBoundingClientRect();
+    if (r && !phone) {
+      const tall = menuHeight(items.length);
+      const right = window.innerWidth - r.right;
+      const below = window.innerHeight - r.bottom;
+      setAt(below < tall + 8 && r.top > tall + 8 ? { bottom: window.innerHeight - r.top + 4, right } : { top: r.bottom + 4, right });
+    }
+    setOpen(true);
+  };
   return (
     <span className="relative flex-none">
       <button
@@ -178,7 +229,7 @@ function RowMenu({ items, title }: { items: RowMenuItem[]; title?: string }) {
         aria-expanded={open}
         aria-label="More"
         title="More"
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
       >
         <Icon.more className="h-[18px] w-[18px]" />
       </button>
@@ -196,26 +247,31 @@ function RowMenu({ items, title }: { items: RowMenuItem[]; title?: string }) {
             />
           ))}
         </PhoneSheet>
-      ) : open && (
-        <>
-          <button type="button" aria-label="Close the menu" tabIndex={-1} onClick={() => setOpen(false)} className="fixed inset-0 z-40 cursor-default" />
-          <div role="menu" className="ux-float ux-rowmenu rise-in absolute right-0 top-full z-50 mt-1">
-            {items.map((it) => (
-              <button
-                key={it.label}
-                type="button"
-                role="menuitem"
-                className={cx("item", it.danger && "is-danger")}
-                onClick={() => {
-                  setOpen(false);
-                  it.onClick();
-                }}
-              >
-                {it.label}
-              </button>
-            ))}
-          </div>
-        </>
+      ) : (
+        open &&
+        at &&
+        createPortal(
+          <>
+            <button type="button" aria-label="Close the menu" tabIndex={-1} onClick={() => setOpen(false)} className="fixed inset-0 z-40 cursor-default" />
+            <div role="menu" className="ux-float ux-rowmenu rise-in fixed z-50" style={at}>
+              {items.map((it) => (
+                <button
+                  key={it.label}
+                  type="button"
+                  role="menuitem"
+                  className={cx("item", it.danger && "is-danger")}
+                  onClick={() => {
+                    setOpen(false);
+                    it.onClick();
+                  }}
+                >
+                  {it.label}
+                </button>
+              ))}
+            </div>
+          </>,
+          document.body,
+        )
       )}
     </span>
   );

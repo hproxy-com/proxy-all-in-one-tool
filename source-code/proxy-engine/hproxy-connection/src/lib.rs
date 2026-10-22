@@ -22,7 +22,7 @@
 //!
 //! The phone app reads all of it through `hproxy-mobile`. The computer app
 //! reads `source`, `health` and `leak` today; its own connection code moves
-//! onto `Connection` when the computer app is rebuilt (Track P, P4).
+//! onto `Connection` when the computer app's connection is rebuilt on it.
 
 pub mod connection;
 pub mod health;

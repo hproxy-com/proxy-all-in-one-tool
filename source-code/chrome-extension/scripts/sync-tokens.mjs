@@ -37,11 +37,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const EXT = join(HERE, "..");
 const OUT = join(EXT, "tokens.css");
 
-/* Where the website is. Since 2026-09-23 the extension lives in
-   Hproxy-Software-Bundle-Core/chrome-extension, a sibling of the HProxy
-   monorepo, so the website is normally next door; HPROXY_WEBSITE (a folder
-   holding app/globals.css) overrides it, and the old home inside the monorepo
-   is still understood. */
+/* Where the website is: HPROXY_WEBSITE (a folder holding app/globals.css)
+   names it; without it the website's checkout is looked for beside this
+   repository, then one folder up. */
 const CANDIDATES = [
   process.env.HPROXY_WEBSITE ? join(process.env.HPROXY_WEBSITE, "app", "globals.css") : null,
   join(EXT, "..", "..", "Hproxy", "hproxy-website", "app", "globals.css"),

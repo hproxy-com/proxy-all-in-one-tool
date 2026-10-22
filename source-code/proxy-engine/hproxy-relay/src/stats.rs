@@ -8,12 +8,55 @@
 //! runs for an hour moves the number the whole hour, not once at the end.
 
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+/// Why a connection could not reach the proxy, in the fixed words the apps'
+/// usage counts take (hproxy-api, `usage::FAILURES`): one word, never the
+/// proxy's own text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Why {
+    Timeout,
+    Login,
+    Refused,
+    Dns,
+    Blocked,
+    Other,
+}
+
+impl Why {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Why::Timeout => "timeout",
+            Why::Login => "login",
+            Why::Refused => "refused",
+            Why::Dns => "dns",
+            Why::Blocked => "blocked",
+            Why::Other => "other",
+        }
+    }
+
+    const ALL: [Why; 6] = [
+        Why::Timeout,
+        Why::Login,
+        Why::Refused,
+        Why::Dns,
+        Why::Blocked,
+        Why::Other,
+    ];
+
+    fn code(self) -> u8 {
+        Why::ALL.iter().position(|w| *w == self).map_or(0, |i| i as u8 + 1)
+    }
+
+    fn of_code(code: u8) -> Option<Why> {
+        Why::ALL.get(usize::from(code).checked_sub(1)?).copied()
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct Stats {
@@ -23,6 +66,8 @@ pub struct Stats {
     active: AtomicU64,
     /// Connections that could not reach the proxy, even after a failover.
     failures: AtomicU64,
+    /// Why the newest of those failed (`Why`, 0 = none since the last `take_why`).
+    why: AtomicU8,
     /// Upstream switches: a failover, or one the person asked for.
     rotations: AtomicU64,
     /// Bytes sent towards the proxy.
@@ -65,6 +110,19 @@ impl Stats {
     /// A connection could not reach the proxy.
     pub fn failed(&self) {
         self.failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// A connection could not reach the proxy, for `why`.
+    pub fn failed_for(&self, why: Why) {
+        self.failed();
+        self.why.store(why.code(), Ordering::Relaxed);
+    }
+
+    /// Why the newest failure since the last call happened, and forget it: a
+    /// connection that starts reads it once, so an older failure never
+    /// passes for its own.
+    pub fn take_why(&self) -> Option<Why> {
+        Why::of_code(self.why.swap(0, Ordering::Relaxed))
     }
 
     /// The source switched upstream.
@@ -169,5 +227,20 @@ mod tests {
         stats.rotated();
         let s = stats.snapshot();
         assert_eq!((s.failures, s.rotations), (1, 2));
+    }
+
+    #[test]
+    fn the_newest_failure_says_why_once() {
+        let stats = Stats::default();
+        assert_eq!(stats.take_why(), None);
+        stats.failed_for(Why::Timeout);
+        stats.failed_for(Why::Login);
+        assert_eq!(stats.snapshot().failures, 2);
+        assert_eq!(stats.take_why(), Some(Why::Login), "the newest one");
+        assert_eq!(stats.take_why(), None, "read once");
+        for why in Why::ALL {
+            stats.failed_for(why);
+            assert_eq!(stats.take_why(), Some(why));
+        }
     }
 }

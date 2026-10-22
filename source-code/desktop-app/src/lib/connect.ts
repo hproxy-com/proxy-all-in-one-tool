@@ -55,6 +55,26 @@ export function listLines(text: string): string[] {
     .filter((l) => l.length > 0);
 }
 
+/** A box's text without the lines it sent to be added (once they are kept): the rest stays as
+    typed, blank lines at either end dropped. */
+export function withoutLines(text: string, gone: readonly string[]): string {
+  const out = new Set(gone.map((l) => l.trim()));
+  const kept = text.split(/\r?\n/).filter((l) => !out.has(l.trim()));
+  while (kept.length && !kept[0].trim()) kept.shift();
+  while (kept.length && !kept[kept.length - 1].trim()) kept.pop();
+  return kept.join("\n");
+}
+
+/** A box's text with more lines after it, a dropped or chosen file (since 2026-10-22): what was
+    typed stays as typed, and only the lines it does not hold yet are added, one per line. */
+export function mergeLines(had: string, more: string): string {
+  const have = new Set(listLines(had));
+  const added = [...new Set(listLines(more))].filter((l) => !have.has(l));
+  if (!added.length) return had;
+  const kept = had.replace(/\s+$/, "");
+  return kept ? `${kept}\n${added.join("\n")}` : added.join("\n");
+}
+
 /** The line with its password hidden, in every shape a provider prints:
     `user:pass@host:port`, `scheme://user:pass@host:port`, `host:port:user:pass`.
     A line with no login comes back unchanged. */

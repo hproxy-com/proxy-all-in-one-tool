@@ -79,10 +79,10 @@ fun ConnectionMap(widthDp: Double, heightDp: Double, pinX: Double, pinY: Double,
     @Suppress("UNUSED_VARIABLE") val free = FreeList.list.collectAsState().value
 
     // Switching, the map goes with the place tapped at once: the camera leaves on the tap, not once
-    // the engine has answered ("it should smoothly move countries over").
+    // the engine has answered, so it glides from one country to the next.
     // Read so the map draws again when any of them changes: the place, the outlines once loaded.
     @Suppress("UNUSED_VARIABLE") val read = Triple(library, status, World.ready)
-    val ref = AppState.switchTarget()
+    val ref = AppState.target()
     val shown = AppState.show(ref)
     val on = phase == Phase.On || phase is Phase.Switching
     val busy = phase is Phase.Connecting

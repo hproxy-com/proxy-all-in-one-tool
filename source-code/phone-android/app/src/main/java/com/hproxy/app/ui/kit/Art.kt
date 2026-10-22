@@ -1,7 +1,9 @@
 package com.hproxy.app.ui.kit
 
+import android.content.Context
 import android.graphics.BitmapFactory
 import android.util.LruCache
+import java.util.concurrent.ConcurrentHashMap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -26,6 +28,7 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.hproxy.app.engine.Kind
@@ -128,19 +131,40 @@ fun TypeTile(kind: Kind, cc: String?, size: Dp = 44.dp, ring: Color = C.s1, onBl
     }
 }
 
-/** Flags: the website's set, drawn small once (tools/gen-flags.mjs), read when shown. */
+/** Flags: the website's set, drawn small once (tools/gen-flags.mjs), read when shown and at the
+ *  size shown: halved while the half still covers its place (Android's inSampleSize), so a flag
+ *  never holds more pixels than the screen shows of it. */
 private object FlagCache {
-    val bitmaps = LruCache<String, ImageBitmap>(80)
+    private val bitmaps = LruCache<String, ImageBitmap>(80)
+    /** Each file's own width and height, read once. */
+    private val sizes = ConcurrentHashMap<String, IntArray>()
+
+    fun get(context: Context, code: String, width: Int, height: Int): ImageBitmap? {
+        val file = "flags/$code.webp"
+        val size = sizes.getOrPut(code) {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.assets.open(file).use { BitmapFactory.decodeStream(it, null, bounds) }
+            intArrayOf(bounds.outWidth, bounds.outHeight)
+        }
+        val (w, h) = width.coerceAtLeast(1) to height.coerceAtLeast(1)
+        var sample = 1
+        while (size[0] / (sample * 2) >= w && size[1] / (sample * 2) >= h) sample *= 2
+        val key = "$code/$sample"
+        bitmaps.get(key)?.let { return it }
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        return context.assets.open(file).use { BitmapFactory.decodeStream(it, null, options) }?.asImageBitmap()?.also { bitmaps.put(key, it) }
+    }
 }
 
 @Composable
 fun Flag(cc: String?, w: Dp = 32.dp, h: Dp = 24.dp, line: Boolean = true, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val code = cc?.lowercase()?.takeIf { it.length in 2..6 }
-    val bitmap = remember(code) {
+    val (wPx, hPx) = with(LocalDensity.current) { w.roundToPx() to h.roundToPx() }
+    val bitmap = remember(code, wPx, hPx) {
         code?.let { c ->
-            FlagCache.bitmaps.get(c) ?: try {
-                context.assets.open("flags/$c.webp").use { BitmapFactory.decodeStream(it) }?.asImageBitmap()?.also { FlagCache.bitmaps.put(c, it) }
+            try {
+                FlagCache.get(context, c, wPx, hPx)
             } catch (e: Exception) {
                 null
             }

@@ -415,9 +415,11 @@ html[data-phone] .ux-target .acts {
    The Checker's counts roll on the phone as on the computer (ui/Roll.tsx,
    "Rolling digits" in globals.css). */
 
-/* ── Proxies on a phone: its three kinds of place, side by side ───────────
+/* ── The Checker's Working / Not working / All on a phone, side by side ───
    The computer's words on a hairline with the sliding crossbar (pages.css,
-   .ux-pagetabs), each a third of the width. */
+   .ux-pagetabs), each a third of the width. (The Proxies page's three kinds
+   of place are three cards since 2026-10-22, pages.css .ux-panecards, whose
+   narrow-window rules serve the phone too.) */
 
 html[data-phone] .ux-pagetabs {
   display: grid;

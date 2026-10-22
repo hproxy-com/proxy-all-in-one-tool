@@ -79,7 +79,7 @@ private fun hhmm(at: Long): String = SimpleDateFormat("HH:mm", Locale.getDefault
 /**
  * Help: talking to HProxy support, right here (2026-10-11: an idea goes to the same chat). The chat of chat.hproxy.com, the same people who answer on the website; an
  * idea from Settings lands in the box ready to finish. It says "HProxy support" and nothing else
- * about who runs it. A tab, one press away (2026-10-12: "we lowkey need it"); a tap on the messages
+ * about who runs it. A tab, one press away (since 2026-10-12); a tap on the messages
  * or a scroll puts the keyboard away and the nav is back (as a tab before, the keyboard hid the nav
  * and there was no way out).
  */
@@ -143,7 +143,8 @@ fun HelpTab() {
             }
             item("hello") {
                 val hello = intro?.welcome?.takeIf { it.isNotBlank() } ?: intro?.greeting?.takeIf { it.isNotBlank() }
-                    ?: "Hi! This is HProxy support. Ask us anything about your proxies, the app or an order, or tell us an idea: we answer right here."
+                    // The live chat's own welcome (2026-10-19): what shows while the chat connects stays.
+                    ?: "Hey 👋 This is a live chat with HProxy: ask us anything and we'll help you instantly. If it's about an order, send your order ID too."
                 Bubble(hello, mine = false, at = null, sent = SupportChat.Sent.Delivered) {}
             }
             items(messages, key = { it.id }) { m ->

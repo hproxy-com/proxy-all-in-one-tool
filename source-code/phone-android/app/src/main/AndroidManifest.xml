@@ -35,11 +35,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.HProxy">
 
+        <!-- No orientation in here: upright on phones only, set in code (MainActivity.followScreen),
+             so tablets, foldables and Chromebooks turn freely, which Android 16 does on big
+             screens anyway. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize|stateAlwaysHidden"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|uiMode|density">
             <intent-filter>
@@ -54,6 +56,12 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+
+        <!-- Google's QR scanner (Play services shows the camera) asks for upright in its own small
+             activity; that lock goes, like ours, so it turns with the screen everywhere. -->
+        <activity
+            android:name="com.google.mlkit.vision.codescanner.internal.GmsBarcodeScanningDelegateActivity"
+            tools:remove="android:screenOrientation" />
 
         <!-- The phone's VPN. Only Android holds BIND_VPN_SERVICE, so only Android can bind it.
              Always-on works: the engine lives with this service, not with the screen. -->

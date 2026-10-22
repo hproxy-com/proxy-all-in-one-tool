@@ -25,12 +25,10 @@ until "Sign in with HProxy" has its server route (`PLANS_LIVE` in `popup.js`).
 The name has no "VPN" in it: it sets Chrome's proxy, which is not a VPN, and
 the stores review VPN products on a stricter lane.
 
-It lives in **Hproxy-Software-Bundle-Core** (`chrome-extension/`) with the rest
-of HProxy's software, since 2026-09-23 (one main folder for every kind of
-software HProxy makes). Its history before that is in the HProxy monorepo, at
-`hproxy-extension/`. The backend it talks to (`/api/vpn/*`, `/api/v1/*`) stays in
-the monorepo: the paths to `hproxy-backend/...` and `hproxy-website/...` below
-are in that (private) repository.
+It lives in `chrome-extension/` beside the rest of HProxy's software (the app,
+the engine, the command-line tool), since 2026-09-23. The backend it talks to
+(`/api/vpn/*`, `/api/v1/*`) and the website are hproxy.com's own and are not
+part of this source.
 
 ## Architecture
 
@@ -60,8 +58,7 @@ Two connection modes inside the worker:
 Why the test exists (measured 2026-09-23, 30 exits in Quick Connect order, in
 Chrome for Testing): 2 worked, 25 re-signed HTTPS with a forged certificate,
 3 refused HTTPS. The engine calls all of them alive because its own check
-accepts any certificate. Details:
-`docs/plan-2026-09-19-publish-checker-and-extension/PLAN.md`.
+accepts any certificate.
 
 While connected, WebRTC is locked to the proxy (`privacy` permission) and
 released on disconnect. On every worker start the stored session and Chrome's
@@ -94,7 +91,7 @@ kills exits to force failover, and runs two small proxies of its own on
 | `background.js` | Service worker: session, proxy plumbing, failover, auth |
 | `popup.html/css/js` | Popup UI (light only; the site's white Electric theme) |
 | `tokens.css` | **GENERATED.** Every colour, copied from the website. Never edit |
-| `scripts/sync-tokens.mjs` | Writes `tokens.css` from `hproxy-website/app/globals.css` |
+| `scripts/sync-tokens.mjs` | Writes `tokens.css` from the website's `app/globals.css` |
 | `scripts/verify-design.mjs` | Fails the build on any off-system colour, dead token, off-ruler size or see-through fill |
 | `flags/` | 271 country flags: the SVGs (flag-icons 7.5.0, MIT, `flags/LICENSE`) are the source, the 66x48 PNGs are what ships (259 KB instead of 2.0 MB) |
 | `scripts/rasterize-flags.mjs` | Draws `flags/*.png` from `flags/*.svg`; `--check` fails the build on a stale PNG |
@@ -104,17 +101,17 @@ kills exits to force failover, and runs two small proxies of its own on
 | `scripts/store-shots.mjs` | The Chrome Web Store pictures, from the real popup |
 | `icons/` | Toolbar icons (16/48/128) |
 
-## Backend endpoints it depends on (all live in the Rust brain)
+## Backend endpoints it depends on (all on hproxy.com's backend)
 
 | Extension call | Served by |
 |----------------|-----------|
-| `GET /api/vpn/pool`, `/countries`, `POST /report` (`/next` exists, no longer called) | `hproxy-backend/src/free_proxy_core/http_api/vpn_extension_api.rs` |
-| `GET https://probe.hproxy.com/api/free-proxy/echo` (through the tunnel: the exit test) | the brain's echo, behind Cloudflare |
-| `GET /api/v1/plans` | `hproxy-backend/src/routes/v1_api.rs` (keyed, `require_v1` "buy") |
-| `POST /api/v1/plans/:id/generate` | `hproxy-backend/src/routes/v1_keyed.rs` (keyed, "buy") |
+| `GET /api/vpn/pool`, `/countries`, `POST /report` (`/next` exists, no longer called) | the free-proxy service |
+| `GET https://probe.hproxy.com/api/free-proxy/echo` (through the tunnel: the exit test) | the free-proxy service's echo, behind Cloudflare |
+| `GET /api/v1/plans` | the API (keyed, scope "buy") |
+| `POST /api/v1/plans/:id/generate` | the API (keyed, scope "buy") |
 
-> **Auth doors, don't mix them up.** `/v1/*` authenticates via the NextAuth
-> session cookie (the `AuthUser` extractor in `auth/session.rs`) and ignores
+> **Auth doors, don't mix them up.** `/v1/*` authenticates via the website's
+> session cookie and ignores
 > `X-API-Key` — it's the website dashboard's door. `/api/v1/*` authenticates via
 > `X-API-Key: hpx_…` through `require_v1` — it's the programmatic/reseller door.
 > The extension holds a key, so it MUST use `/api/v1/*`. (An earlier version
@@ -169,12 +166,12 @@ correct behaviour for a misconfigured credential minter and is asserted by
 
 ## Design
 
-The popup is a faithful small-screen sibling of the website, built to
-`hproxy-website/DESIGN.md` in the monorepo (the agent-facing rules) and the `/design` book:
+The popup is a faithful small-screen sibling of the website, built to the
+website's design rules:
 
 - **Tokens are GENERATED, not copied** (2026-08-02). `popup.css` declares no
-  colours at all. `tokens.css` is written by `scripts/sync-tokens.mjs` from
-  `hproxy-website/app/globals.css`, and `build.ps1` regenerates and verifies it
+  colours at all. `tokens.css` is written by `scripts/sync-tokens.mjs` from the
+  website's `app/globals.css`, and `build.ps1` regenerates and verifies it
   before packaging, so a zip cannot be built with a stale palette.
 
   This replaced a hand-typed copy of the palette, and the reason is a bug that
@@ -269,13 +266,13 @@ v0.2.1. One less permission in the install warning.
 the extension's preflight with `204` and `access-control-allow-origin: *`
 (verified 2026-09-23; it was a 405 on 2026-07-22). What still blocks the
 section is the sign-in route: `GET https://hproxy.com/extension/connect`
-answers 404 because `hproxy-backend/src/routes/extension.rs` is not declared
-in `routes/mod.rs`. Until that is mounted (a backend auth change, not decided
-yet), the "Sign in with HProxy" button opens a 404 page.
+answers 404 because the backend does not mount that route yet. Until it does
+(a backend auth change, not decided yet), the "Sign in with HProxy" button
+opens a 404 page.
 
 ## Roadmap
 
-- [x] Home into the monorepo
+- [x] One home with the rest of HProxy's software
 - [x] Light-only popup, locked to the site's white Electric theme (v0.3.1)
 - [x] Drop the Origin-rewrite bandaid (backend went CORS-open; removed in v0.2.1)
 - [ ] Website → extension bridge: one-click Connect from the free-proxy-list pages
@@ -285,8 +282,6 @@ yet), the "Sign in with HProxy" button opens a 404 page.
 
 ## Marketing
 
-The site's `/extension` page is currently a "Coming Soon" placeholder. The rich
-landing (`hproxy-website/components/extension/ExtensionHero.tsx` +
-`ExtensionSteps.tsx`) is built but not imported. Note the landing promises a
-"sign in once" flow and shows Residential/Mobile/ISP tabs — that matches the
-planned OAuth work, not the current API-key popup, so re-enable it after Pass 2.
+The site's `/extension` page is a "Coming Soon" placeholder for now. A fuller
+landing page waits for the account sign-in: it promises a "sign in once" flow,
+which the popup gets with the planned OAuth work.

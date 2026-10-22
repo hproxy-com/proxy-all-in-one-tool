@@ -21,7 +21,14 @@ class BootReceiver : BroadcastReceiver() {
             Intent.ACTION_MY_PACKAGE_REPLACED -> Settings.connectedInBoot.let { it >= 0 && it == Settings.bootCount(context) }
             else -> false
         }
-        if (!wanted || VpnService.prepare(context) != null) return
+        if (!wanted) return
+        // Allowed before: a phone that just started has nobody to ask (a few phones throw here).
+        val allowed = try {
+            VpnService.prepare(context) == null
+        } catch (e: Exception) {
+            false
+        }
+        if (!allowed) return
         val start = Intent(context, HProxyVpnService::class.java).setAction(HProxyVpnService.ACTION_CONNECT)
         try {
             if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(start) else context.startService(start)

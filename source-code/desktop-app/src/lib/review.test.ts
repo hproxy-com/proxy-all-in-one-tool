@@ -3,7 +3,9 @@ import {
   NAME_EXAMPLES,
   REVIEW_TESTS,
   addLabels,
+  boxWords,
   countReview,
+  notProxyWords,
   linesToAdd,
   nameExample,
   namesPreview,
@@ -38,8 +40,28 @@ describe("reviewOrder", () => {
   it("puts the working first, then the untested, the failed last, once settled", () => {
     const lines = ["dead", "fine", "later", "fine2"];
     const t = tests([["dead", bad], ["fine", ok()], ["fine2", ok()]]);
-    expect(reviewOrder(lines, t, false)).toEqual(lines);
     expect(reviewOrder(lines, t, true)).toEqual(["fine", "fine2", "later", "dead"]);
+  });
+  it("puts the newest answer on top while testing, the waiting ones under them as pasted", () => {
+    const lines = ["a", "b", "c", "d"];
+    // Answers arrived: c, then a.
+    const t = tests([["c", ok()], ["a", bad]]);
+    expect(reviewOrder(lines, t, false)).toEqual(["a", "c", "b", "d"]);
+    expect(reviewOrder(lines, tests([]), false)).toEqual(lines);
+  });
+});
+
+describe("boxWords and notProxyWords", () => {
+  it("says nothing for a box without a proxy in it", () => {
+    expect(boxWords(0)).toBe("");
+  });
+  it("counts the lines that are proxies", () => {
+    expect(boxWords(4)).toBe("4 ready to test");
+    expect(boxWords(1)).toBe("1 ready to test");
+  });
+  it("says how many lines are not proxies, for the review", () => {
+    expect(notProxyWords(1)).toBe("1 line isn't a proxy");
+    expect(notProxyWords(2)).toBe("2 lines aren't proxies");
   });
 });
 
@@ -50,25 +72,27 @@ describe("reviewStatus and addLabels", () => {
   };
 
   it("says how many work while testing", () => {
-    expect(reviewStatus(countReview(["a", "b"], tests([]), false))).toBe("Testing");
+    expect(reviewStatus(countReview(["a", "b"], tests([]), false))).toBe("Waiting for the first answers");
+    expect(reviewStatus(countReview(["a"], tests([]), false))).toBe("Waiting for its answer");
     expect(reviewStatus(countReview(["a", "b", "c"], tests([["a", ok()]]), false))).toBe("1 works · 0 failed");
   });
 
-  it("offers only the ones that work, or all of them anyway", () => {
+  it("offers the working ones, or all of them anyway, each with its count", () => {
     const got = status(["a", "b", "c"], tests([["a", ok()], ["b", ok()], ["c", bad]]));
-    expect(got).toEqual({ words: "2 work · 1 failed", main: "Add only the 2 that work", mainTakesFailed: false, anyway: "Add all 3 anyway" });
+    expect(got).toEqual({ words: "2 work · 1 failed", main: "Add working (2)", mainTakesFailed: false, anyway: "Add all anyway (3)" });
   });
 
-  it("says all but the ones that failed when some were not tested", () => {
+  it("says all but the failed when some were not tested", () => {
     const got = status(["a", "b", "c"], tests([["a", bad]]), true);
     expect(got.words).toBe("0 work · 1 failed · 2 not tested");
-    expect(got.main).toBe("Add all but the one that failed");
+    expect(got.main).toBe("Add all but the failed (2)");
   });
 
   it("adds them all at once when all work, and anyway when all failed", () => {
-    expect(status(["a", "b"], tests([["a", ok()], ["b", ok()]]))).toMatchObject({ words: "Both work", main: "Add both", anyway: null });
+    expect(status(["a", "b"], tests([["a", ok()], ["b", ok()]]))).toMatchObject({ words: "Both work", main: "Add all (2)", anyway: null });
+    expect(status(["a"], tests([["a", ok()]]))).toMatchObject({ main: "Add it", anyway: null });
     expect(status(["a"], tests([["a", bad]]))).toMatchObject({ words: "It failed", main: "Add anyway", mainTakesFailed: true });
-    expect(status(["a", "b", "c"], tests([["a", bad], ["b", bad], ["c", bad]]))).toMatchObject({ words: "All 3 failed", main: "Add all 3 anyway" });
+    expect(status(["a", "b", "c"], tests([["a", bad], ["b", bad], ["c", bad]]))).toMatchObject({ words: "All 3 failed", main: "Add all anyway (3)" });
   });
 });
 

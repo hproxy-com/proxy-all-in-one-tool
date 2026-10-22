@@ -1,7 +1,7 @@
 /* ============================================================
    MOTION: the computer app's moves, made for the popup (1.0.3).
 
-   The same language as desktop-app/src (Track D, 2026-10-10/11):
+   The same language as desktop-app/src (2026-10-10/11):
 
      slideIn      a page comes in from the side of the tab pressed
                   (lib/motion.ts).

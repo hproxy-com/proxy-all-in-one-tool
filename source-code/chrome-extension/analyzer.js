@@ -268,8 +268,8 @@ async function checkTransparency(ctx) {
  * whether it sits where the exit claims to be. Measuring that needs
  * authoritative nameservers we run. Not built, so not claimed.
  */
-/* DNS: which resolver the proxy looks names up with, measured by the DNS
-   leak test (hproxy.com/api/leak; the monorepo's hproxy-dns-leak). A made-up
+/* DNS: which resolver the proxy looks names up with, measured by hproxy.com's
+   DNS leak test (hproxy.com/api/leak). A made-up
    name under leak.hproxy.com is fetched THROUGH the proxy (every *.hproxy.com
    goes through it; only hproxy.com itself is bypassed), so the proxy's
    resolver asks our nameserver for it; then the door says who asked. The

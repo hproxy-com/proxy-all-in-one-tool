@@ -32,6 +32,7 @@ mod timezone;
 mod tool;
 mod tray;
 mod update;
+mod usage;
 mod versions;
 mod vpn;
 
@@ -96,6 +97,9 @@ pub fn run() {
             return;
         }
         if let Some(window) = app.get_webview_window("main") {
+            if !window.is_visible().unwrap_or(true) {
+                usage::opened(app);
+            }
             let _ = window.unminimize();
             let _ = window.show();
             let _ = window.set_focus();
@@ -174,6 +178,13 @@ pub fn run() {
             // The places before anything that connects: the tray and a
             // connection read them (places.rs).
             app.manage(places::PlacesState::open(app.handle()));
+            // Usage counts, beside the places and only after the person's yes (usage.rs):
+            // this start, a crash of the engine, and the finished days sent once an hour.
+            let usage_counts = usage::UsageState::open(app.state::<places::PlacesState>().dir());
+            app.manage(usage_counts);
+            usage::count_panics(app.handle());
+            usage::opened(app.handle());
+            usage::start(app.handle());
             app.manage(connect::RelayState::default());
             app.manage(tray::TrayState::default());
             app.manage(update::Pending::default());
@@ -295,6 +306,9 @@ pub fn run() {
             support::chat_read,
             support::chat_close,
             versions::versions_check,
+            usage::usage_get,
+            usage::usage_answer,
+            usage::usage_count,
             tool_command,
         ])
         .build(tauri::generate_context!())

@@ -13,9 +13,9 @@ import com.hproxy.app.state.AppState
 
 /**
  * HProxy in the phone's quick settings: on while connected, a tap disconnects; off, a tap connects
- * to the place used last. The engine lives with the app, not the screen, so the tile connects
- * without opening it; it opens the app only when nothing was picked yet or the VPN was never
- * allowed.
+ * what the switch connects (yours used last, never a free proxy). The engine lives with the app,
+ * not the screen, so the tile connects without opening it; it opens the app when none of yours is
+ * there yet or the VPN was never allowed.
  */
 class QuickTile : TileService() {
     override fun onStartListening() {
@@ -26,13 +26,25 @@ class QuickTile : TileService() {
         AppState.start(applicationContext)
         if (AppState.wanted) {
             AppState.disconnect()
-        } else if (VpnService.prepare(this) == null && AppState.library.value.picked != null) {
+        } else if (vpnAllowed() && AppState.library.value.switchTo != null) {
             val intent = Intent(this, HProxyVpnService::class.java).setAction(HProxyVpnService.ACTION_CONNECT)
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+            } catch (e: Exception) {
+                // Android 12 and later can refuse a start from the background: the app connects.
+                openApp()
+            }
         } else {
             openApp()
         }
         show()
+    }
+
+    /** The VPN was allowed before (a few phones throw here: then the app asks, or says why not). */
+    private fun vpnAllowed(): Boolean = try {
+        VpnService.prepare(this) == null
+    } catch (e: Exception) {
+        false
     }
 
     private fun show() {

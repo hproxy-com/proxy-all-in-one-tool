@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 use hproxy_api::geo::{Geo, DEFAULT_GEO_API};
+use hproxy_api::usage::{self, About, Answer, Book, Event};
 use hproxy_connection::{Change, Connection, ProbePolicy};
 use hproxy_places::reminders::{self, Said};
 use hproxy_places::{Details, Library, Place, WindowStorage};
@@ -45,6 +46,10 @@ pub struct Engine {
     own_ip: Mutex<Option<(std::time::Instant, Value)>>,
     /// The support chat of the Help tab (chat.rs).
     chat: crate::chat::Chat,
+    /// The usage counts' book (hproxy-api, `usage`), kept beside the app's data: asked once in
+    /// the app, nothing counted or sent before a yes.
+    usage: Mutex<Book>,
+    usage_path: PathBuf,
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
@@ -81,6 +86,17 @@ pub fn init(data: &Path, sdk: i32) -> Result<&'static Engine, String> {
                 Change::Up => events.emit("connection", json!({ "up": true })),
                 Change::Down => events.emit("connection", json!({ "up": false })),
                 Change::Health(h) => events.emit("health", h),
+                // A Connect worked, or why not: the usage counts (after a yes).
+                Change::Outcome { ok, why } => {
+                    if let Ok(e) = engine() {
+                        e.count(match ok {
+                            true => Event::ConnectOk,
+                            false => Event::ConnectFailed {
+                                reason: why.unwrap_or("other").into(),
+                            },
+                        });
+                    }
+                }
             },
         )
     };
@@ -89,6 +105,7 @@ pub fn init(data: &Path, sdk: i32) -> Result<&'static Engine, String> {
         firewall.set_owner(Arc::new(crate::owner::ProcNet));
     }
     let chat = crate::chat::Chat::new(Arc::clone(&events));
+    let usage_path = data.join("usage.json");
     let engine = Engine {
         rt,
         events,
@@ -104,9 +121,42 @@ pub fn init(data: &Path, sdk: i32) -> Result<&'static Engine, String> {
         tunnel: Mutex::new(None),
         own_ip: Mutex::new(None),
         chat,
+        usage: Mutex::new(Book::load(&usage_path)),
+        usage_path,
     };
     let _ = ENGINE.set(engine);
+    count_panics();
     ENGINE.get().ok_or_else(|| "the engine could not start".to_string())
+}
+
+/// A crash of the engine counts too (after a yes). The hook never waits for a lock someone holds.
+fn count_panics() {
+    let before = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Some(e) = ENGINE.get() {
+            if let Ok(mut book) = e.usage.try_lock() {
+                if book.answer == Answer::Yes {
+                    book.count(&today(), &Event::Crash { part: "engine".into() });
+                    let _ = book.save(&e.usage_path);
+                }
+            }
+        }
+        before(info);
+    }));
+}
+
+/// Today on the phone's own calendar and time zone.
+fn today() -> String {
+    chrono::Local::now().date_naive().format("%Y-%m-%d").to_string()
+}
+
+/// Which app this is, in the server's words.
+fn about() -> About<'static> {
+    About {
+        app: "phone",
+        os: usage::os_word(),
+        version: env!("CARGO_PKG_VERSION"),
+    }
 }
 
 fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -191,6 +241,18 @@ fn fifty() -> usize {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct UsageAnswerArgs {
+    yes: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UsageCountArgs {
+    event: Event,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct LinesArgs {
     run: u64,
     which: Vec<usize>,
@@ -212,6 +274,9 @@ impl Engine {
             }
             "add" => {
                 let added = self.change(|lib| places::add(lib, from(args)?, hproxy_connection::now_ms()))?;
+                if matches!(added.place, Some(Place::Group { .. })) {
+                    self.feature("groups");
+                }
                 Ok(json!({ "added": to(added)?, "library": self.library() }))
             }
             "rename" => {
@@ -227,11 +292,13 @@ impl Engine {
             "describe" => {
                 let a: DescribeArgs = from(args)?;
                 self.change(|lib| lib.describe_proxies(&a.ids, &a.details))?;
+                self.count_details(&a.details);
                 Ok(self.library())
             }
             "describeGroup" => {
                 let a: DescribeArgs = from(args)?;
                 self.change(|lib| lib.describe_group(&a.id, &a.details))?;
+                self.count_details(&a.details);
                 Ok(self.library())
             }
             // What is due on the phone's today, in the words every app uses
@@ -289,8 +356,14 @@ impl Engine {
             }
             "status" => to(self.connection.status()),
             "testNow" => to(self.rt.block_on(self.connection.test_now())?),
-            "dnsLeak" => to(self.rt.block_on(self.connection.dns_leak())?),
-            "speed" => to(self.rt.block_on(self.connection.speed())?),
+            "dnsLeak" => {
+                self.feature("leak_checks");
+                to(self.rt.block_on(self.connection.dns_leak())?)
+            }
+            "speed" => {
+                self.feature("speed_test");
+                to(self.rt.block_on(self.connection.speed())?)
+            }
             "vpnArgs" => Ok(vpn_args()),
             "freeCountries" => {
                 let countries = self.rt.block_on(hproxy_relay::pool::countries())?;
@@ -304,12 +377,21 @@ impl Engine {
             "ownIp" => Ok(self.rt.block_on(self.own_ip())),
             "checkStart" => {
                 let input: StartInput = from(args)?;
+                // A check the person ran; the one that follows an Add by itself is not counted.
+                let asked = input.text.is_some() || input.group.is_some() || input.saved || input.again.is_some();
                 let lib = locked(&self.lib).clone();
                 let tools = self.tools();
                 let checks = Arc::clone(&self.checks);
-                to(self
+                let started = self
                     .rt
-                    .block_on(async move { checker::start(&checks, &lib, input, tools) })?)
+                    .block_on(async move { checker::start(&checks, &lib, input, tools) })?;
+                if asked {
+                    self.count(Event::CheckRun {
+                        proxies: started.items.len() as u64,
+                    });
+                    self.feature("checker");
+                }
+                to(started)
             }
             "checkCancel" => {
                 self.checks.cancel();
@@ -321,7 +403,10 @@ impl Engine {
             }
             "checkRecent" => to(self.checks.recent()),
             "freeList" => to(self.rt.block_on(free_list(from(args)?))?),
-            "fraud" => Ok(Value::Array(self.rt.block_on(fraud_scores(from(args)?)))),
+            "fraud" => {
+                self.feature("fraud_score");
+                Ok(Value::Array(self.rt.block_on(fraud_scores(from(args)?))))
+            }
             "chatOpen" => {
                 let a: ChatOpenArgs = from(args)?;
                 let page = crate::chat::page(a.store.as_deref(), a.version.as_deref());
@@ -344,9 +429,51 @@ impl Engine {
             }
             "firewall" => {
                 let table: TableInput = from(args)?;
+                // Usage counts: rules per app, and the firewall when it blocks something.
+                if !table.decisions.is_empty() {
+                    self.feature("app_rules");
+                }
+                if table.default == crate::firewall::Way::Block
+                    || table.decisions.values().any(|w| *w == crate::firewall::Way::Block)
+                {
+                    self.feature("firewall");
+                }
                 self.firewall.set_table(table);
                 Ok(Value::Null)
             }
+            // The usage counts: the answer and the last report as it went, the answer changed,
+            // what only the app sees (an opening, a search, a crash of the screens), and the
+            // finished days sent (the app calls this at its start and the VPN's).
+            "usage" => Ok(self.usage_view()),
+            "usageAnswer" => {
+                let a: UsageAnswerArgs = from(args)?;
+                let was_yes = locked(&self.usage).answer == Answer::Yes;
+                {
+                    let mut book = locked(&self.usage);
+                    book.set_answer(a.yes);
+                    let _ = book.save(&self.usage_path);
+                }
+                // The question came after the app opened: this opening counts.
+                if a.yes && !was_yes {
+                    self.count(Event::Opened);
+                    self.kept_today();
+                }
+                Ok(self.usage_view())
+            }
+            "usageCount" => {
+                let a: UsageCountArgs = from(args)?;
+                match a.event {
+                    Event::Opened => {
+                        self.count(Event::Opened);
+                        self.kept_today();
+                    }
+                    e @ (Event::Feature { .. } | Event::Crash { .. }) => self.count(e),
+                    // The rest is counted here, where it happens.
+                    _ => {}
+                }
+                Ok(Value::Null)
+            }
+            "usageSend" => Ok(json!(self.rt.block_on(self.usage_send()))),
             other => Err(format!("the engine has no call named {other}")),
         }
     }
@@ -354,14 +481,7 @@ impl Engine {
     /// The library as the screens see it: never a password.
     fn library(&self) -> Value {
         let lib = locked(&self.lib);
-        let mut v = serde_json::to_value(lib.view()).unwrap_or(Value::Null);
-        if let Some(o) = v.as_object_mut() {
-            o.insert("movedFromWindow".into(), lib.moved_from_window.into());
-            if let Some(n) = locked(&self.notice).take() {
-                o.insert("notice".into(), n.into());
-            }
-        }
-        v
+        library_json(&lib, locked(&self.notice).take())
     }
 
     /// Change the library and keep it.
@@ -372,11 +492,115 @@ impl Engine {
         Ok(out)
     }
 
+    /// The answer, and the last report exactly as it was sent.
+    fn usage_view(&self) -> Value {
+        let book = locked(&self.usage);
+        json!({ "answer": book.answer, "last": book.last })
+    }
+
+    /// Count `event` today; nothing at all, not even a write, before a yes.
+    pub fn count(&self, event: Event) {
+        let mut book = locked(&self.usage);
+        if book.answer != Answer::Yes {
+            return;
+        }
+        book.count(&today(), &event);
+        if let Err(e) = book.save(&self.usage_path) {
+            log::warn!("the usage counts could not be kept: {e}");
+        }
+    }
+
+    fn feature(&self, name: &str) {
+        self.count(Event::Feature { name: name.into() });
+    }
+
+    /// A last day or a note written counts as that feature used.
+    fn count_details(&self, details: &Details) {
+        let written = |field: &Option<String>| field.as_deref().is_some_and(|v| !v.trim().is_empty());
+        if written(&details.expires) {
+            self.feature("expiry");
+        }
+        if written(&details.note) {
+            self.feature("notes");
+        }
+    }
+
+    /// What a Connect uses: a free proxy, a group and its rotation.
+    fn count_place(&self, place: &Place) {
+        match place {
+            Place::Free { .. } => {
+                self.count(Event::FreeUsed);
+                self.feature("free");
+            }
+            Place::Group { id } => {
+                self.feature("groups");
+                let rotates = locked(&self.lib)
+                    .groups
+                    .iter()
+                    .any(|g| &g.id == id && g.rule != hproxy_places::Rule::OnFailure);
+                if rotates {
+                    self.feature("rotation");
+                }
+            }
+            Place::Proxy { .. } => {}
+        }
+    }
+
+    /// How many proxies and groups are kept, written on a day that already counts something.
+    fn kept_today(&self) {
+        let today = today();
+        if !locked(&self.usage).days.contains_key(&today) {
+            return;
+        }
+        let (proxies, groups) = {
+            let lib = locked(&self.lib);
+            (lib.proxies.len() as u64, lib.groups.len() as u64)
+        };
+        self.count(Event::Kept { proxies, groups });
+    }
+
+    /// The finished days, each sent once; a day that does not go waits for the next call.
+    /// Returns how many went.
+    async fn usage_send(&self) -> usize {
+        if locked(&self.usage).answer != Answer::Yes {
+            return 0;
+        }
+        self.kept_today();
+        let today = today();
+        let due = locked(&self.usage).due(&today, about());
+        let client = hproxy_api::http_client(PROGRAM, Duration::from_secs(20));
+        let mut sent = 0;
+        for (day, report) in due {
+            if let Err(e) = usage::send(&client, usage::DEFAULT_USAGE_URL, &report).await {
+                log::info!("{e}; again at the next start");
+                break;
+            }
+            let mut book = locked(&self.usage);
+            // A "no" while it went: the book was emptied, and stays empty.
+            if book.answer == Answer::Yes && book.copy.as_deref() == report.get("copy").and_then(Value::as_str) {
+                book.mark_sent(&day, report, &today);
+                let _ = book.save(&self.usage_path);
+                sent += 1;
+            }
+        }
+        sent
+    }
+
     async fn connect(&'static self, a: ConnectArgs) -> Result<Value, String> {
-        let built =
-            hproxy_connection::source::build(|p| hproxy_connection::source_of(&locked(&self.lib), p), &a.place).await?;
-        let any: SocketAddr = ([127, 0, 0, 1], 0).into();
-        let status = self.connection.start(a.place.clone(), built, any, a.member).await?;
+        self.count_place(&a.place);
+        let started = async {
+            let built =
+                hproxy_connection::source::build(|p| hproxy_connection::source_of(&locked(&self.lib), p), &a.place)
+                    .await?;
+            let any: SocketAddr = ([127, 0, 0, 1], 0).into();
+            self.connection.start(a.place.clone(), built, any, a.member).await
+        }
+        .await;
+        // No free exit, a port taken: a Connect that failed before any probe could say so.
+        if started.is_err() {
+            self.count(Event::ConnectFailed { reason: "other".into() });
+        }
+        let status = started?;
         let now = hproxy_connection::now_ms();
         let _ = self.change(|lib| {
             match &a.place {
@@ -440,6 +664,24 @@ impl Engine {
 
 /// What the VPN is opened with: one place decides the routes, the
 /// addresses and the DNS server, and that is the tunnel crate.
+/// The library as the app reads it: the shared view, whether it came over from the earlier app,
+/// what the switch connects (hproxy-places `switch_place`, the computer app's rule: yours connected
+/// or used last, else added last, never a free proxy), and a notice, once.
+fn library_json(lib: &Library, notice: Option<String>) -> Value {
+    let mut v = serde_json::to_value(lib.view()).unwrap_or(Value::Null);
+    if let Some(o) = v.as_object_mut() {
+        o.insert("movedFromWindow".into(), lib.moved_from_window.into());
+        o.insert(
+            "switchTo".into(),
+            serde_json::to_value(lib.switch_place()).unwrap_or(Value::Null),
+        );
+        if let Some(n) = notice {
+            o.insert("notice".into(), n.into());
+        }
+    }
+    v
+}
+
 pub fn vpn_args() -> Value {
     json!({
         "routes": hproxy_tunnel::vpn_routes().into_iter().map(|(ip, len)| format!("{ip}/{len}")).collect::<Vec<_>>(),
@@ -630,5 +872,31 @@ mod tests {
         assert_eq!(v["addresses"][0], "198.18.0.1/32");
         assert_eq!(v["dns"], "198.18.0.2");
         assert!(v["routes"].as_array().unwrap().iter().any(|r| r == "2000::/3"));
+    }
+
+    #[test]
+    fn the_library_says_what_the_switch_connects_never_a_free_proxy() {
+        let mut lib = Library::default();
+        assert_eq!(
+            library_json(&lib, None)["switchTo"],
+            Value::Null,
+            "nothing of yours: nothing"
+        );
+        let ids = lib.add_proxies(&["203.0.113.7:8080".to_string()], 1);
+        let free = Place::Free {
+            country: String::new(),
+            socks5: false,
+            exit: None,
+            exit_country: None,
+        };
+        lib.pick(Some(free)).unwrap();
+        let v = library_json(&lib, Some("moved".into()));
+        assert_eq!(v["picked"]["kind"], "free", "the free one stays the pick");
+        assert_eq!(
+            v["switchTo"],
+            json!({ "kind": "proxy", "id": ids[0] }),
+            "the switch passes it over"
+        );
+        assert_eq!(v["notice"], "moved");
     }
 }

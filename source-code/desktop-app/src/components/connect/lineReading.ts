@@ -1,8 +1,31 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { listLines } from "../../lib/connect";
 import { describeLines, parseLine, type Targeting } from "../../lib/tauri";
 
 /* Pasted lines, read by the engine before anything is kept: for the paste review
-   (PasteReview.tsx) and the group editor (Destinations.tsx). */
+   (PasteReview.tsx), the group editor (Destinations.tsx) and Add's box (AddProxies.tsx). */
+
+/** Past this many lines Add's box counts without reading them; the review reads them all. */
+const BOX_READ_MAX = 5000;
+
+export type BoxLines = {
+  /** Every line in the box, once each: what goes to the review. */
+  lines: string[];
+  /** The lines the engine read as proxies so far. */
+  ready: number;
+};
+
+/** What is in Add's box, read as it is typed (2026-10-22): only the lines the engine reads as
+    proxies count, so a header or a half-typed line never shows as "ready to test". A line not
+    read yet does not count, so the words never jump while typing. A line that is not a proxy
+    blocks nothing: the review says so and leaves it out. */
+export function useBoxLines(text: string): BoxLines {
+  const lines = useMemo(() => [...new Set(listLines(text))], [text]);
+  const reading = lines.length <= BOX_READ_MAX;
+  const { read } = useReadable(lines, reading);
+  if (!reading) return { lines, ready: lines.length };
+  return { lines, ready: lines.filter((l) => read.get(l) === true).length };
+}
 
 /** Every line read by the engine's own parser, a dozen at a time: `true`, or
     the parser's reason it cannot be read. Answers are kept per line, so typing

@@ -1382,6 +1382,71 @@ button {
   color: var(--ink-soft);
 }
 
+/* The usage counts (popup.js, drawUsage): the question on top until it is
+   answered, and the footer's panel with the switch and the last report. */
+.usage-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 16px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px 5px 14px 5px;
+  background: var(--surface);
+}
+.usage-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.usage-words {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--ink-mute);
+}
+.usage-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.usage-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 16px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px 4px 12px 4px;
+  background: var(--surface);
+}
+.usage-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.usage-switch input {
+  accent-color: var(--digi);
+}
+.usage-last {
+  max-height: 150px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  color: var(--ink-mute);
+  background: var(--canvas);
+}
+
 /* The quiet setting of the system: nothing moves. */
 @media (prefers-reduced-motion: reduce) {
   *,

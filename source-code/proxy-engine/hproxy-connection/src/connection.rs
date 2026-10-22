@@ -64,6 +64,10 @@ pub enum Change {
     Up,
     /// A probe came back.
     Health(Box<Health>),
+    /// The first probe of a connection that was asked for (a start, a switch to another place;
+    /// never Next IP or a member picked): whether it worked, and when not, why in the fixed
+    /// words of the apps' usage counts (hproxy-api, `usage::FAILURES`). Once per connection.
+    Outcome { ok: bool, why: Option<&'static str> },
     /// The relay is down.
     Down,
 }
@@ -127,6 +131,8 @@ struct Running {
     exit_label: Option<String>,
     started_at_ms: u64,
     route: Arc<AtomicU64>,
+    /// The route whose first probe is the outcome of a connection asked for (`Change::Outcome`).
+    outcome: Arc<AtomicU64>,
     health: Arc<Mutex<HealthState>>,
     probe_url: Arc<Mutex<String>>,
     /// Rung for a probe at once: a switch, a request.
@@ -142,6 +148,7 @@ struct Live {
     source: Arc<SwitchableSource>,
     stats: Arc<Stats>,
     route: Arc<AtomicU64>,
+    outcome: Arc<AtomicU64>,
     health: Arc<Mutex<HealthState>>,
     probe_url: Arc<Mutex<String>>,
     poke: Arc<Notify>,
@@ -154,6 +161,7 @@ impl Live {
             source: Arc::clone(&r.source),
             stats: Arc::clone(&r.stats),
             route: Arc::clone(&r.route),
+            outcome: Arc::clone(&r.outcome),
             health: Arc::clone(&r.health),
             probe_url: Arc::clone(&r.probe_url),
             poke: Arc::clone(&r.poke),
@@ -278,7 +286,7 @@ impl Connection {
 
         let health = Arc::new(Mutex::new(HealthState::default()));
         let route = Arc::new(AtomicU64::new(0));
-        start_route(&route, &health);
+        let outcome = Arc::new(AtomicU64::new(start_route(&route, &health)));
         let probe_url = Arc::new(Mutex::new(DEFAULT_PROBE_URL.to_string()));
         let poke = Arc::new(Notify::new());
         let watcher = tokio::spawn(watch(Watch {
@@ -288,6 +296,7 @@ impl Connection {
             policy: self.policy,
             stats: Arc::clone(&stats),
             route: Arc::clone(&route),
+            outcome: Arc::clone(&outcome),
             health: Arc::clone(&health),
             probe_url: Arc::clone(&probe_url),
             poke: Arc::clone(&poke),
@@ -306,6 +315,7 @@ impl Connection {
             exit_label: built.exit_label,
             started_at_ms: crate::now_ms(),
             route,
+            outcome,
             health,
             probe_url,
             poke,
@@ -332,7 +342,10 @@ impl Connection {
                 r.place = place;
             }
         }
-        start_route(&live.route, &live.health);
+        // A connection of its own: its first probe is its outcome, and an older failure is not its own.
+        live.stats.take_why();
+        live.outcome
+            .store(start_route(&live.route, &live.health), Ordering::SeqCst);
         live.poke.notify_one();
         log::info!("switched in place to {described}, relay still on {}", live.listen);
         (self.on_change)(Change::Up);
@@ -362,17 +375,25 @@ impl Connection {
     pub async fn test_now(&self) -> Result<Status, String> {
         let live = self.live().ok_or("not connected")?;
         let url = url_of(&live.probe_url);
-        probe_route(
-            live.listen,
-            &live.route,
-            &live.health,
-            &self.geo,
-            &url,
-            &self.program,
-            &self.on_change,
-        )
-        .await;
+        probe_route(&self.watch_of(live), &url).await;
         Ok(self.status())
+    }
+
+    /// What a probe needs, from the running relay's handles.
+    fn watch_of(&self, live: Live) -> Watch {
+        Watch {
+            listen: live.listen,
+            geo: Arc::clone(&self.geo),
+            program: self.program.clone(),
+            policy: self.policy,
+            stats: live.stats,
+            route: live.route,
+            outcome: live.outcome,
+            health: live.health,
+            probe_url: live.probe_url,
+            poke: live.poke,
+            on_change: Arc::clone(&self.on_change),
+        }
     }
 
     /// Another upstream within the place (the next member of a group, a fresh
@@ -447,21 +468,32 @@ fn url_of(probe_url: &Mutex<String>) -> String {
         .unwrap_or_else(|_| DEFAULT_PROBE_URL.to_string())
 }
 
-/// One probe, kept only if the route is still the one it started on.
-async fn probe_route(
-    listen: SocketAddr,
-    route: &AtomicU64,
-    health: &Mutex<HealthState>,
-    geo: &Geo,
-    url: &str,
-    program: &str,
-    on_change: &OnChange,
-) {
-    let at = route.load(Ordering::SeqCst);
-    let h = health::probe_once(listen, geo, url, program).await;
-    if route.load(Ordering::SeqCst) == at {
-        let h = health::record(health, h);
-        on_change(Change::Health(Box::new(h)));
+/// One probe, kept only if the route is still the one it started on. The first of a connection
+/// asked for is also its outcome (`Change::Outcome`): why it failed in the probe's own words, else
+/// in the relay's, which saw the proxy behind it fail (hproxy-relay, `Stats::take_why`).
+async fn probe_route(w: &Watch, url: &str) {
+    let at = w.route.load(Ordering::SeqCst);
+    let h = health::probe_once(w.listen, &w.geo, url, &w.program).await;
+    if w.route.load(Ordering::SeqCst) == at {
+        let h = health::record(&w.health, h);
+        let first = w
+            .outcome
+            .compare_exchange(at, 0, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok();
+        let outcome = first.then(|| Change::Outcome {
+            ok: h.ok,
+            why: (!h.ok).then(|| {
+                h.error
+                    .as_deref()
+                    .and_then(health::failure_word)
+                    .or_else(|| w.stats.take_why().map(hproxy_relay::Why::as_str))
+                    .unwrap_or("other")
+            }),
+        });
+        (w.on_change)(Change::Health(Box::new(h)));
+        if let Some(outcome) = outcome {
+            (w.on_change)(outcome);
+        }
     }
 }
 
@@ -473,6 +505,7 @@ struct Watch {
     policy: ProbePolicy,
     stats: Arc<Stats>,
     route: Arc<AtomicU64>,
+    outcome: Arc<AtomicU64>,
     health: Arc<Mutex<HealthState>>,
     probe_url: Arc<Mutex<String>>,
     poke: Arc<Notify>,
@@ -488,7 +521,7 @@ async fn watch(w: Watch) {
     let mut failures = w.stats.snapshot().failures;
     loop {
         let url = url_of(&w.probe_url);
-        probe_route(w.listen, &w.route, &w.health, &w.geo, &url, &w.program, &w.on_change).await;
+        probe_route(&w, &url).await;
         let probed = Instant::now();
         loop {
             let ok = w
@@ -542,6 +575,51 @@ mod tests {
 
     fn place(id: &str) -> Place {
         Place::Proxy { id: id.into() }
+    }
+
+    #[tokio::test]
+    async fn a_connection_asked_for_says_once_whether_it_worked_and_why_not() {
+        // An upstream that refuses: a port that was free a moment ago. Nothing leaves this machine.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        type Seen = Vec<(bool, Option<&'static str>)>;
+        let outcomes: Arc<Mutex<Seen>> = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&outcomes);
+        let policy = ProbePolicy {
+            every: None,
+            retry: Duration::from_secs(3600),
+            after_failures: Duration::from_secs(3600),
+        };
+        let c = Connection::new(Arc::new(Geo::new("")), "hproxy-test", policy, move |change| {
+            if let Change::Outcome { ok, why } = change {
+                seen.lock().unwrap().push((ok, why));
+            }
+        });
+        let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        c.start(place("a"), built(&format!("127.0.0.1:{port}")), any, None)
+            .await
+            .unwrap();
+        for _ in 0..150 {
+            if !outcomes.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            *outcomes.lock().unwrap(),
+            vec![(false, Some("refused"))],
+            "the relay saw the refusal"
+        );
+        c.test_now().await.unwrap();
+        assert_eq!(
+            outcomes.lock().unwrap().len(),
+            1,
+            "a probe asked for later is no second connection"
+        );
+        c.stop().await;
     }
 
     #[tokio::test]

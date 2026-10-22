@@ -131,12 +131,24 @@ fn remember_row(app: &AppHandle, r: &CheckResult) {
 /// (one `CheckResult` each) followed by a single `checker:done`.
 #[tauri::command]
 pub fn check_proxies(app: AppHandle, state: State<'_, AppState>, args: CheckArgs) -> Result<(), String> {
+    // Usage counts (usage.rs): a run, how long its list is, and the speed test when it is on.
+    crate::usage::count(
+        &app,
+        hproxy_api::usage::Event::CheckRun {
+            proxies: args.proxies.len() as u64,
+        },
+    );
+    crate::usage::feature(&app, "checker");
+    if args.measure_speed == Some(true) {
+        crate::usage::feature(&app, "speed_test");
+    }
     let geo = match args.geo_api_url.as_deref().map(str::trim) {
         Some(url) if url != DEFAULT_GEO_API => Arc::new(Geo::new(url)),
         _ => state.geo.clone(),
     };
 
-    let timeout = Duration::from_millis(args.timeout_ms.unwrap_or(8000).clamp(1000, 60_000));
+    // Two minutes at most: the same ceiling as Settings' "Wait per proxy" (src/lib/settings.ts).
+    let timeout = Duration::from_millis(args.timeout_ms.unwrap_or(8000).clamp(1000, 120_000));
     let protocols = match args.protocols.as_deref() {
         Some(list) if !list.is_empty() => ProtocolSet::from_strings(list),
         _ => ProtocolSet::all(),

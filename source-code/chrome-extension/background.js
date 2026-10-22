@@ -20,6 +20,8 @@
 // The last days of saved proxies, read as the popup reads them (expiry.js:
 // HPROXY_EXPIRY). A classic worker loads it this way, at the top.
 importScripts("expiry.js");
+// The usage counts' book, kept as the apps keep theirs (usage.js: HPROXY_USAGE).
+importScripts("usage.js");
 
 const API = "https://hproxy.com";
 const SESSION_KEY = "hproxy_session";
@@ -720,7 +722,7 @@ function vpnConnect(country, protocol) {
         await restore(previous?.proxy || null);
         throw new Error(noExitMessage(want.country));
       }
-      return await connectProxy(found.proxy, {
+      const active = await connectProxy(found.proxy, {
         mode: "vpn",
         label: `${found.exit.country_code || "Free"} · ${found.exit.ip}`,
         exitIp: found.seenAs,
@@ -728,6 +730,14 @@ function vpnConnect(country, protocol) {
         vpn: { ...want, recent: [found.exit.ip, ...recent.filter((ip) => ip !== found.exit.ip)].slice(0, RECENT_MAX) },
         verified: true,
       });
+      void usageCount({ kind: "connectOk" });
+      void usageCount({ kind: "freeUsed" });
+      void usageCount({ kind: "feature", name: "free" });
+      return active;
+    } catch (e) {
+      // No free exit passed, or the setting could not be made; a stop pressed is no failure.
+      if (!e?.stopped) void usageCount({ kind: "connectFailed", reason: "other" });
+      throw e;
     } finally {
       busy = false;
       busyWith = null;
@@ -738,6 +748,7 @@ function vpnConnect(country, protocol) {
 /* New IP: the next exit that passes, while the person stays on the current
    one. When nothing else passes they keep what they have, and are told. */
 function vpnNewIp() {
+  void usageCount({ kind: "feature", name: "new_ip" });
   return serial(async () => {
     stopRequested = false;
     busy = true;
@@ -878,7 +889,10 @@ function pinConnect(msg) {
          this proxy and it stays on either way. It decides whether the popup
          says Connected or that nothing answered yet, and the answer names the
          exit (the test before connecting may not have had one). */
-      const seen = await probeExit(8000);
+      const why = {};
+      const seen = await probeExit(8000, { why });
+      // Usage counts: the connection worked, or why not, in the apps' fixed words.
+      void usageCount(seen ? { kind: "connectOk" } : { kind: "connectFailed", reason: loginRefused ? "login" : why.slow ? "timeout" : "other" });
       const session = await loadSession();
       if (!session) return null;
       await settlePin(session, seen);
@@ -886,6 +900,9 @@ function pinConnect(msg) {
       if (!seen && !loginRefused) pinRecheck(session, 0);
       notifyStatus();
       return describe(session);
+    } catch (e) {
+      if (!e?.stopped) void usageCount({ kind: "connectFailed", reason: "other" });
+      throw e;
     } finally {
       busy = false;
       busyWith = null;
@@ -929,8 +946,8 @@ async function keepSaved(session) {
 /* ── A proxy that gave no answer yet is asked again (mode "pin") ─────────
    A proxy of the person's own that answered nothing right after connecting
    is asked again a few times while it stays connected, and the popup turns
-   to Connected the moment it answers (2026-10-11: a customer's new mobile
-   line kept "Nothing came back through this proxy" on screen for good, while
+   to Connected the moment it answers (2026-10-11: a new mobile line kept
+   "Nothing came back through this proxy" on screen for good, while
    the same line worked minutes later). Each ask is one small request through
    the proxy itself, on the plan below. A sleeping worker misses the later
    ones; opening the popup asks at once (the "look" message, sent once per
@@ -1200,6 +1217,91 @@ chrome.webRequest.onAuthRequired.addListener(
   ["asyncBlocking"],
 );
 
+// ── Usage counts (usage.js), only after the person's yes in the popup ──────
+/* The book lives in local storage and only this worker writes it, one change
+   at a time. A report goes to hproxy.com, which the proxy setting always
+   bypasses (proxyConfig), so it never travels through the person's proxy.
+   Before a yes nothing is counted, written or sent. PRIVACY.md, "Usage counts". */
+const USAGE_KEY = "hproxy_usage";
+const USAGE_URL = `${API}/v1/app/usage`;
+const U = self.HPROXY_USAGE;
+let usageQueue = Promise.resolve();
+
+async function usageBook() {
+  const o = await chrome.storage.local.get(USAGE_KEY);
+  return U.load(o?.[USAGE_KEY]);
+}
+
+/** Change the book, one change at a time; `fn` returns false to leave it unwritten. */
+function usageChange(fn) {
+  const next = usageQueue.then(async () => {
+    const book = await usageBook();
+    if ((await fn(book)) !== false) await chrome.storage.local.set({ [USAGE_KEY]: book });
+    return book;
+  });
+  usageQueue = next.catch(() => {});
+  return next;
+}
+
+function usageCount(event) {
+  return usageChange((b) => {
+    if (b.answer !== "yes") return false;
+    U.count(b, U.today(), event);
+  }).catch(() => {});
+}
+
+/** How many proxies are saved, written on a day that already counts something. */
+function usageKept() {
+  return usageChange(async (b) => {
+    const day = U.today();
+    if (b.answer !== "yes" || !b.days[day]) return false;
+    const o = await chrome.storage.local.get("hproxy_byo");
+    U.count(b, day, { kind: "kept", proxies: Array.isArray(o?.hproxy_byo) ? o.hproxy_byo.length : 0, groups: 0 });
+  }).catch(() => {});
+}
+
+async function usageAbout() {
+  let os = "other";
+  try {
+    os = U.osWord((await chrome.runtime.getPlatformInfo()).os);
+  } catch {
+    /* a browser that does not say */
+  }
+  return { app: "extension", os, version: chrome.runtime.getManifest().version };
+}
+
+/* The finished days, each sent once, looked for at every opening of the popup
+   and every hour (the alarm below). A day that does not go waits for the next look. */
+let usageSending = false;
+async function usageSendDue() {
+  if (usageSending) return;
+  usageSending = true;
+  try {
+    const book = await usageBook();
+    if (book.answer !== "yes") return;
+    const day = U.today();
+    for (const [d, report] of U.due(book, day, await usageAbout())) {
+      const res = await fetch(USAGE_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(report),
+        credentials: "omit",
+        cache: "no-store",
+      });
+      if (!res.ok) break;
+      // A "no" while it went: the book was emptied, and stays empty.
+      await usageChange((b) => {
+        if (b.answer !== "yes" || b.copy !== report.copy) return false;
+        U.markSent(b, d, report, day);
+      });
+    }
+  } catch {
+    /* no internet: the next look tries again */
+  } finally {
+    usageSending = false;
+  }
+}
+
 // ── Message router (popup → worker) ─────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
@@ -1208,6 +1310,29 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         case "look":
           // The popup just opened: a proxy of their own that has not answered yet is asked now.
           void recheckOnLook();
+          // An opening for the usage counts (after a yes), and a finished day that waits goes.
+          void usageCount({ kind: "opened" }).then(usageKept).then(usageSendDue);
+          sendResponse({ ok: true });
+          break;
+        case "usageGet": {
+          const book = await usageBook();
+          sendResponse({ ok: true, answer: book.answer, last: book.last });
+          break;
+        }
+        case "usageAnswer": {
+          let before = "unasked";
+          const book = await usageChange((b) => {
+            before = b.answer;
+            U.setAnswer(b, !!msg.yes);
+          });
+          // The question came after the popup opened: this opening counts.
+          if (msg.yes && before !== "yes") await usageCount({ kind: "opened" }).then(usageKept);
+          sendResponse({ ok: true, answer: book.answer, last: book.last });
+          break;
+        }
+        case "usageCount":
+          // From the popup only what it alone sees: a feature used, a crash of the popup.
+          if (msg.event?.kind === "feature" || msg.event?.kind === "crash") void usageCount(msg.event);
           sendResponse({ ok: true });
           break;
         case "status":
@@ -1296,7 +1421,10 @@ chrome.alarms.get("hproxy-expiry", (alarm) => {
   if (!alarm) chrome.alarms.create("hproxy-expiry", { periodInMinutes: 60 });
 });
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "hproxy-expiry") refreshIdleBadge();
+  if (alarm.name === "hproxy-expiry") {
+    refreshIdleBadge();
+    void usageSendDue();
+  }
 });
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.hproxy_byo) refreshIdleBadge();

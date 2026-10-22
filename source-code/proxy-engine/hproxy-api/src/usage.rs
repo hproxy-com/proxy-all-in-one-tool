@@ -12,9 +12,9 @@
 //!   last     the last report exactly as it was sent ("what is sent")
 //!
 //! Nothing is counted while the answer is not yes: no tally waits for a yes.
-//! A report holds counts and words from fixed lists only, the lists the server
-//! checks every report against (hproxy-backend, routes/app_usage.rs, in the
-//! monorepo); a word off them would only be dropped there. A count stops at
+//! A report holds counts and words from fixed lists only, the lists hproxy.com's
+//! server checks every report against; a word off them would only be dropped
+//! there. A count stops at
 //! the server's bound, so a busy day never loses its whole report.
 
 use std::collections::{BTreeMap, BTreeSet};

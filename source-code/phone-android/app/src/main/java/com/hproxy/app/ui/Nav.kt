@@ -5,6 +5,11 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.hproxy.app.engine.PlaceRef
+import com.hproxy.app.state.JustAdded
+
+/** What a press on the switch says with nothing of yours to connect (2026-10-18), the computer
+ *  app's words too. */
+const val ADD_FIRST = "Add your proxies first to start connecting!"
 
 /** The tabs of the nav, the H button in the middle between Proxies and Checker (2026-10-12, the
  *  big VPN apps' shape: Home is the connection itself, the button in the middle connects). Help
@@ -24,6 +29,8 @@ enum class Page {
     Checks,
     Apps,
     Details,
+    /** Settings' usage counts: the switch and the last report as it went. */
+    Usage,
 }
 
 /** The sheets that rise from the bottom (over the nav too). `CheckType`: typing proxies in for
@@ -92,6 +99,19 @@ class Nav {
 
     fun open(s: SheetKind) {
         sheet = s
+    }
+
+    /** Add was opened by the switch (it says why, under its title, as the computer app's Add does). */
+    var addAsked by mutableStateOf(false)
+
+    /** The switch with none of yours to connect: Add opens on My proxies and says why; the first of
+     *  what is added that works then connects (JustAdded.arm), as on the computer. */
+    fun addFirst() {
+        go(Tab.Proxies)
+        showShelf(Shelf.Mine)
+        open(SheetKind.Add)
+        addAsked = true
+        JustAdded.arm()
     }
 
     /** A proxy, opened: its name, its address, every fraud checker's score. A group opens its

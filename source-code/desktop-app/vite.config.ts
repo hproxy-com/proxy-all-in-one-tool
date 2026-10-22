@@ -9,6 +9,13 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
 
+  // Flags stay files of their own, each fetched when one shows. Inlined into the stylesheet they
+  // were 421 kB of its 569 kB, every country's picture parsed at every start for the few on screen
+  // (measured 2026-10-23).
+  build: {
+    assetsInlineLimit: (file: string) => (file.includes("flag-icons") ? false : undefined),
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

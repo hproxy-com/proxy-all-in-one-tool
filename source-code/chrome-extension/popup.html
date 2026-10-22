@@ -19,6 +19,19 @@
     up and does not find, it leaves alone.
   -->
   <body>
+    <!-- The usage counts' one question (usage.js, popup.js drawUsage), on top
+         until it is answered; the footer's "Usage counts" changes it later. -->
+    <section class="usage-ask" id="usageAsk" hidden>
+      <b class="usage-title">Help make HProxy better?</b>
+      <p class="usage-words">
+        Once a day, a few counts about the day before: how often HProxy opened, how many connections worked and why the
+        others failed, which features you used. Never a proxy, a login, a site you visit or anything you type.
+      </p>
+      <div class="usage-actions">
+        <button type="button" id="usageNo" class="btn btn--sm">No, thanks</button>
+        <button type="button" id="usageYes" class="btn btn--sm btn--primary">Yes, send counts</button>
+      </div>
+    </section>
     <!-- The power button: the one control, as a VPN app has it. Its look
          follows data-phase (off, connecting, on, rotating) and data-failing,
          which popup.js sets; every move is CSS (popup.css, "THE POWER
@@ -161,8 +174,19 @@
       <a class="link-btn" href="https://chromewebstore.google.com/detail/mnbaebpfkhopgljijkaoogbadedkffjo" target="_blank" rel="noopener">Get it from the Chrome Web Store</a>
     </p>
 
+    <!-- The usage counts' switch and the last report exactly as it went. -->
+    <section class="usage-panel" id="usagePanel" hidden>
+      <label class="usage-switch"><input type="checkbox" id="usageOn" /> Send usage counts once a day</label>
+      <p class="usage-words">
+        Counts about the day before, never a proxy, a login, a site you visit or anything you type. Off deletes this
+        copy's random number and its counts.
+      </p>
+      <pre class="usage-last" id="usageLast"></pre>
+    </section>
+
     <footer class="foot">
       <span id="footNote"></span>
+      <button type="button" id="usageLink" class="link-btn" hidden>Usage counts</button>
       <a class="link-btn" href="https://hproxy.com" target="_blank" rel="noopener">hproxy.com</a>
     </footer>
 

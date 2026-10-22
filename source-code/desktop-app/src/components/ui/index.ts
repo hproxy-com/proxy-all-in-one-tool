@@ -44,4 +44,5 @@ export {
   type InputProps,
   type RangeProps,
 } from "./Controls";
+export { DropZone } from "./DropZone";
 export { cx } from "./tokens";

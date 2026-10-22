@@ -1,6 +1,5 @@
-/* Removes that wait before they happen, so Restore can take them back (2026-10-18: "when you
-   remove the ones that aren't working sometimes it's risky ... there should be a restore button
-   that pops up shortly after and lasts for 5 seconds").
+/* Removes that wait before they happen, so Restore can take them back (since 2026-10-18): a proxy
+   that failed one test may only be down a while.
 
    The proxies leave the list at once and are forgotten UNDO_MS later, unless Restore comes first.
    A second Remove while one waits forgets the first at once and gives the new one its own time.

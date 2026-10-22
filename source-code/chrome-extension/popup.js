@@ -204,32 +204,47 @@ function setNowFlag(cc) {
   node.innerHTML = cc ? flagImg(cc) : GLOBE_SVG;
 }
 
-/* The place the switch connects to: kept after every connect. */
+/* The place connected last: kept after every connect. A saved proxy of yours is also kept on
+   its own, so a free country connected since never hides it from the switch. */
 const LAST_KEY = "hproxy_last_target";
+const LAST_OWN_KEY = "hproxy_last_own";
+let lastOwn = null;
 async function rememberTarget(target) {
   lastTarget = target;
   await store.set("local", LAST_KEY, target);
+  if (target?.kind === "pin") {
+    lastOwn = target;
+    await store.set("local", LAST_OWN_KEY, target);
+  }
 }
 
-/* The switch. Connected, or still connecting: back to your own address.
-   Otherwise: the last place used, or the fastest free exit when there is
-   none yet. */
+/* What a press on the switch says with nothing of yours to connect (2026-10-18), the apps'
+   words too. */
+const ADD_FIRST = "Add your proxies first to start connecting!";
+
+/* What the switch connects: your saved proxy used last, else the newest one you saved. Never a
+   free proxy by itself (since 2026-10-17): free ones connect from the Free tab. Null: none
+   saved. The apps' rule (hproxy-places switch_place). */
+function switchTarget(list) {
+  const key = lastOwn?.key ?? (lastTarget?.kind === "pin" ? lastTarget.key : null);
+  return (key && list.find((x) => `${x.host}:${x.port}` === key)) || list[0] || null;
+}
+
+/* The switch. Connected, or still connecting: back to your own address. Otherwise your own
+   proxy (switchTarget); with none, the place to paste them, and why. */
 async function toggleConnection() {
   if (active || busyNow) return doDisconnect();
-  if (lastTarget?.kind === "vpn" && lastTarget.country) return connectCountry(lastTarget.country);
-  if (lastTarget?.kind === "pin") {
-    const saved = (await store.get("local", "hproxy_byo", [])).find((x) => `${x.host}:${x.port}` === lastTarget.key);
-    if (saved) return connectSaved(saved);
-  }
-  return quickConnect();
+  const target = switchTarget(await store.get("local", "hproxy_byo", []));
+  if (target) return connectSaved(target);
+  setSurface("proxies");
+  byoMsg(ADD_FIRST, "info");
+  el("byoInput")?.focus();
 }
 
-/** Where the switch goes, in words: the last place used (a saved proxy by its
-    name when it has one), or the fastest free proxy when there is none yet. */
+/** Where the switch goes, in words: your saved proxy by its name when it has one; null with none. */
 function nextWords() {
-  if (lastTarget?.kind === "pin") return savedList.find((x) => `${x.host}:${x.port}` === lastTarget.key)?.name || lastTarget.key;
-  if (lastTarget?.kind === "vpn" && lastTarget.country) return ccName(lastTarget.country);
-  return "the fastest free proxy";
+  const target = switchTarget(savedList);
+  return target ? target.name || `${target.host}:${target.port}` : null;
 }
 
 /* Off, the switch's title and the line under it say where it goes; on, the
@@ -238,8 +253,8 @@ function nextWords() {
 function paintNext() {
   const sw = el("connSwitch");
   const next = nextWords();
-  if (sw) sw.title = sw.getAttribute("aria-checked") === "true" ? "Disconnect" : `Connect to ${next}`;
-  text("heroHint", `Connects to ${next}`);
+  if (sw) sw.title = sw.getAttribute("aria-checked") === "true" ? "Disconnect" : next ? `Connect to ${next}` : ADD_FIRST;
+  text("heroHint", next ? `Connects to ${next}` : ADD_FIRST);
 }
 
 /* ── status ─────────────────────────────────────────────────────────── */
@@ -278,8 +293,8 @@ async function refreshStatus({ rerunAnalysis = false } = {}) {
     conn.toggleAttribute("data-failing", warn);
   }
   /* The power button: on while connected or connecting. Off, the line under
-     it says where it goes: the last place used, or the fastest free proxy
-     when there is none yet. */
+     it says where it goes: your proxy used last (paintNext), or, with none,
+     that yours come first. */
   const lit = on_ || busyNow;
   el("connSwitch")?.setAttribute("aria-checked", String(lit));
   show("heroHint", !lit);
@@ -1191,10 +1206,9 @@ function drawSaved() {
   list.textContent = "";
   if (!savedList.length) {
     editing = null;
-    list.innerHTML =
-      `<p class="hint">Paste a proxy above. Each one that works is kept here.</p>` +
-      `<p class="hint">No proxy yet? <button type="button" class="link-btn" id="tryFree">Try a free one</button></p>`;
-    list.querySelector("#tryFree").addEventListener("click", () => setSurface("vpn"));
+    // Someone who has proxies pastes them (2026-10-17: no "try a free one" line); the free ones
+    // keep their own tab.
+    list.innerHTML = `<p class="hint">Paste a proxy above. Each one that works is kept here.</p>`;
     return;
   }
   const q = savedFilter.trim().toLowerCase();
@@ -1384,6 +1398,8 @@ async function describeSaved(key, { name, expires, note }) {
   put("expires", day);
   put("note", tidy(note, MAX_NOTE));
   await store.set("local", "hproxy_byo", list.map((x, i) => (i === at ? next : x)));
+  if (next.expires) countFeature("expiry");
+  if (next.note) countFeature("notes");
   return null;
 }
 
@@ -1562,6 +1578,35 @@ async function connectPlan(plan, row) {
   }
 }
 
+/* ── usage counts ───────────────────────────────────────────────────── */
+
+/* The question until it is answered, then "Usage counts" in the footer: the
+   switch and the last report exactly as it went (background.js keeps the
+   book, usage.js). Nothing is counted before a yes. */
+async function drawUsage() {
+  const r = await send({ type: "usageGet" });
+  if (!r?.ok) return;
+  show("usageAsk", r.answer === "unasked");
+  show("usageLink", r.answer !== "unasked");
+  text("usageLink", r.answer === "yes" ? "Usage counts: on" : "Usage counts: off");
+  const box = el("usageOn");
+  if (box) box.checked = r.answer === "yes";
+  text("usageLast", r.last ? JSON.stringify(r.last, null, 2) : "Nothing sent yet. The first report goes the day after you said yes.");
+}
+
+async function answerUsage(yes) {
+  await send({ type: "usageAnswer", yes });
+  await drawUsage();
+}
+
+/* What only the popup sees, once per opening: a feature used. */
+const usageSaid = new Set();
+function countFeature(name) {
+  if (usageSaid.has(name)) return;
+  usageSaid.add(name);
+  void send({ type: "usageCount", event: { kind: "feature", name } });
+}
+
 /* ── settings ───────────────────────────────────────────────────────── */
 
 /* Which tab opens first, as an earlier version let people set it (kept in
@@ -1584,16 +1629,30 @@ on("newIpBtn", "click", newIp);
 const quickRow = el("quickBtn");
 if (quickRow) pressable(quickRow, quickConnect);
 on("reloadCountries", "click", loadCountries);
-on("checksToggle", "click", () => openChecks(el("checksToggle").getAttribute("aria-expanded") !== "true"));
-on("reanalyze", "click", () => runAnalysis());
+on("checksToggle", "click", () => {
+  const open = el("checksToggle").getAttribute("aria-expanded") !== "true";
+  if (open) countFeature("leak_checks");
+  openChecks(open);
+});
+on("reanalyze", "click", () => {
+  countFeature("leak_checks");
+  runAnalysis();
+});
 on("countrySearch", "input", () => {
   countryFilter = el("countrySearch").value;
   renderCountries();
 });
 on("savedSearch", "input", () => {
   savedFilter = el("savedSearch").value;
+  if (savedFilter.trim()) countFeature("search");
   drawSaved();
 });
+on("usageYes", "click", () => answerUsage(true));
+on("usageNo", "click", () => answerUsage(false));
+on("usageOn", "change", () => answerUsage(!!el("usageOn")?.checked));
+on("usageLink", "click", () => show("usagePanel", !!el("usagePanel")?.hidden));
+// A crash of the popup counts (after a yes), never what it said.
+window.addEventListener("error", () => void send({ type: "usageCount", event: { kind: "crash", part: "window" } }));
 on("expirySort", "click", () => {
   savedSort = savedSort === "expiring" ? "recent" : "expiring";
   void store.set("local", SORT_KEY, savedSort);
@@ -1625,6 +1684,7 @@ async function init() {
   await loadSettings();
   favCountries = await store.get("sync", "hproxy_fav_countries", []);
   lastTarget = await store.get("local", LAST_KEY, null);
+  lastOwn = await store.get("local", LAST_OWN_KEY, null);
 
   const last = await store.get("local", "hproxy_last_surface", null);
   // Where the popup opens is not a move: the page and the crossbar are just there.
@@ -1644,6 +1704,8 @@ async function init() {
   await refreshStatus({ rerunAnalysis: true });
   // Opened on a proxy that has not answered yet: the worker asks it now (background.js, recheckOnLook).
   void send({ type: "look" });
+  // The usage counts' question, or the footer's switch once it is answered.
+  void drawUsage();
 
   /* Refreshed when something changes, never on a timer. The worker says when
      a session starts, ends, fails over or has its login refused; Chrome says
@@ -1656,6 +1718,7 @@ async function init() {
   chrome.storage?.onChanged?.addListener((changes, area) => {
     if (area === "local" && changes.hproxy_byo) renderByoList();
     if (area === "local" && changes.hproxy_last_target) lastTarget = changes.hproxy_last_target.newValue || null;
+    if (area === "local" && changes.hproxy_last_own) lastOwn = changes.hproxy_last_own.newValue || null;
   });
 }
 

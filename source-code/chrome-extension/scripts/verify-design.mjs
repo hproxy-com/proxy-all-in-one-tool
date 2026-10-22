@@ -18,11 +18,10 @@
      5. font sizes are on the ruler      36 distinct sizes against 13
                                          documented roles, measured on the
                                          website 2026-07-31
-     6. nothing see-through              the house rule since 2026-09-26
-                                         (the website's DESIGN.md "Nothing
-                                         see-through, ever"); the popup
-                                         still had fifteen such fills on
-                                         2026-10-10
+     6. nothing see-through              the house rule since 2026-09-26:
+                                         every fill is solid; the popup
+                                         still had fifteen see-through
+                                         fills on 2026-10-10
 
    White is exempt from 2 and 3. #fff is not a brand decision, it is the
    absence of one, and the popup is light-only so it cannot theme.

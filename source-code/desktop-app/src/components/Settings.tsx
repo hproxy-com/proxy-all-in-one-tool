@@ -2,7 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState, type JSX, type ReactNode 
 import {
   GENTLE_CONCURRENCY_CEILING,
   MAX_CONCURRENCY,
+  MAX_WAIT_SECONDS,
   PROBE_PRESETS,
+  waitWords,
   type Protocols,
   type Settings as SettingsType,
 } from "../lib/settings";
@@ -32,9 +34,10 @@ import {
 } from "../lib/updater";
 import { updatesItself } from "../lib/versions";
 import { slideIn } from "../lib/motion";
+import { USAGE_HOLDS, USAGE_NEVER, usageAnswer, usageGet, type UsageView } from "../lib/usage";
 import BackgroundPicker from "./BackgroundPicker";
 import { pushPage, usePhoneSub } from "./phone/PhoneShell";
-import { Button, ButtonGroup, Card, Check, Icon, InfoTip, Input, PageHead, Range, Tag, cx, useSlidingPill } from "./ui";
+import { Button, ButtonGroup, Card, Check, Icon, InfoTip, Input, PageHead, Range, cx, useSlidingPill } from "./ui";
 
 /* Settings: four sections in a nav of their own (2026-09-30), one shown at a
    time, each setting one line: its name, the "i", the control.
@@ -62,10 +65,14 @@ const PROTOCOL_LABEL: Record<keyof Protocols, string> = {
   socks5: "SOCKS5",
 };
 
-type SectionId = "checking" | "connect" | "look" | "app";
+/* "While connected" was "Connect" until 2026-10-22: the same word as the page, for what only runs
+   while connected. Its id stays, so a saved choice still opens
+   it. The fraud score has a section of its own since that day. */
+type SectionId = "checking" | "connect" | "fraud" | "look" | "app";
 const SECTIONS: readonly { id: SectionId; name: string; icon: (p: { className?: string }) => JSX.Element }[] = [
   { id: "checking", name: "Checking", icon: Icon.listCheck },
-  { id: "connect", name: "Connect", icon: Icon.connect },
+  { id: "connect", name: "While connected", icon: Icon.connect },
+  { id: "fraud", name: "Fraud score", icon: Icon.shield },
   { id: "look", name: "Look", icon: Icon.sun },
   { id: "app", name: "App", icon: Icon.settings },
 ];
@@ -244,53 +251,60 @@ function UpdatesRow() {
   );
 }
 
-/* Fraud scores, from one service or several at once, changed any time: every
-   service is a tick box, several can be on, and one always is. A service that needs a key shows its field once it
-   is on; its test asks once, past the session's saved scores, so a new key is
-   really tried. Keys stay on this computer. */
-function FraudRow({ settings, update }: { settings: SettingsType; update: (patch: Partial<SettingsType>) => void }) {
+/* Fraud scores, a section of its own since 2026-10-22: every service is a tick box, several can be
+   on, and one always is. Each shows its website (opened in the browser), what it gives for free in one line,
+   and its key field from the start, whether it is on or not; a key typed into a service that needs
+   one turns it on. A test asks once, past the session's saved scores, so a new key is really tried.
+   Keys stay on this computer. */
+function FraudSection({ settings, update }: { settings: SettingsType; update: (patch: Partial<SettingsType>) => void }) {
   const on = settings.fraudServices;
   const turn = (id: FraudService["id"], v: boolean) =>
     update({ fraudServices: fraudServicesOf(v ? [...on, id] : on.filter((x) => x !== id)) });
+  const typeKey = (s: FraudService, k: string) => {
+    const wakes = !!k.trim() && !on.includes(s.id) && !!s.key && !s.key.optional;
+    update({ fraudKeys: { ...settings.fraudKeys, [s.id]: k }, ...(wakes ? { fraudServices: fraudServicesOf([...on, s.id]) } : {}) });
+  };
   return (
-    <Row
-      name="Fraud score"
-      stacked
-      info={
-        <>
-          <p>
-            How risky sites may think an address is, from 0 to 100. <b>Lower is better.</b>
-          </p>
-          <p>
-            Asked from {thisDevice()} straight to each service you tick: only the address being scored goes there, nothing goes through
-            HProxy, and your keys stay on {thisDevice()}. In the Checker, the scores come when you ask for them; on Connect, for the address
-            you appear as.
-          </p>
-          <p>With several ticked, the highest score shows, and its &ldquo;i&rdquo; names what each one said.</p>
-        </>
-      }
-    >
-      <div className="ux-services">
-        {FRAUD_SERVICES.map((s) => (
-          <ServiceLine
-            key={s.id}
-            service={s}
-            on={on.includes(s.id)}
-            last={on.length === 1 && on[0] === s.id}
-            keys={settings.fraudKeys}
-            onTurn={(v) => turn(s.id, v)}
-            onKey={(k) => update({ fraudKeys: { ...settings.fraudKeys, [s.id]: k } })}
-          />
-        ))}
-      </div>
-      <div className="mt-4">
+    <>
+      <Row
+        name="Services"
+        stacked
+        info={
+          <>
+            <p>
+              How risky sites may think an address is, from 0 to 100. <b>Lower is better.</b>
+            </p>
+            <p>
+              Asked from {thisDevice()} straight to each service you tick: only the address being scored goes there, nothing goes through
+              HProxy, and your keys stay on {thisDevice()}. In the Checker, the scores come when you ask for them; on Connect, for the address
+              you appear as.
+            </p>
+            <p>With several ticked, the highest score shows, and its &ldquo;i&rdquo; names what each one said.</p>
+          </>
+        }
+      >
+        <div className="ux-services">
+          {FRAUD_SERVICES.map((s) => (
+            <ServiceLine
+              key={s.id}
+              service={s}
+              on={on.includes(s.id)}
+              last={on.length === 1 && on[0] === s.id}
+              keys={settings.fraudKeys}
+              onTurn={(v) => turn(s.id, v)}
+              onKey={(k) => typeKey(s, k)}
+            />
+          ))}
+        </div>
+      </Row>
+      <Row name="On Connect" info="The score of the address you appear as, beside it, while you are connected.">
         <Check on={settings.fraudOnConnect} onChange={(fraudOnConnect) => update({ fraudOnConnect })} label="Show it while connected" />
-      </div>
-    </Row>
+      </Row>
+    </>
   );
 }
 
-/** One fraud-score service: its tick, its key once it is on, its test. */
+/** One fraud-score service: its tick, its website, what it gives for free, its key, its test. */
 function ServiceLine({
   service,
   on,
@@ -321,26 +335,34 @@ function ServiceLine({
     <div className="ux-service" data-on={on || undefined}>
       <span className="pick">
         <Check on={on} onChange={onTurn} label={service.name} disabled={last} title={last ? "One service stays on" : undefined} />
-        {!service.key && <Tag tone="ok">Free</Tag>}
-        {service.key?.optional && !on && <Tag>Key optional</Tag>}
+        <button type="button" className="ux-site" onClick={() => void openExternal(service.site.url)} title={`Open ${service.site.domain} in your browser`}>
+          {service.site.domain}
+          <Icon.external />
+        </button>
       </span>
-      {on && (
-        <span className="setup">
-          {service.key && (
-            <span className="key">
-              <Input type="password" value={key} onChange={onKey} placeholder={service.key.placeholder} mono label={`${service.name} ${service.key.label}`} />
-            </span>
-          )}
+      <span className="free">{service.free}</span>
+      <span className="setup">
+        {service.key && (
+          <span className="key">
+            <Input type="password" value={key} onChange={onKey} placeholder={service.key.placeholder} mono label={`${service.name} ${service.key.label}`} />
+          </span>
+        )}
+        {service.getKey && !key && (
+          <button type="button" className="ux-link" onClick={() => void openExternal(service.getKey!)}>
+            Get a free key
+          </button>
+        )}
+        {on && (
           <Button size="sm" variant="text" onClick={runTest} disabled={test?.busy}>
             {test?.busy ? "Asking…" : "Test"}
           </Button>
-          {test && !test.busy && (
-            <span className={cx("result", test.ok ? "text-ok" : "text-danger")} title={test.text}>
-              {test.text}
-            </span>
-          )}
-        </span>
-      )}
+        )}
+        {test && !test.busy && (
+          <span className={cx("result", test.ok ? "text-ok" : "text-danger")} title={test.text}>
+            {test.text}
+          </span>
+        )}
+      </span>
     </div>
   );
 }
@@ -419,6 +441,57 @@ function BackgroundRow({ keepRunning, setKeepRunning }: { keepRunning: boolean; 
         {!store && <Check on={withComputer} onChange={toggleWithComputer} label="Start with the computer" />}
       </div>
     </Row>
+  );
+}
+
+/* Usage counts (lib/usage.ts): the answer to the question the app asked once, changed here, and
+   the last report exactly as it was sent. Off deletes this copy's number and every count. */
+function UsageRow() {
+  const [view, setView] = useState<UsageView | null>(null);
+  const [shown, setShown] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    void usageGet()
+      .then(setView)
+      .catch(() => {});
+  }, []);
+  if (!view) return null;
+  const turn = (on: boolean) => {
+    setProblem(null);
+    void usageAnswer(on)
+      .then(setView)
+      .catch((e: unknown) => setProblem(String(e)));
+  };
+  return (
+    <>
+      <Row
+        name="Usage counts"
+        note={problem ? <span className="text-danger">{problem}</span> : undefined}
+        info={
+          <>
+            <p>Once a day, a few counts about the day before, so we fix what fails most and build what you use:</p>
+            <ul className="list-disc pl-4">
+              {USAGE_HOLDS.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+            <p>{USAGE_NEVER} Off: nothing is sent, and this copy&rsquo;s random number and its counts are deleted.</p>
+          </>
+        }
+      >
+        <div className="flex flex-col items-start gap-2">
+          <Check on={view.answer === "yes"} onChange={turn} label="Send once a day" />
+          <Button variant="text" onClick={() => setShown((v) => !v)}>
+            {shown ? "Hide what was sent" : "What was sent"}
+          </Button>
+        </div>
+      </Row>
+      {shown && (
+        <pre className="num max-h-72 overflow-auto rounded-lg border border-hairline bg-surface p-3 text-[12px] leading-relaxed text-ink-mute">
+          {view.last ? JSON.stringify(view.last, null, 2) : "Nothing sent yet. The first report goes the day after you said yes."}
+        </pre>
+      )}
+    </>
   );
 }
 
@@ -540,8 +613,18 @@ export default function Settings({
                       />
                     </Row>
 
-                    <Row name="Wait per proxy" value={`${seconds} s`} info="How long to wait for a proxy to answer before it counts as not answering.">
-                      <Range value={seconds} onChange={(v) => update({ timeoutMs: Math.max(1000, v * 1000) })} min={1} max={60} label="Wait per proxy, in seconds" />
+                    <Row
+                      name="Wait per proxy"
+                      value={waitWords(seconds)}
+                      info="How long to wait for a proxy to answer before it counts as not answering. Up to two minutes."
+                    >
+                      <Range
+                        value={seconds}
+                        onChange={(v) => update({ timeoutMs: Math.max(1000, v * 1000) })}
+                        min={1}
+                        max={MAX_WAIT_SECONDS}
+                        label="Wait per proxy, in seconds"
+                      />
                     </Row>
 
                     <Row
@@ -701,10 +784,10 @@ export default function Settings({
                     </Row>
 
                     <TimeZoneRow on={settings.matchTimeZone} setOn={(matchTimeZone) => update({ matchTimeZone })} />
-
-                    <FraudRow settings={settings} update={update} />
                   </>
                 )}
+
+                {section === "fraud" && <FraudSection settings={settings} update={update} />}
 
                 {section === "look" && (
                   <>
@@ -809,6 +892,7 @@ export default function Settings({
                   <>
                     {!isMobile() && <BackgroundRow keepRunning={settings.keepRunning} setKeepRunning={(keepRunning) => update({ keepRunning })} />}
                     <UpdatesRow />
+                    <UsageRow />
                     <Row
                       name="Privacy"
                       info="Every server HProxy talks to, what each one receives, what our servers keep and for how long, and how to have it deleted."

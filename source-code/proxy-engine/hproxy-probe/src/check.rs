@@ -16,8 +16,15 @@ use crate::transport::{self, Budget, Context, Probe, Target};
 use crate::udp;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::pin::pin;
 use std::time::Duration;
 use tokio::sync::{Mutex, OnceCell};
+
+/// How long the other probes still get once one has answered, at least
+/// (`Checker::fan_out`): as long again as that first answer took, never less
+/// than this. A SOCKS5 greeting on a port that also speaks HTTP costs one or two
+/// round trips more than the HTTP probe, well inside it.
+pub const SETTLE_AFTER_FIRST: Duration = Duration::from_millis(1200);
 
 /// Which transports a check should probe. Four bools rather than a set:
 /// stack-allocated, and the `match` in the hot loop beats a hash lookup.
@@ -252,6 +259,122 @@ impl Checker {
         last
     }
 
+    /// The four probes at once, and this machine's own address beside them.
+    ///
+    /// Once one probe has answered, the others get as long again as that took
+    /// (`SETTLE_AFTER_FIRST` at least), then the check stops waiting for them.
+    /// A plain HTTP proxy often never
+    /// answers a SOCKS greeting, and its check used to sit out that probe's
+    /// whole budget on both judges: 16 s for a proxy that answered in 0.4 s
+    /// (measured 2026-10-22 on 60 public HTTP proxies: the working ones came
+    /// back after a median 11.6 s, their own answer took a median 0.35 s). A
+    /// real SOCKS server answers its greeting at once, so one that is still
+    /// silent this long after the same port answered does not speak it.
+    ///
+    /// The HTTPS probe keeps its whole budget while plain HTTP answered:
+    /// whether the proxy opens tunnels decides if it carries https at all
+    /// (usable.rs). When nothing answered, every probe keeps its whole budget,
+    /// as before. A probe cut short reads as not answering, with no failure of
+    /// its own.
+    async fn fan_out(
+        &self,
+        target: Target<'_>,
+        socks4_rungs: &[(Judge, SocketAddr)],
+        opts: &CheckOptions,
+        cx: Context<'_>,
+    ) -> (Probe, Probe, Probe, Probe, Option<String>) {
+        let mut http_f = pin!(async {
+            if opts.protocols.http {
+                transport::http(target, &self.ladder.plain, cx).await
+            } else {
+                Probe::default()
+            }
+        });
+        let mut https_f = pin!(async {
+            if opts.protocols.https {
+                transport::https(target, &self.ladder.tls, cx).await
+            } else {
+                Probe::default()
+            }
+        });
+        let mut s4_f = pin!(async {
+            if opts.protocols.socks4 && !socks4_rungs.is_empty() {
+                transport::socks4(target, socks4_rungs, cx).await
+            } else {
+                Probe::default()
+            }
+        });
+        let mut s5_f = pin!(async {
+            if opts.protocols.socks5 {
+                transport::socks5(target, &self.ladder.plain, cx).await
+            } else {
+                Probe::default()
+            }
+        });
+        let mut own_f = pin!(self.own_ip());
+
+        let (mut http_p, mut https_p, mut s4_p, mut s5_p) =
+            (None::<Probe>, None::<Probe>, None::<Probe>, None::<Probe>);
+        let mut own: Option<Option<String>> = None;
+        // When the probes still out are cut: after the first answer, as long
+        // again as it took, `SETTLE_AFTER_FIRST` at least.
+        let started = tokio::time::Instant::now();
+        let mut settle_at: Option<tokio::time::Instant> = None;
+        let mut cut = false;
+        let first_answer = |p: &Probe, at: &mut Option<tokio::time::Instant>| {
+            if p.alive && at.is_none() {
+                let now = tokio::time::Instant::now();
+                *at = Some(now + (now - started).max(SETTLE_AFTER_FIRST));
+            }
+        };
+        // Never every branch off: the loop runs only while a probe is still out.
+        while http_p.is_none() || https_p.is_none() || s4_p.is_none() || s5_p.is_none() {
+            let deadline = settle_at.filter(|_| !cut);
+            tokio::select! {
+                p = &mut http_f, if http_p.is_none() => {
+                    first_answer(&p, &mut settle_at);
+                    http_p = Some(p);
+                }
+                p = &mut https_f, if https_p.is_none() => {
+                    first_answer(&p, &mut settle_at);
+                    https_p = Some(p);
+                }
+                p = &mut s4_f, if s4_p.is_none() => {
+                    first_answer(&p, &mut settle_at);
+                    s4_p = Some(p);
+                }
+                p = &mut s5_f, if s5_p.is_none() => {
+                    first_answer(&p, &mut settle_at);
+                    s5_p = Some(p);
+                }
+                o = &mut own_f, if own.is_none() => {
+                    own = Some(o);
+                }
+                _ = tokio::time::sleep_until(deadline.unwrap_or_else(tokio::time::Instant::now)), if deadline.is_some() => {
+                    cut = true;
+                    let https_waits = https_p.is_none() && http_p.as_ref().is_some_and(|p| p.alive);
+                    http_p.get_or_insert_with(Probe::default);
+                    s4_p.get_or_insert_with(Probe::default);
+                    s5_p.get_or_insert_with(Probe::default);
+                    if !https_waits {
+                        https_p.get_or_insert_with(Probe::default);
+                    }
+                }
+            }
+        }
+        let own = match own {
+            Some(o) => o,
+            None => own_f.await,
+        };
+        (
+            http_p.unwrap_or_default(),
+            https_p.unwrap_or_default(),
+            s4_p.unwrap_or_default(),
+            s5_p.unwrap_or_default(),
+            own,
+        )
+    }
+
     async fn check_once(&self, line: &ProxyLine, opts: &CheckOptions) -> CheckResult {
         let mut result = CheckResult {
             ip: Some(line.host.clone()),
@@ -301,37 +424,7 @@ impl Checker {
         // Grading compares what the judge saw against our own address. It is
         // learned once per session and runs alongside the probes rather than
         // before them, so it is only ever needed at the merge.
-        let (http_p, https_p, s4_p, s5_p, own) = tokio::join!(
-            async {
-                if opts.protocols.http {
-                    transport::http(target, &self.ladder.plain, cx).await
-                } else {
-                    Probe::default()
-                }
-            },
-            async {
-                if opts.protocols.https {
-                    transport::https(target, &self.ladder.tls, cx).await
-                } else {
-                    Probe::default()
-                }
-            },
-            async {
-                if opts.protocols.socks4 && !socks4_rungs.is_empty() {
-                    transport::socks4(target, &socks4_rungs, cx).await
-                } else {
-                    Probe::default()
-                }
-            },
-            async {
-                if opts.protocols.socks5 {
-                    transport::socks5(target, &self.ladder.plain, cx).await
-                } else {
-                    Probe::default()
-                }
-            },
-            self.own_ip(),
-        );
+        let (http_p, https_p, s4_p, s5_p, own) = self.fan_out(target, &socks4_rungs, opts, cx).await;
 
         let probes = [
             ("http", &http_p),

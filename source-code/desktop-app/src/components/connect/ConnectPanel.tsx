@@ -1,3 +1,4 @@
+import { useLive } from "../../lib/liveRelay";
 import type { Settings } from "../../lib/settings";
 import { isTauri } from "../../lib/tauri";
 import { Icon } from "../ui";
@@ -20,7 +21,16 @@ import { useConnection } from "./connection";
    ConnectDesigns.tsx. */
 
 export default function ConnectPanel({ settings, onSettings }: { settings: Settings; onSettings: (patch: Partial<Settings>) => void }) {
-  const { card, drag } = useConnection();
+  const { card: still, drag } = useConnection();
+  // The traffic, its speed and the clock as they move (lib/liveRelay.ts): this page alone reads
+  // them, so it alone is drawn again once a second while connected.
+  const live = useLive();
+  const card = {
+    ...still,
+    now: Math.max(still.now, live.now),
+    rate: live.rate,
+    status: still.status && live.stats ? { ...still.status, stats: live.stats } : still.status,
+  };
   const note = !isTauri() && (
     <p className="px-1 text-[12.5px] font-medium text-ink-soft">Browser preview: the relay is pretend here.</p>
   );
