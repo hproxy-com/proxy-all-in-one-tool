@@ -47,23 +47,28 @@ class MainActivity : ComponentActivity() {
 
     private val nav = Nav()
     private var afterVpn: (() -> Unit)? = null
+    private var afterNotifications: (() -> Unit)? = null
 
     private val vpnConsent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val then = afterVpn
         afterVpn = null
         if (result.resultCode == RESULT_OK) {
-            then?.invoke()
-            // Only now, one question at a time: the VPN first, then the notification it shows.
-            askNotificationsOnce()
+            // One question at a time: the VPN first, then the notification it shows, then the
+            // connection, so nothing is being proven while a question covers the app.
+            askNotificationsOnce(then = then)
         } else {
             AppState.toast("HProxy needs Android's permission to carry your apps. Connect again and tap OK.")
         }
     }
 
-    // A VPN that is already running made its notification before this answer, and Android keeps
-    // that one hidden: shown at once on a yes, not at the next probe up to twenty seconds later.
+    // A VPN that is already running (the question asked from Settings) made its notification before
+    // this answer, and Android keeps that one hidden: shown at once on a yes, not at the next probe up
+    // to twenty seconds later. Then the connection that waited for the answer starts, yes or no.
     private val notifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) HProxyVpnService.running?.refresh()
+        val then = afterNotifications
+        afterNotifications = null
+        then?.invoke()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -89,8 +94,7 @@ class MainActivity : ComponentActivity() {
                 return@ask noVpn(e)
             }
             if (consent == null) {
-                then()
-                askNotificationsOnce()
+                askNotificationsOnce(then = then)
                 return@ask
             }
             afterVpn = then
@@ -164,13 +168,27 @@ class MainActivity : ComponentActivity() {
         AppState.toast("This phone does not let apps open a VPN, so HProxy cannot connect it.")
     }
 
-    private fun askNotificationsOnce(force: Boolean = false) {
-        if (Build.VERSION.SDK_INT < 33) return
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+    /** Android 13 and later ask before an app's notifications show: once, right before the first
+     *  connection (from Settings again, `force`). `then` runs when the question is answered, or at
+     *  once when there is nothing to ask. Until 0.4.5 the connection started first and was proven
+     *  under this question: left open some twenty seconds, the proxy "didn't answer". */
+    private fun askNotificationsOnce(force: Boolean = false, then: (() -> Unit)? = null) {
         val sp = getSharedPreferences("hproxy", MODE_PRIVATE)
-        if (!force && sp.getBoolean("askedNotifications", false)) return
+        val ask = Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
+            (force || !sp.getBoolean("askedNotifications", false))
+        if (!ask) {
+            then?.invoke()
+            return
+        }
         sp.edit().putBoolean("askedNotifications", true).apply()
-        notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        afterNotifications = then
+        try {
+            notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } catch (e: Exception) {
+            afterNotifications = null
+            then?.invoke()
+        }
     }
 
     /** Google's scanner: Play services shows its own camera screen and hands back only the code,
