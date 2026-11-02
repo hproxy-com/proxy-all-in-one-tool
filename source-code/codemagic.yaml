@@ -1,0 +1,114 @@
+# The iPhone app, built on Codemagic's Macs: nothing here needs a Mac of our own.
+# Started by hand or by its API, so a build only spends minutes when one is wanted.
+workflows:
+  ios-simulator:
+    name: iOS on the Simulator
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    environment:
+      xcode: latest
+    cache:
+      cache_paths:
+        - $HOME/.cargo/registry
+        - $CM_BUILD_DIR/target
+    scripts:
+      - name: Rust
+        script: |
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          . "$HOME/.cargo/env"
+          rustup target add aarch64-apple-ios-sim
+      - name: The engine
+        script: |
+          . "$HOME/.cargo/env"
+          sh ios-app/scripts/build-engine.sh sim
+      - name: The Xcode project
+        script: |
+          brew install xcodegen
+          cd ios-app
+          xcodegen generate
+      - name: Build and test on the Simulator
+        script: |
+          cd ios-app
+          DEVICE=$(xcrun simctl list devices available | grep -m1 'iPhone' | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
+          echo "DEVICE=$DEVICE" >> "$CM_ENV"
+          set -o pipefail
+          xcodebuild test \
+            -project HProxy.xcodeproj \
+            -scheme HProxy \
+            -destination "id=$DEVICE" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO | tail -120
+      - name: Pictures of the screens
+        script: |
+          cd ios-app
+          mkdir -p pictures
+          APP=$(find build/Build/Products -name 'HProxy.app' -maxdepth 3 | head -1)
+          xcrun simctl terminate "$DEVICE" com.hproxy.app || true
+          xcrun simctl uninstall "$DEVICE" com.hproxy.app || true
+          xcrun simctl install "$DEVICE" "$APP"
+          xcrun simctl launch "$DEVICE" com.hproxy.app
+          sleep 6
+          xcrun simctl io "$DEVICE" screenshot pictures/welcome.png
+          for tab in 0 1 2; do
+            xcrun simctl terminate "$DEVICE" com.hproxy.app
+            xcrun simctl launch "$DEVICE" com.hproxy.app -welcomed YES -tab "$tab"
+            sleep 4
+            xcrun simctl io "$DEVICE" screenshot "pictures/tab-$tab.png"
+          done
+    artifacts:
+      - ios-app/pictures/*.png
+      - ios-app/build/Logs/**/*.xcresult
+
+  # The computer app for Macs, Apple silicon and Intel in one file: the same build as
+  # .github/workflows/release.yml's macOS job, for while GitHub's machines cannot run.
+  # release.mjs signs the update file on our own PC (`builds desktop <version> --from=<folder>`).
+  desktop-mac:
+    name: The computer app for Mac
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      xcode: latest
+      node: 22.19.0
+    cache:
+      cache_paths:
+        - $HOME/.cargo/registry
+        - $CM_BUILD_DIR/target
+    scripts:
+      - name: Rust
+        script: |
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          . "$HOME/.cargo/env"
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: The window's packages
+        script: |
+          cd desktop-app
+          npm ci
+      - name: The macOS 26 icon
+        script: |
+          cd desktop-app/src-tauri
+          mkdir -p icons/macos/build
+          xcrun actool icons/macos/AppIcon.icon --compile icons/macos/build \
+            --output-format human-readable-text --notices --warnings --errors \
+            --output-partial-info-plist icons/macos/build/partial.plist \
+            --app-icon AppIcon --include-all-app-icons \
+            --enable-on-demand-resources NO --development-region en \
+            --target-device mac --minimum-deployment-target 26.0 --platform macosx
+          test -s icons/macos/build/Assets.car
+      - name: The app
+        script: |
+          . "$HOME/.cargo/env"
+          cd desktop-app
+          HPROXY_RELEASED_AT=$(date +%s) npx tauri build --ci \
+            --target universal-apple-darwin --bundles app,dmg \
+            --config src-tauri/tauri.github.conf.json
+      - name: The files, as the release tool takes them
+        script: |
+          mkdir -p mac-build
+          BUNDLE=target/universal-apple-darwin/release/bundle
+          cp "$BUNDLE"/dmg/*.dmg mac-build/hproxy-macos-universal.dmg
+          APP=$(ls -d "$BUNDLE"/macos/*.app | head -1)
+          tar -czf mac-build/hproxy-macos-universal.app.tar.gz -C "$(dirname "$APP")" "$(basename "$APP")"
+          git rev-parse HEAD > mac-build/BUILT-FROM
+          (cd mac-build && shasum -a 256 hproxy-macos-universal.dmg hproxy-macos-universal.app.tar.gz > SHA256SUMS)
+    artifacts:
+      - mac-build/*

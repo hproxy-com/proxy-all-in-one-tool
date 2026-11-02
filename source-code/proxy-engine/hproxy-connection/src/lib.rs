@@ -12,6 +12,7 @@
 //!               it changes, and the probes through it
 //!   health      one probe through the relay: does traffic really get through,
 //!               how long it takes, and which address it comes out with
+//!   verify      the test a connection passes before any door calls it connected
 //!   leak        which resolver the proxy looks names up with (DNS leak test)
 //!   speed       how fast a download through the relay is
 //!   sites       whether a working proxy also opens a given site (Google,
@@ -20,9 +21,10 @@
 //! "Working" means it carries your traffic: a probe that only reached a page
 //! over plain HTTP, or never came back, is not working, whatever answered.
 //!
-//! The phone app reads all of it through `hproxy-mobile`. The computer app
-//! reads `source`, `health` and `leak` today; its own connection code moves
-//! onto `Connection` when the computer app's connection is rebuilt on it.
+//! The phone app reads all of it through `hproxy-mobile`, the computer app
+//! through `desktop-app/src-tauri/src/connect.rs`, which adds what only a
+//! computer has: the system proxy setting and the time zone. The AI tool runs
+//! its own relay and shares `verify`.
 
 pub mod connection;
 pub mod health;
@@ -30,10 +32,11 @@ pub mod leak;
 pub mod sites;
 pub mod source;
 pub mod speed;
+pub mod verify;
 
-pub use connection::{Change, Connection, ProbePolicy, SourceInfo, Status};
+pub use connection::{Change, Connection, ProbePolicy, Share, SourceInfo, Status, CALLED_OFF};
 pub use health::{Health, DEFAULT_PROBE_URL};
-pub use source::{free_source, rotation_of, source_of, Built};
+pub use source::{free_source, rotation_of, routing_of, source_of, Built};
 
 /// Unix milliseconds now.
 pub fn now_ms() -> u64 {

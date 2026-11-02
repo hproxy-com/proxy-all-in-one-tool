@@ -651,7 +651,7 @@ function DeadLine({ p }: { p: DestinationsProps }) {
   if (!n || p.testing) return null;
   return (
     <div className="ux-deadline" role="status">
-      <span>{n === 1 ? "1 doesn't answer right now" : `${n} don't answer right now`}</span>
+      <span>{n === 1 ? "1 doesn't work right now" : `${n} don't work right now`}</span>
       <button type="button" className="ux-deadline-remove" onClick={p.onRemoveDead}>
         {n === 1 ? "Remove it" : "Remove them"}
       </button>

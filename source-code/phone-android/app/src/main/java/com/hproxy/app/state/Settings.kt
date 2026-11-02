@@ -9,7 +9,7 @@ import org.json.JSONObject
 
 /** What the person set, kept in the app's private preferences (never backed up). */
 data class Prefs(
-    /** "If it drops": block the internet until the proxy is back (on), or use the phone's own. */
+    /** The kill switch: if the proxy stops, apps wait for it (on), or use the phone's own internet. */
     val blockWhenDown: Boolean = true,
     val connectOnStartup: Boolean = false,
     /** Every app through the proxy, unless its rule says otherwise. */
@@ -19,6 +19,14 @@ data class Prefs(
     /** A new app may not use the internet until it is allowed. */
     val blockNewApps: Boolean = false,
     val showSystemApps: Boolean = false,
+    /** Which sites use the proxy: "all", "except" the ones named, or "only" those. */
+    val routeMode: String = "all",
+    /** The sites, in the person's own words. */
+    val routeSites: String = "",
+    /** A saved proxy in front of the proxy, by its id; empty is none. */
+    val firstHop: String = "",
+    /** A proxy that stops: move to the next of yours that works, without being asked. */
+    val moveOn: Boolean = false,
 )
 
 /** Where a place came out: its exit's city on the map. */
@@ -62,6 +70,10 @@ object Settings {
             tellBlocked = sp.getBoolean("tellBlocked", true),
             blockNewApps = sp.getBoolean("blockNewApps", false),
             showSystemApps = sp.getBoolean("showSystemApps", false),
+            routeMode = sp.getString("routeMode", "all") ?: "all",
+            routeSites = sp.getString("routeSites", "") ?: "",
+            firstHop = sp.getString("firstHop", "") ?: "",
+            moveOn = sp.getBoolean("moveOn", false),
         )
         val raw = sp.getString("rules", null)
         rulesFlow.value = try {
@@ -83,6 +95,10 @@ object Settings {
             .putBoolean("tellBlocked", p.tellBlocked)
             .putBoolean("blockNewApps", p.blockNewApps)
             .putBoolean("showSystemApps", p.showSystemApps)
+            .putString("routeMode", p.routeMode)
+            .putString("routeSites", p.routeSites)
+            .putString("firstHop", p.firstHop)
+            .putBoolean("moveOn", p.moveOn)
             .apply()
     }
 
@@ -116,6 +132,11 @@ object Settings {
      *  not say, where nothing then connects again by itself after an update. */
     fun bootCount(context: Context): Int =
         android.provider.Settings.Global.getInt(context.contentResolver, android.provider.Settings.Global.BOOT_COUNT, -1)
+
+    /** The first start's "How do you want to start?" was shown (ui/home/Welcome.kt). */
+    var welcomed: Boolean
+        get() = sp.getBoolean("welcomed", false)
+        set(v) = sp.edit().putBoolean("welcomed", v).apply()
 
     /** The old app's saved proxies were looked for once (migrate/OldAppStorage.kt). */
     var lookedForOldProxies: Boolean

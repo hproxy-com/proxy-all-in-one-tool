@@ -8,13 +8,15 @@ agent, read the README's "Command line" and "For AI assistants (MCP)" sections.
 | Path | What it is |
 | --- | --- |
 | `proxy-engine/hproxy-probe` | The engine: line parser, four timed transports, judge ladder, anonymity grading, HTTPS interception check, adaptive governor, batch runner. No UI, no database. |
-| `proxy-engine/hproxy-relay` | The connector: a local HTTP and SOCKS5 proxy with no password that forwards through a real proxy with its login attached. Fixed line, rotating list, or the free pool. |
+| `proxy-engine/hproxy-relay` | The connector: a local HTTP and SOCKS5 proxy with no password that forwards through a real proxy with its login attached. Fixed line, rotating list, or the free pool. `routes.rs`: which sites use the proxy, a proxy in front of it, the login of the relay other devices use. |
 | `proxy-engine/hproxy-system` | Read, set and restore the operating system's proxy setting. |
+| `proxy-engine/hproxy-connection` | One connection for every door: the relay, the test before anything changes, the watching afterwards, what it decided (`Connection`, `verify.rs`, `health.rs`). |
 | `proxy-engine/hproxy-api` | The client for hproxy.com's free doors: IP locations, API-mode checking, the free list. |
 | `proxy-engine/hproxy-places` | The places a person keeps (saved proxies, groups, the pick), sealed in the app's own data folder, and what each one is: the targeting a provider puts in a username (country, region, city, session), read back. |
 | `command-line-tool` | `hproxy`: check, connect, free, places, list, ip, and `mcp` (the MCP server). `src/places.rs` turns a saved place into the relay's source for every door, the desktop app's too. |
 | `desktop-app/src-tauri` | The desktop app's Rust side: commands and events around the crates. |
 | `src` | The desktop app's window (React, TypeScript, Tailwind). |
+| `ios-app` | The iPhone app in SwiftUI. `Tunnel` is the process that holds a connection, `HProxy` the screens, `Shared` what both use, `Tests` the real engine under the Swift models. `project.yml` makes the Xcode project, which is never committed; `codemagic.yaml` builds and tests it, on rented Macs. Connecting cannot run on the Simulator. |
 
 ## The gate (CI runs exactly this)
 
@@ -59,6 +61,28 @@ Everything in this repository, and every commit message, can be read by anyone.
   filled with a guess. A dead row says why in plain words (`FailureDetail::sentence`).
 - **Locations describe the exit.** A working row is located by `exit_ip`, never
   by the gateway it dialled.
+- **"Connected" is earned.** Every door connects through `hproxy-connection`:
+  traffic gets through the relay first (`verify.rs`), and only then does anything
+  on the machine point at it. A switch tests on a trial relay and leaves the
+  running one alone until the new place passed. Never show a connection on the
+  strength of a listening port.
+- **An error has a name.** Words for a failed connection start with the error,
+  a colon, then what it means ("timed out: the proxy did not answer"): the
+  engine writes them (`verify.rs`, `health.rs`), every window shows the name large
+  and the rest under it, and the extension reads Chrome's codes into the same
+  words (`chrome-extension/failure.js`). Say what happened, never just "failed".
+- **The relay on this computer needs no password; the one for other devices always
+  does.** `serve_network` asks for a login and only answers private addresses. Never
+  widen either: an open relay is found and abused within minutes.
+- **A rule never reaches the connection's own test.** `Routes::tested_at` keeps it on
+  the proxy, or a dead proxy would pass through a site rule.
+- **A notification goes through `desktop-app/src-tauri/src/notify.rs`.** The
+  notification plugin signs with PowerShell's id when run from a build folder and
+  with a wrong one in the Store copy; `notify.rs` signs with the real one.
+- **Test a connection on a copy, never on the machine's real proxy.** Debug builds
+  read `HPROXY_SYSTEM_FILE`: the setting then lives in that file instead of the
+  operating system's, so a test window can go through every state without
+  touching the browsers on the same computer. Release builds ignore it.
 - **A new field on `CheckResult`** also goes into `command-line-tool/src/rows.rs` `FIELDS`
   (a test fails otherwise) and into `desktop-app/src/lib/checker.ts`.
 - **Tests use documentation address space** (`192.0.2.0/24`, `198.51.100.0/24`,

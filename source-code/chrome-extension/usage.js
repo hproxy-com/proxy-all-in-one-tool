@@ -1,7 +1,7 @@
 /* ============================================================
    usage.js: the usage counts' book, kept the way the computer
    app and the phone keep theirs (proxy-engine/hproxy-api,
-   usage.rs): asked once, nothing counted before a yes, one
+   usage.rs): off until switched on, nothing counted before a yes, one
    report a day about the day before, holding counts and words
    from fixed lists only. What a report holds: PRIVACY.md,
    "Usage counts". The worker (background.js) is the only one

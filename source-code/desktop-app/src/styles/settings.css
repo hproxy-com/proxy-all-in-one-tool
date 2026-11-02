@@ -100,6 +100,24 @@
   color: var(--ink-mute);
 }
 
+/* A choice of many, the proxy to go through first (Advanced). */
+.ux-setselect {
+  height: 34px;
+  max-width: 260px;
+  padding: 0 10px;
+  border: 1px solid var(--bar);
+  border-radius: 10px 4px 10px 4px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface);
+}
+.ux-setselect:focus-visible {
+  outline: 2px solid var(--digi);
+  outline-offset: 2px;
+}
+
 /* "More looks": the Connect page's layout, the H and the connected look,
    folded away under the background. */
 .ux-setmore {

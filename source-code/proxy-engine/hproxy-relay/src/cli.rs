@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use crate::pool;
+use crate::routes::{Mode, Routes, Routing};
 use crate::source::{List, Rotation, Source};
 use crate::upstream::{self, Scheme, Upstream};
 use crate::DEFAULT_LISTEN;
@@ -33,6 +34,11 @@ OPTIONS
   -f, --free            Use the free HProxy proxy pool instead of your own proxy.
       --country <CC>    With --free: a two-letter country, e.g. US, DE, FR.
       --socks5          With --free: ask the pool for a SOCKS5 exit.
+      --skip <SITES>    These sites go straight out, past the proxy: names,
+                        addresses or ranges, separated by commas.
+      --only <SITES>    Only these sites use the proxy, the rest go straight out.
+      --via <PROXY>     Reach the proxy through this one first: two proxies in a
+                        row, and the second only sees the first one's address.
   -l, --listen <ADDR>   Where to listen. Default 127.0.0.1:8080. Port 0 takes
                         any free port and prints which one.
       --allow-lan       Permit binding a non-loopback address. Read the warning.
@@ -57,6 +63,12 @@ pub struct Args {
     /// crate cannot read saved places: `hproxy connect` reads them and builds
     /// the source itself (`run_with_source`).
     pub place: Option<String>,
+    /// Sites that go straight out, past the proxy.
+    pub skip: Option<String>,
+    /// The only sites that use the proxy.
+    pub only: Option<String>,
+    /// A proxy in front of the proxy.
+    pub via: Option<String>,
     /// With `place`, a group's member to start on, counted from 1.
     pub member: Option<usize>,
     pub listen: String,
@@ -135,6 +147,7 @@ pub fn parse_args(argv: impl Iterator<Item = String>) -> Result<Option<Args>, St
     let mut country: Option<String> = None;
     let mut place: Option<String> = None;
     let mut member: Option<usize> = None;
+    let (mut skip, mut only, mut via): (Option<String>, Option<String>, Option<String>) = (None, None, None);
     let mut listen = DEFAULT_LISTEN.to_string();
     let (mut free, mut socks5, mut allow_lan, mut json, mut verbose) = (false, false, false, false, false);
 
@@ -144,6 +157,19 @@ pub fn parse_args(argv: impl Iterator<Item = String>) -> Result<Option<Args>, St
             "-h" | "--help" => return Ok(None),
             "-v" | "--verbose" => verbose = true,
             "--allow-lan" => allow_lan = true,
+            "--skip" => {
+                skip = Some(
+                    it.next()
+                        .ok_or("--skip needs the sites, e.g. example.com,example.org")?,
+                )
+            }
+            "--only" => {
+                only = Some(
+                    it.next()
+                        .ok_or("--only needs the sites, e.g. example.com,example.org")?,
+                )
+            }
+            "--via" => via = Some(it.next().ok_or("--via needs a proxy line")?),
             "--json" => json = true,
             "-f" | "--free" => free = true,
             "--socks5" => socks5 = true,
@@ -181,6 +207,9 @@ pub fn parse_args(argv: impl Iterator<Item = String>) -> Result<Option<Args>, St
         }
     }
 
+    if skip.is_some() && only.is_some() {
+        return Err("--skip and --only say opposite things. Pick one.".into());
+    }
     let sources = [proxy.is_some(), file.is_some(), free, place.is_some()]
         .iter()
         .filter(|x| **x)
@@ -216,6 +245,9 @@ pub fn parse_args(argv: impl Iterator<Item = String>) -> Result<Option<Args>, St
         country,
         socks5,
         place,
+        skip,
+        only,
+        via,
         member,
         listen,
         allow_lan,
@@ -272,6 +304,17 @@ pub async fn run(args: Args) -> Result<(), String> {
     run_with_source(args, src, first_exit).await
 }
 
+/// How connections travel, from `--skip`, `--only` and `--via`.
+fn routing_from(args: &Args) -> Result<Routing, String> {
+    let sites = match (&args.skip, &args.only) {
+        (Some(sites), _) => Routes::new(Mode::Except, sites)?,
+        (_, Some(sites)) => Routes::new(Mode::Only, sites)?,
+        _ => Routes::default(),
+    };
+    let first_hop = args.via.as_deref().map(upstream::parse).transpose()?;
+    Ok(Routing { sites, first_hop })
+}
+
 /// `run`, for a source the caller built itself: `hproxy connect --place`,
 /// which reads the place from the HProxy app's library.
 pub async fn run_with_source(args: Args, src: Source, first_exit: Option<String>) -> Result<(), String> {
@@ -280,12 +323,14 @@ pub async fn run_with_source(args: Args, src: Source, first_exit: Option<String>
     let kind = src.kind();
     let allow_lan = args.allow_lan;
     let json = args.json;
+    let source = crate::SwitchableSource::new(src);
+    source.set_routing(routing_from(&args)?);
 
     crate::serve(
         addr,
         args.allow_lan,
         args.verbose,
-        std::sync::Arc::new(crate::SwitchableSource::new(src)),
+        std::sync::Arc::new(source),
         std::sync::Arc::new(crate::Stats::default()),
         move |local| {
             if json {

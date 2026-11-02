@@ -141,7 +141,9 @@ fun ConnectionMap(widthDp: Double, heightDp: Double, pinX: Double, pinY: Double,
     }
     val pinned = target != null
     val sceneDark = Scene(pinX, pinY, tone = Tone.Dark, lit = busy, exit = litNow, exitBefore = litBefore, litK = fade.value, pin = pinned)
-    val sceneBlue = Scene(pinX, pinY, tone = Tone.Blue, lit = true, exit = litNow, exitBefore = litBefore, litK = fade.value, pin = pinned)
+    // A proxy that stopped answering: the blue goes, nobody takes it for a connection that is fine.
+    val stopped = phase == Phase.On && health?.let { !it.ok && it.failuresInARow >= 2 } == true
+    val sceneBlue = Scene(pinX, pinY, tone = if (stopped) Tone.Red else Tone.Blue, lit = true, exit = litNow, exitBefore = litBefore, litK = fade.value, pin = pinned)
     val density = LocalDensity.current
 
     Box(modifier.fillMaxSize().background(C.bg)) {
@@ -159,7 +161,7 @@ fun ConnectionMap(widthDp: Double, heightDp: Double, pinX: Double, pinY: Double,
                         val circle = Path().apply { addOval(androidx.compose.ui.geometry.Rect(from, radius)) }
                         clipPath(circle) { this@drawWithContent.drawContent() }
                     }
-                    .background(C.blue),
+                    .background(if (stopped) C.badFill else C.blue),
             ) {
                 DotMap(flight, sceneBlue, widthDp.toInt(), heightDp.toInt(), place = place) {
                     Pin(on = true, white = true, cc = pinCc, city = city, beat = health?.exitIp)

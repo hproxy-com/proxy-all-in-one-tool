@@ -6,8 +6,8 @@
    Six checks, each one earned by a bug that actually happened rather
    than by a style preference:
 
-     1. tokens.css is current            the palette drifted for two days
-                                         in July and nothing noticed
+     1. tokens.css and world.js are      the palette drifted for two days
+        current                          in July and nothing noticed
      2. no hex literals in popup.css     a hex is a copy, and copies are
                                          what drifted
      3. no hand-typed rgba() triples     "rgba(1, 88, 255, .07)" is the
@@ -24,7 +24,8 @@
                                          fills on 2026-10-10
 
    White is exempt from 2 and 3. #fff is not a brand decision, it is the
-   absence of one, and the popup is light-only so it cannot theme.
+   absence of one: the words and the knob on the solid blue, white in both
+   looks.
 
    An off-ruler size is allowed if the line carries `ruler-exempt: <why>`
    in a comment. Exceptions then live in the diff and get counted in the
@@ -77,6 +78,12 @@ try {
     "tokens.css  is STALE against hproxy-website/app/globals.css. " +
       "Run: node scripts/sync-tokens.mjs",
   );
+}
+try {
+  execFileSync(process.execPath, [join(HERE, "sync-world.mjs"), "--check"], { stdio: "pipe" });
+  notes.push("world.js matches the computer app's map");
+} catch {
+  problems.push("world.js  is STALE against the computer app's worldDots.ts. Run: node scripts/sync-world.mjs");
 }
 
 if (!existsSync(TOKENS)) {

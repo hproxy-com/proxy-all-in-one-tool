@@ -6,7 +6,7 @@
    What it shows, as the popup does it: the H in the toolbar pressed, the popup opens; one of
    your proxies pressed, the top floods blue, the badge says ON; the checks opened, all seven
    clear; Free, the countries, the United States pressed, on again through a free proxy; the
-   power button, off; the popup closed by a click beside it. On the left the words of what
+   switch, off; the popup closed by a click beside it. On the left the words of what
    happens, as on the store's pictures. The recording starts and ends with the popup closed, so
    the last frame is the first and the film loops without a seam; it opens connected, the
    poster too.

@@ -1,20 +1,22 @@
 /* ============================================================
    GENERATED FILE — DO NOT EDIT BY HAND.
 
-   Source:    hproxy-website/app/globals.css
+   Source:    hproxy-website/app/globals.css, and the computer app's files in this repo
    Regenerate: node scripts/sync-tokens.mjs   (build.ps1 runs this)
 
    Every colour the popup is allowed to use lives here, copied
-   from the website's :root at build time. Editing this file by
-   hand recreates exactly the drift it exists to prevent: the
-   next build silently overwrites you.
+   from the website's :root and the computer app's dark look at
+   build time. Editing this file by hand recreates exactly the
+   drift it exists to prevent: the next build silently overwrites
+   you.
 
-   Need a new colour? Add it to the website's globals.css. That
-   is the only door, and it is deliberately the only door.
+   Need a new colour? Add it to the website's globals.css or the
+   app's styles. Those are the only doors, deliberately.
    ============================================================ */
 :root {
-  /* The popup is light only and never follows the OS scheme. This lock
-     stops a dark-OS browser from dark-ifying inputs and scrollbars. */
+  /* The white look. The popup never follows the OS scheme: the choice is
+     in its Settings page. This lock stops a dark-OS browser from
+     dark-ifying inputs and scrollbars. */
   color-scheme: light;
 
   --surface: #ffffff;
@@ -51,6 +53,26 @@
   --wave-crest: 214, 228, 255;
   --wave-glint: 64, 224, 208;
 
+  /* The computer app's, for what the website has no word for. */
+  --raised: #f0f0f3;
+  --hover: #e7e7eb;
+  --divider: #efeff2;
+  --accent-ink: #0148d4;
+  --map-land: #d9dfea;
+  --map-lit: #5f8ff9;
+
+  /* The flood, the switch and the map on it: the same in both looks. */
+  --flood: #0158ff;
+  --flood-deep: #0a3fcc;
+  --flood-words: #cfdeff;
+  --stop: #c62828;
+  --stop-deep: #9e1f1f;
+  --stop-words: #ffe3e3;
+  --map-flood-land: #2a6cff;
+  --map-flood-lit: #5f95ff;
+  --map-stop-land: #d23f3f;
+  --map-stop-lit: #e67a7a;
+
   /* Extension-only shapes. Not colours, so they are not drift risks:
      they map to the site's rounded-2xl / rounded-xl / rounded-lg. */
   --radius: 16px;
@@ -61,4 +83,38 @@
      brand, they are always tinted with digi-night. */
   --shadow: 0 2px 4px rgba(var(--digi-night-rgb), 0.04),
     0 22px 48px -28px rgba(var(--digi-night-rgb), 0.42);
+}
+
+/* The dark look, the default: the computer app's Graphite. */
+html[data-theme="midnight"] {
+  color-scheme: dark;
+
+  --canvas: #0c0c0f;
+  --surface: #16161a;
+  --raised: #202025;
+  --hover: #27272d;
+  --hairline: #232328;
+  --divider: #1f1f24;
+  --bar: #2e2e35;
+  --ink: #f4f4f5;
+  --ink-rgb: 244, 244, 245;
+  --ink-mute: #a1a1aa;
+  --ink-soft: #71717a;
+  --digi: #3d7bff;
+  --digi-rgb: 61, 123, 255;
+  --digi-deep: #2d63e6;
+  --digi-deep-rgb: 45, 99, 230;
+  --digi-night: #012368;
+  --digi-night-rgb: 1, 35, 104;
+  --digi-light: #8db1ff;
+  --digi-light-rgb: 141, 177, 255;
+  --accent-ink: #93b3ff;
+  --ok: #2bc48a;
+  --ok-rgb: 43, 196, 138;
+  --warn: #f3b843;
+  --warn-rgb: 243, 184, 67;
+  --danger: #ff7a7a;
+  --danger-rgb: 255, 122, 122;
+  --map-land: #1a2132;
+  --map-lit: #1d55d6;
 }

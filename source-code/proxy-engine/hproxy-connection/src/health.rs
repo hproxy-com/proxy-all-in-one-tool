@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use hproxy_api::geo::Geo;
+use hproxy_places::{place_words, Verdict};
 use serde::Serialize;
 
 /// How long one probe may take. The relay's own dial budget is inside this.
@@ -126,6 +127,25 @@ impl Health {
             reflects_exit,
         }
     }
+
+    /// What a probe through a saved proxy says about it, the way its row shows it.
+    pub fn verdict(&self) -> Verdict {
+        Verdict {
+            ok: self.ok,
+            latency_ms: self.latency_ms,
+            cc: self.country_code.as_deref().map(str::to_ascii_lowercase),
+            place: place_words(self.city.as_deref(), self.country.as_deref()),
+            exit_ip: self.exit_ip.clone(),
+            anonymity: None,
+            // A probe went through the relay itself: `ok` already means it
+            // carried traffic, and there is no check row to read words from.
+            says: None,
+            tone: None,
+            way: None,
+            datacenter: self.datacenter,
+            at: self.checked_at_ms,
+        }
+    }
 }
 
 /// The last probe's answer and how many failed in a row.
@@ -161,7 +181,11 @@ pub async fn probe_once(listen: SocketAddr, geo: &Geo, url: &str, program: &str)
             .map_err(|e| format!("could not build the probe client: {e}"))?;
         let resp = client.get(url).send().await.map_err(|e| in_words(&e, &target))?;
         if !resp.status().is_success() {
-            return Err(format!("{target} answered {}", resp.status()));
+            return Err(format!(
+                "error {}: {target} answered {}",
+                resp.status().as_u16(),
+                resp.status()
+            ));
         }
         match kind {
             ProbeKind::Echo => {
@@ -220,13 +244,22 @@ pub async fn probe_once(listen: SocketAddr, geo: &Geo, url: &str, program: &str)
     }
 }
 
-/// Why the probe's request failed, in words a person reads. reqwest's own top line ("error
-/// sending request") names no reason; the reason is further down its chain of causes. The probe
-/// asks our relay, which answers 502 when the proxy behind it fails, and reqwest reports that as
-/// an unsuccessful tunnel.
+/// A probe that ran out of time.
+fn timed_out(target: &str) -> String {
+    format!(
+        "timed out: no answer from {target} within {} seconds",
+        PROBE_TIMEOUT.as_secs()
+    )
+}
+
+/// Why the probe's request failed, in words a person reads: the error by its name, a colon, what
+/// it means (the windows show the name large; `verify::failure_words` adds what the relay knows).
+/// reqwest's own top line ("error sending request") names no reason; the reason is further down
+/// its chain of causes. The probe asks our relay, which answers 502 when the proxy behind it
+/// fails, and reqwest reports that as an unsuccessful tunnel.
 fn in_words(e: &reqwest::Error, target: &str) -> String {
     if e.is_timeout() {
-        return format!("no answer from {target} within {} seconds", PROBE_TIMEOUT.as_secs());
+        return timed_out(target);
     }
     let mut chain = String::new();
     let mut kind = None;
@@ -245,17 +278,17 @@ fn in_words(e: &reqwest::Error, target: &str) -> String {
 /// Why a probe failed, in the fixed words of the apps' usage counts (hproxy-api,
 /// `usage::FAILURES`), read from the sentences this file writes. None when the probe cannot
 /// know: the relay answered that the proxy behind it failed ("did not open", a 502), and the
-/// relay itself keeps why (hproxy-relay, `Stats::take_why`).
+/// relay itself keeps why (hproxy-relay, `Stats::take_failure`).
 pub fn failure_word(error: &str) -> Option<&'static str> {
-    if error.starts_with("no answer from ") {
+    if error.starts_with("timed out") {
         Some("timeout")
-    } else if error.contains("false certificate") {
+    } else if error.starts_with("bad certificate") {
         Some("tls")
     } else if error.contains(" answered 407") {
         Some("login")
     } else if error.contains(" answered 403") || error.contains(" answered 451") {
         Some("blocked")
-    } else if error.starts_with("the proxy did not open ") || error.contains(" answered 502") {
+    } else if error.starts_with("proxy error: it did not open ") || error.contains(" answered 502") {
         None
     } else {
         Some("other")
@@ -268,27 +301,29 @@ pub fn failure_word(error: &str) -> Option<&'static str> {
 fn words_for(kind: Option<std::io::ErrorKind>, chain: &str, target: &str) -> String {
     use std::io::ErrorKind as K;
     match kind {
-        Some(K::ConnectionRefused) => return "the connection was refused".into(),
+        Some(K::ConnectionRefused) => return "connection refused: nothing answers at that address".into(),
         Some(K::ConnectionReset | K::ConnectionAborted | K::UnexpectedEof | K::BrokenPipe) => {
-            return "the proxy closed the connection".into();
+            return CLOSED.into();
         }
-        Some(K::TimedOut) => return format!("no answer from {target} within {} seconds", PROBE_TIMEOUT.as_secs()),
+        Some(K::TimedOut) => return timed_out(target),
         _ => {}
     }
     let lower = chain.to_lowercase();
     if lower.contains("tunnel error: unsuccessful") {
         // The relay answered 502: the proxy behind it failed or would not go there.
-        format!("the proxy did not open {target}")
+        format!("proxy error: it did not open {target}")
     } else if lower.contains("underlying connection") {
-        "the proxy could not be reached".into()
+        "no connection: the proxy could not be reached".into()
     } else if lower.contains("certificate") || lower.contains("unknownissuer") || lower.contains("notvalidforname") {
-        format!("the proxy showed a false certificate for {target}")
+        format!("bad certificate: the proxy showed a false one for {target}")
     } else if lower.contains("connection closed") || lower.contains("incomplete") {
-        "the proxy closed the connection".into()
+        CLOSED.into()
     } else {
-        format!("the proxy did not carry the request to {target}")
+        format!("proxy error: it did not carry the request to {target}")
     }
 }
+
+const CLOSED: &str = "connection closed: the proxy hung up";
 
 #[cfg(test)]
 mod tests {
@@ -370,7 +405,10 @@ mod tests {
         let geo = Geo::new("");
         let h = probe_once(closed, &geo, DEFAULT_PROBE_URL, "hproxy-test").await;
         assert!(!h.ok);
-        assert_eq!(h.error.as_deref(), Some("the connection was refused"));
+        assert_eq!(
+            h.error.as_deref(),
+            Some("connection refused: nothing answers at that address")
+        );
         assert!(h.exit_ip.is_none());
     }
 
@@ -394,7 +432,7 @@ mod tests {
         assert!(!h.ok);
         assert_eq!(
             h.error,
-            Some(format!("the proxy did not open {}", host_of(DEFAULT_PROBE_URL)))
+            Some(format!("proxy error: it did not open {}", host_of(DEFAULT_PROBE_URL)))
         );
     }
 
@@ -405,30 +443,27 @@ mod tests {
         // The chains as reqwest 0.12 really writes them (read off a failing probe).
         assert_eq!(
             words(None, "client error (Connect) | tunnel error: unsuccessful | "),
-            "the proxy did not open hproxy.com"
+            "proxy error: it did not open hproxy.com"
         );
         // A German computer: the system's sentence is not read, its kind is.
         let german = "client error (Connect) | tunnel error: failed to create underlying connection | tcp connect error | \
                       Es konnte keine Verbindung hergestellt werden, da der Zielcomputer die Verbindung verweigerte. (os error 10061) | ";
-        assert_eq!(words(Some(K::ConnectionRefused), german), "the connection was refused");
         assert_eq!(
-            words(Some(K::ConnectionReset), "x | "),
-            "the proxy closed the connection"
+            words(Some(K::ConnectionRefused), german),
+            "connection refused: nothing answers at that address"
         );
+        assert_eq!(words(Some(K::ConnectionReset), "x | "), CLOSED);
         assert_eq!(
             words(
                 None,
                 "client error (Connect) | invalid peer certificate: UnknownIssuer | "
             ),
-            "the proxy showed a false certificate for hproxy.com"
+            "bad certificate: the proxy showed a false one for hproxy.com"
         );
-        assert_eq!(
-            words(None, "connection closed before message completed | "),
-            "the proxy closed the connection"
-        );
+        assert_eq!(words(None, "connection closed before message completed | "), CLOSED);
         assert_eq!(
             words(None, "something nobody foresaw | "),
-            "the proxy did not carry the request to hproxy.com"
+            "proxy error: it did not carry the request to hproxy.com"
         );
     }
 }

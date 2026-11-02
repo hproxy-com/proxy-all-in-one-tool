@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   changePlaces,
+  nextWorking,
   cleanDate,
   dayWords,
   daysLeft,
@@ -74,6 +75,18 @@ const checked = (id: string, ms: number | null, addedAt = 0): ProxyView => ({
   last: ms == null ? { ok: false, at: 1 } : { ok: true, latencyMs: ms, at: 1 },
 });
 const ids = (places: ChangePlace[]) => places.map((c) => (c.kind === "proxy" ? c.proxy.id : c.kind === "group" ? c.group.id : "free"));
+
+describe("nextWorking", () => {
+  const checked = (id: string, ok: boolean, latencyMs?: number): ProxyView => ({ ...proxy(id, 1, 0, 0), last: { ok, latencyMs, at: 1 } });
+  it("is the fastest that answered, never the one that failed", () => {
+    const proxies = [checked("slow", true, 900), checked("failed", true, 10), checked("fast", true, 100), checked("dead", false)];
+    expect(nextWorking(proxies, { kind: "proxy", id: "failed" })).toEqual({ kind: "proxy", id: "fast" });
+    expect(nextWorking(proxies, null)).toEqual({ kind: "proxy", id: "failed" });
+  });
+  it("offers nothing when nothing answered", () => {
+    expect(nextWorking([checked("dead", false)], null)).toBeNull();
+  });
+});
 
 describe("changePlaces", () => {
   it("puts the one in use first, then the working ones fastest first", () => {

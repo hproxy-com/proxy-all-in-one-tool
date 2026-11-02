@@ -37,16 +37,20 @@ use crate::relay::{self, FromRelay, Target};
 use crate::udp::UdpFlows;
 use crate::{MTU, TUN_V4, TUN_V6};
 
+/// An iPhone ends a tunnel's process at about 50 MB, so there each connection
+/// holds less and fewer are open at once. The apps' packets cross this phone
+/// in a millisecond, so the smaller windows cost no speed.
+const IOS: bool = cfg!(target_os = "ios");
 /// How much each connection holds in each direction. Downloads fill the
 /// phone-bound side, so it is the bigger one.
-const TO_PHONE_BUFFER: usize = 256 * 1024;
-const FROM_PHONE_BUFFER: usize = 64 * 1024;
+const TO_PHONE_BUFFER: usize = 1024 * if IOS { 64 } else { 256 };
+const FROM_PHONE_BUFFER: usize = 1024 * if IOS { 16 } else { 64 };
 /// How much is read from a connection in one go.
 const CHUNK: usize = 16 * 1024;
 /// Chunks waiting between a connection and its relay connection.
-const IN_FLIGHT: usize = 8;
+const IN_FLIGHT: usize = if IOS { 2 } else { 8 };
 /// Connections at once; a new one past this is refused (a reset).
-const MAX_CONNECTIONS: usize = 4096;
+const MAX_CONNECTIONS: usize = if IOS { 192 } else { 4096 };
 /// A listening socket whose handshake never came is removed after this.
 const HANDSHAKE_WITHIN: Duration = Duration::from_secs(10);
 /// Packets taken from the phone before the stack runs, so a flood of them

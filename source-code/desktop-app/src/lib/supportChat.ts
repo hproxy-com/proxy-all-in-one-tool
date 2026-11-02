@@ -45,7 +45,7 @@ export const START: ChatState = { messages: [], link: "closed", online: false, t
 /** The words the chat starts with when it has none of its own (and while it connects): the live
     chat's own welcome since 2026-10-19, so nothing changes once the chat answers. */
 export const HELLO =
-  "Hey 👋 This is a live chat with HProxy: ask us anything and we'll help you instantly. If it's about an order, send your order ID too.";
+  "Hey, this is a live chat with HProxy: ask us anything and we'll help you instantly. If it's about an order, send your order ID too.";
 
 /** The three ways people start: an idea, a problem, a country. */
 export const STARTERS: readonly (readonly [string, string])[] = [
@@ -53,6 +53,9 @@ export const STARTERS: readonly (readonly [string, string])[] = [
   ["Something broke", "Something broke: "],
   ["I need a country", "A country I need: "],
 ];
+
+/** A starter with nothing added: it says nothing yet, and sent alone it leaves support guessing. */
+export const bareStarter = (text: string): boolean => STARTERS.some(([, words]) => words.trim() === text.trim());
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v : undefined);
 const obj = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === "object" ? (v as Record<string, unknown>) : undefined);
@@ -215,6 +218,7 @@ function createSupportChat() {
 
     /** Send the words; they show at once, "Sending" until the chat has them. */
     send(text: string): boolean {
+      if (bareStarter(text)) return false;
       const body = text.trim();
       if (!body) return false;
       const id = `app-${Date.now()}-${counter++}`;

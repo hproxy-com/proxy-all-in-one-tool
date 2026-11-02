@@ -96,10 +96,35 @@ export type Settings = {
       back after (Windows; src-tauri/src/timezone.rs). Off until asked for: it
       changes a setting of the whole computer, which every program sees. */
   matchTimeZone: boolean;
+  /** A connection takes the whole computer: the system proxy setting points at it. Off, only the
+      programs pointed at the local address use it. Kept, and changed while connected too. */
+  wholeComputer: boolean;
+  /** The local address to listen on; empty is the usual 127.0.0.1:8080. */
+  listen: string;
+  /** The kill switch: a proxy that stops answering leaves everything that follows the system proxy
+      setting waiting, and nothing leaves on the person's own address. Off, the setting goes back
+      until the proxy answers (src-tauri/src/connect.rs). */
+  killSwitch: boolean;
+  /** Which sites use the proxy: all, all except the ones named, or only those (hproxy-relay, routes.rs). */
+  routeMode: RouteMode;
+  /** The sites, in the person's own words. */
+  routeSites: string;
+  /** A saved proxy in front of the proxy, by its id; empty is none. */
+  firstHop: string;
+  /** A proxy that stops: move to the next of yours that works, without being asked. */
+  moveOn: boolean;
+  /** Other devices on this network use this connection, with a login. */
+  shareOn: boolean;
+  sharePort: number;
+  /** Made up the first time it is switched on, kept after that: a TV keeps what it was told. */
+  sharePassword: string;
   /** The first start's "How do you want to start?" was answered or skipped (Welcome.tsx).
       Settings kept before 2026-10-22 count as answered: only a new copy is asked. */
   welcomed: boolean;
 };
+
+/** Which sites use the proxy. */
+export type RouteMode = "all" | "except" | "only";
 
 export const DEFAULT_SETTINGS: Settings = {
   concurrency: 64,
@@ -124,6 +149,16 @@ export const DEFAULT_SETTINGS: Settings = {
   fraudKeys: {},
   fraudOnConnect: true,
   matchTimeZone: false,
+  wholeComputer: true,
+  listen: "",
+  killSwitch: true,
+  routeMode: "all",
+  routeSites: "",
+  firstHop: "",
+  moveOn: false,
+  shareOn: false,
+  sharePort: 8899,
+  sharePassword: "",
   welcomed: false,
 };
 
@@ -217,6 +252,16 @@ export function loadSettings(): Settings {
         fraudKeys: keysOf(parsed.fraudKeys),
         fraudOnConnect: typeof parsed.fraudOnConnect === "boolean" ? parsed.fraudOnConnect : DEFAULT_SETTINGS.fraudOnConnect,
         matchTimeZone: typeof parsed.matchTimeZone === "boolean" ? parsed.matchTimeZone : DEFAULT_SETTINGS.matchTimeZone,
+        wholeComputer: typeof parsed.wholeComputer === "boolean" ? parsed.wholeComputer : DEFAULT_SETTINGS.wholeComputer,
+        listen: typeof parsed.listen === "string" ? parsed.listen : DEFAULT_SETTINGS.listen,
+        killSwitch: typeof parsed.killSwitch === "boolean" ? parsed.killSwitch : DEFAULT_SETTINGS.killSwitch,
+        routeMode: isRouteMode(parsed.routeMode) ? parsed.routeMode : DEFAULT_SETTINGS.routeMode,
+        routeSites: typeof parsed.routeSites === "string" ? parsed.routeSites : DEFAULT_SETTINGS.routeSites,
+        firstHop: typeof parsed.firstHop === "string" ? parsed.firstHop : DEFAULT_SETTINGS.firstHop,
+        moveOn: typeof parsed.moveOn === "boolean" ? parsed.moveOn : DEFAULT_SETTINGS.moveOn,
+        shareOn: typeof parsed.shareOn === "boolean" ? parsed.shareOn : DEFAULT_SETTINGS.shareOn,
+        sharePort: isPort(parsed.sharePort) ? parsed.sharePort : DEFAULT_SETTINGS.sharePort,
+        sharePassword: typeof parsed.sharePassword === "string" ? parsed.sharePassword : DEFAULT_SETTINGS.sharePassword,
         // Kept settings without it are from before the first-start screen: someone who knows the app.
         welcomed: typeof parsed.welcomed === "boolean" ? parsed.welcomed : true,
         protocols: { ...DEFAULT_SETTINGS.protocols, ...(parsed.protocols ?? {}) },
@@ -226,6 +271,15 @@ export function loadSettings(): Settings {
     /* ignore corrupt storage */
   }
   return DEFAULT_SETTINGS;
+}
+
+const isRouteMode = (v: unknown): v is RouteMode => v === "all" || v === "except" || v === "only";
+const isPort = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 1024 && v <= 65535;
+
+/** A password for the network relay: read off a screen and typed on a TV, so no letters that look alike. */
+export function newSharePassword(): string {
+  const letters = "abcdefghjkmnpqrstuvwxyz23456789";
+  return Array.from(crypto.getRandomValues(new Uint8Array(12)), (n) => letters[n % letters.length]).join("");
 }
 
 /** Stored keys, strings only: anything else in storage is dropped. */

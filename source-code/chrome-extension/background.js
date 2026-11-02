@@ -13,7 +13,8 @@
 //             that passes the same test.
 //   • "pin" — a proxy the person chose: their own, or an HProxy plan line.
 //             Logins are answered from memory in onAuthRequired. A pin is
-//             never moved automatically.
+//             never moved automatically. One that stops answering is noticed,
+//             and the kill switch decides what pages do meanwhile.
 //
 // The engine does the IP intelligence; this worker does the browser plumbing.
 
@@ -22,6 +23,10 @@
 importScripts("expiry.js");
 // The usage counts' book, kept as the apps keep theirs (usage.js: HPROXY_USAGE).
 importScripts("usage.js");
+// Why a proxy failed, by its name (failure.js, HPROXY_FAILURE).
+importScripts("failure.js");
+// Which sites use the proxy (sites.js, HPROXY_SITES).
+importScripts("sites.js");
 
 const API = "https://hproxy.com";
 const SESSION_KEY = "hproxy_session";
@@ -58,7 +63,7 @@ const RECENT_MAX = 12; // exits New IP will not hand back
 /* A dying exit fails a burst of requests at once: one check per burst. */
 const FAILOVER_DEBOUNCE_MS = 1500;
 /* Automatic heals in a row that found nothing. Then the worker stops trying
-   on its own, the badge turns amber, and the next move is the person's. */
+   on its own, the badge turns red, and the next move is the person's. */
 const MAX_FAILED_HEALS = 3;
 
 const POOL_KEY_PREFIX = "hproxy_pool:";
@@ -97,9 +102,10 @@ function serial(task) {
   /* A connection change starts: a recheck still waiting on the proxy in use
      stops at once, so its answer can never be read as the new proxy's. */
   stopRecheck();
+  // Every change of the proxy setting is written with the sites rule, so it waits for that.
   const run = queue.then(
-    () => task(),
-    () => task(),
+    () => sitesRead.then(task),
+    () => sitesRead.then(task),
   );
   queue = run.catch(() => {});
   run.finally(() => (queued -= 1)).catch(() => {});
@@ -148,6 +154,10 @@ function remember(session) {
    cancelled without sending the password again, until they reconnect. */
 const answeredAuth = new Set();
 let loginRefused = false;
+/* What Chrome said about the probe running now (net::ERR_...), and why the last
+   probe failed, by its name: null when it answered or nothing could be named. */
+let probeSaid = null;
+let lastFailure = null;
 /* A proxy of the person's own under test (pinFind): its login, answered once
    from memory while only the probe goes through it, and whether it refused. */
 let testingCreds = null;
@@ -226,6 +236,11 @@ function schemeFor(s) {
 // always go DIRECT: that is what lets a heal fetch fresh exits even while the
 // current one is dead.
 function proxyConfig(proxy) {
+  if (siteRule.mode === "only") {
+    const way = `${pacWord(proxy.scheme)} ${hostPort(proxy)}`;
+    const data = HPROXY_SITES.onlyScript(pacMark(proxy), way, siteRule.sites, PROBE_HOST);
+    return { mode: "pac_script", pacScript: { data, mandatory: true } };
+  }
   return {
     mode: "fixed_servers",
     rules: {
@@ -249,9 +264,38 @@ function proxyConfig(proxy) {
          🚨 If the control plane ever moves to a subdomain (api.hproxy.com
          and the like), that exact host must be added here AND in
          testConfig, or healing can no longer reach it through a dead exit. */
-      bypassList: ["hproxy.com", "localhost", "127.0.0.1", "[::1]"],
+      bypassList: ["hproxy.com", "localhost", "127.0.0.1", "[::1]", ...(siteRule.mode === "except" ? HPROXY_SITES.bypassRules(siteRule.sites) : [])],
     },
   };
+}
+
+/* Which sites use the proxy, read at the worker's start (`serial` waits for it): the rule every
+   proxy setting of this extension is written with. The connection's own test always goes through
+   the proxy: a site named that covers it is left out, or a dead proxy would pass. */
+const SITES_KEY = "hproxy_sites";
+let siteRule = { mode: "all", sites: [] };
+const rememberSites = (saved) => {
+  const mode = saved?.mode === "except" || saved?.mode === "only" ? saved.mode : "all";
+  const { sites } = HPROXY_SITES.read(saved?.text);
+  siteRule = { mode, sites: sites.filter((site) => !HPROXY_SITES.covers(site, PROBE_HOST)) };
+};
+const sitesRead = chrome.storage.local.get(SITES_KEY).then((o) => rememberSites(o?.[SITES_KEY]), () => {});
+
+/** What marks the "only these" script as ours, for this proxy (inEffect). */
+function pacMark(proxy) {
+  return `HProxy sites, through ${hostPort(proxy)}`;
+}
+
+function setSites(mode, text) {
+  return serial(async () => {
+    const { wrong } = HPROXY_SITES.read(text);
+    if (wrong.length) throw new Error(`Not a site: ${wrong.join(", ")}`);
+    const saved = { mode, text: String(text || "") };
+    await chrome.storage.local.set({ [SITES_KEY]: saved });
+    rememberSites(saved);
+    const session = await loadSession();
+    if (session && !session.ownAddress) await applyProxy(proxyConfig(session.proxy));
+  });
 }
 
 function hostPort(p) {
@@ -326,6 +370,10 @@ function sameHost(a, b) {
 
 /** Our fixed-server config for exactly this session's proxy is the one Chrome uses. */
 function inEffect(setting, session) {
+  // Only these sites: our script, naming this proxy.
+  if (setting?.level === "controlled_by_this_extension" && setting.value?.mode === "pac_script") {
+    return !!setting.value.pacScript?.data?.startsWith(`// ${pacMark(session.proxy)}`);
+  }
   const p = setting?.value?.rules?.singleProxy;
   return (
     setting?.level === "controlled_by_this_extension" &&
@@ -378,7 +426,7 @@ async function setBadge(session, failing) {
   try {
     if (session) {
       await chrome.action.setBadgeText({ text: failing ? "…" : "ON" });
-      await chrome.action.setBadgeBackgroundColor({ color: failing ? "#f59e0b" : "#0158ff" });
+      await chrome.action.setBadgeBackgroundColor({ color: failing ? "#c62828" : "#0158ff" });
       await chrome.action.setTitle({ title: `HProxy · ${session.label || "connected"}` });
       return;
     }
@@ -412,6 +460,8 @@ async function probeExit(timeoutMs = PROBE_TIMEOUT_MS, { why = null, own = null 
   const ctl = own || new AbortController();
   if (!own) probeAbort = ctl;
   let ranOut = false;
+  probeSaid = null;
+  lastFailure = null;
   const timer = setTimeout(() => {
     ranOut = true;
     ctl.abort();
@@ -419,7 +469,10 @@ async function probeExit(timeoutMs = PROBE_TIMEOUT_MS, { why = null, own = null 
   try {
     const nonce = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const res = await fetch(`${PROBE_URL}?probe=${nonce}`, { cache: "no-store", credentials: "omit", signal: ctl.signal });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      lastFailure = HPROXY_FAILURE.ofStatus(res.status);
+      return null;
+    }
     const body = await res.json();
     const ip = typeof body?.peer_ip === "string" && body.peer_ip ? body.peer_ip : null;
     if (!ip) return null;
@@ -428,6 +481,9 @@ async function probeExit(timeoutMs = PROBE_TIMEOUT_MS, { why = null, own = null 
     return { ip, country: /^[A-Z]{2}$/.test(cc) && cc !== "XX" && cc !== "T1" ? cc : "" };
   } catch {
     if (why) why.slow = ranOut;
+    // Chrome reports the reason beside the failed request, a moment after it at most.
+    if (!ranOut && !probeSaid) await new Promise((r) => setTimeout(r, 150));
+    lastFailure = ranOut ? HPROXY_FAILURE.TIMED_OUT : HPROXY_FAILURE.ofChrome(probeSaid);
     return null;
   } finally {
     clearTimeout(timer);
@@ -635,8 +691,14 @@ function publicStatus(session) {
     exitIp: session.exitIp,
     country: session.country,
     auth: !!session.proxy.username,
-    /* The last automatic heal found no working exit (mode "vpn"). */
-    failing: session.mode === "vpn" && failedHeals > 0,
+    /* It stopped answering (mode "pin"), or the last automatic heal found no
+       working exit (mode "vpn"). */
+    failing: !!session.stopped || (session.mode === "vpn" && failedHeals > 0),
+    /* Why, by its name (failure.js), while it fails or has not answered. */
+    why: session.stopped || session.verified === false || failedHeals > 0 ? session.why || lastFailure : null,
+    /* The kill switch is off and it stopped: pages are on the person's own
+       address until it answers. */
+    ownAddress: !!session.ownAddress,
     /* Mode "pin": whether our probe got an answer through it after connect.
        null = not checked (older session). */
     verified: session.verified ?? null,
@@ -658,6 +720,7 @@ function publicStatus(session) {
 async function describe(session) {
   const status = publicStatus(session);
   if (!status) return null;
+  status.killSwitch = await killSwitchOn();
   const setting = await readProxySetting();
   status.hijacked = setting.level === "controlled_by_other_extensions";
   status.policy = setting.level === "not_controllable";
@@ -672,7 +735,8 @@ async function currentStatus() {
   const session = await loadSession();
   if (!session) return null;
   const status = await describe(session);
-  if (status.inEffect || status.hijacked || status.policy) return status;
+  // The kill switch is off and the proxy stopped: our setting is away on purpose.
+  if (session.ownAddress || status.inEffect || status.hijacked || status.policy) return status;
   // A search or a test owns the setting right now (its PAC is in effect):
   // that is not a loss, and touching it would spoil the test.
   if (busy || queued > 0) return status;
@@ -682,7 +746,7 @@ async function currentStatus() {
     const again = await loadSession();
     if (!again) return null;
     let fresh = await describe(again);
-    if (!fresh.inEffect && !fresh.hijacked && !fresh.policy) {
+    if (!again.ownAddress && !fresh.inEffect && !fresh.hijacked && !fresh.policy) {
       try {
         await applyProxy(proxyConfig(again.proxy));
         await setWebRtcLock(true);
@@ -913,6 +977,7 @@ function pinConnect(msg) {
 /* What a pin session learns from an answer, or from none. */
 async function settlePin(session, seen) {
   session.verified = !!seen;
+  session.why = seen ? null : lastFailure;
   if (seen) {
     session.exitIp = seen.ip;
     if (seen.country) session.country = seen.country;
@@ -1037,6 +1102,7 @@ function disconnect() {
     remember(null);
     answeredAuth.clear();
     loginRefused = false;
+    chrome.alarms.clear(WATCH_ALARM);
     try {
       await clearProxy();
     } finally {
@@ -1068,6 +1134,176 @@ async function installUpdateWhenFree() {
   chrome.runtime.reload();
 }
 
+// ── The kill switch, and a proxy that stops answering ──────────────────────
+/* A proxy can die while someone browses through it. Pages then fail with a
+   proxy error; `checkPin` and `heal` ask the proxy itself, because one refused
+   site is no dead proxy. Two asks in a row without an answer and it counts as
+   stopped: the popup turns red and the badge says so.
+
+   What pages do meanwhile is the kill switch's (the footer's panel, on by
+   default). On, Chrome stays on the proxy: pages fail, nothing leaves on the
+   person's own address. Off, our setting goes away (`ownAddress`) and pages
+   use the person's own address until the proxy answers. Either way the proxy
+   is asked again every half a minute by an alarm, which outlives this worker;
+   with the setting away only that ask goes through it (testConfig). */
+const KILL_SWITCH_KEY = "hproxy_kill_switch";
+const WATCH_ALARM = "hproxy-watch";
+const SECOND_LOOK_MS = 2000;
+
+async function killSwitchOn() {
+  const o = await chrome.storage.local.get(KILL_SWITCH_KEY);
+  return o?.[KILL_SWITCH_KEY] !== false;
+}
+
+function setKillSwitch(on) {
+  return serial(async () => {
+    await chrome.storage.local.set({ [KILL_SWITCH_KEY]: on });
+    const session = await loadSession();
+    if (!session?.stopped) return;
+    if (on && session.ownAddress) {
+      session.ownAddress = false;
+      await applyProxy(proxyConfig(session.proxy));
+    } else if (!on && !session.ownAddress) {
+      session.ownAddress = true;
+      await clearProxy();
+    }
+    await saveSession(session);
+    notifyStatus();
+  });
+}
+
+let checkTimer = null;
+function scheduleCheck() {
+  if (busy || checkTimer) return;
+  checkTimer = setTimeout(() => {
+    checkTimer = null;
+    checkPin().catch(() => {});
+  }, FAILOVER_DEBOUNCE_MS);
+}
+
+function checkPin() {
+  return serial(async () => {
+    const session = await loadSession();
+    if (session?.mode !== "pin" || session.verified === false || session.stopped || loginRefused) return;
+    if (await probe()) return;
+    await new Promise((r) => setTimeout(r, SECOND_LOOK_MS));
+    if (await probe()) return;
+    await stoppedAnswering(session);
+  });
+}
+
+/* "Move to the next proxy": on to the first of the saved ones that answers, tested the way a
+   paste is, so nothing moves until one passed. A few at most: a long list must not keep a dead
+   connection busy for minutes. */
+const MOVE_ON_KEY = "hproxy_move_on";
+const MOVE_ON_TRIES = 5;
+
+async function moveOnWanted() {
+  const o = await chrome.storage.local.get(MOVE_ON_KEY);
+  return o?.[MOVE_ON_KEY] === true;
+}
+
+async function moveToNext(session) {
+  const o = await chrome.storage.local.get("hproxy_byo");
+  const here = sessionKey(session);
+  const others = (o?.hproxy_byo || []).filter((x) => `${x.host}:${x.port}` !== here).slice(0, MOVE_ON_TRIES);
+  busy = true;
+  try {
+    for (const x of others) {
+      const candidate = { scheme: schemeFor(x.scheme), host: String(x.host), port: Number(x.port) };
+      testingHost = candidate.host;
+      testingCreds = x.username ? { username: String(x.username), password: String(x.password || "") } : null;
+      testLoginRefused = false;
+      let seen = null;
+      try {
+        await applyProxy(testConfig(candidate, session.proxy));
+        seen = await probeExit(PIN_TEST_MS);
+      } finally {
+        testingHost = null;
+        testingCreds = null;
+      }
+      if (seen) {
+        await connectProxy(x, { mode: "pin", label: `${x.host}:${x.port}`, exitIp: seen.ip, country: seen.country || x.country || "", verified: true });
+        return true;
+      }
+    }
+    await applyProxy(proxyConfig(session.proxy));
+    return false;
+  } finally {
+    busy = false;
+  }
+}
+
+async function stoppedAnswering(session) {
+  // Why it stopped, kept before another test overwrites it.
+  const because = lastFailure;
+  if (session.mode === "pin" && (await moveOnWanted()) && (await moveToNext(session))) {
+    notifyStatus();
+    return;
+  }
+  session.stopped = true;
+  session.why = because;
+  if (!(await killSwitchOn())) {
+    session.ownAddress = true;
+    await clearProxy();
+  }
+  await saveSession(session);
+  await setBadge(session, true);
+  // A free exit is the person's next move (heal, below); their own proxy comes back by itself.
+  if (session.mode === "pin") chrome.alarms.create(WATCH_ALARM, { periodInMinutes: 0.5 });
+  notifyStatus();
+}
+
+/* The alarm: a stopped proxy is asked again, and everything goes back the moment it answers. */
+function lookAgain() {
+  return serial(async () => {
+    const session = await loadSession();
+    if (session?.mode !== "pin" || !session.stopped) {
+      chrome.alarms.clear(WATCH_ALARM);
+      return;
+    }
+    busy = true;
+    try {
+      let seen = null;
+      if (session.ownAddress) {
+        testingHost = session.proxy.host;
+        testingCreds = session.proxy.username ? { username: session.proxy.username, password: session.proxy.password } : null;
+        try {
+          await applyProxy(testConfig(session.proxy, null));
+          seen = await probeExit(PIN_TEST_MS);
+        } finally {
+          testingHost = null;
+          testingCreds = null;
+        }
+        if (seen) await applyProxy(proxyConfig(session.proxy));
+        else await clearProxy();
+      } else {
+        seen = await probeExit(PIN_TEST_MS);
+      }
+      if (!seen) {
+        // It may fail another way by now.
+        if (lastFailure && lastFailure !== session.why) {
+          session.why = lastFailure;
+          await saveSession(session);
+          notifyStatus();
+        }
+        return;
+      }
+      session.stopped = false;
+      session.why = null;
+      session.ownAddress = false;
+      session.exitIp = seen.ip;
+      if (seen.country) session.country = seen.country;
+      await saveSession(session);
+      await setBadge(session, false);
+      chrome.alarms.clear(WATCH_ALARM);
+      notifyStatus();
+    } finally {
+      busy = false;
+    }
+  });
+}
+
 // ── Healing a free exit that dies mid-browse (mode "vpn" only) ──────────────
 function scheduleHeal() {
   if (busy || failedHeals >= MAX_FAILED_HEALS) return;
@@ -1086,9 +1322,11 @@ function heal() {
     try {
       const session = await loadSession();
       if (!session || session.mode !== "vpn" || !session.vpn) return;
+      // The kill switch is off and our setting is away: there is no exit to ask.
+      const current = session.ownAddress ? null : session.proxy;
       // One refused site, one broken certificate, one slow page: not a dead
       // exit. Ask the exit itself before throwing it away.
-      if (await probe()) {
+      if (current && (await probe())) {
         if (failedHeals) {
           failedHeals = 0;
           await setBadge(session, false);
@@ -1099,19 +1337,19 @@ function heal() {
       const recent = session.vpn.recent || [];
       let found;
       try {
-        found = await findWorkingExit(session.vpn, session.proxy, recent);
+        found = await findWorkingExit(session.vpn, current, recent);
       } catch (e) {
-        if (!e.stopped) await restore(session.proxy);
+        if (!e.stopped) await restore(current);
         throw e;
       }
       if (!found) {
         failedHeals += 1;
-        // Stay on the dead exit rather than fall back to the real address
-        // without asking: pages fail until the person picks another country,
-        // presses New IP or disconnects. The amber badge says so.
-        await restore(session.proxy);
-        await setBadge(session, true);
-        notifyStatus();
+        // The kill switch: on, it stays on the dead exit: pages fail until the
+        // person picks another country, presses New IP or disconnects, and
+        // nothing leaves on their own address. Off, pages go back to it. The
+        // red badge says so either way.
+        await restore(current);
+        await stoppedAnswering(session);
         return;
       }
       failedHeals = 0;
@@ -1144,11 +1382,13 @@ const EXIT_TROUBLE = /ERR_PROXY|ERR_TUNNEL|ERR_SOCKS|ERR_CERT_|ERR_SSL_PROTOCOL_
 chrome.webRequest.onErrorOccurred.addListener(
   (d) => {
     answeredAuth.delete(d.requestId);
+    if (d.url.startsWith(PROBE_URL)) probeSaid = d.error;
     if (busy || !EXIT_TROUBLE.test(d.error || "")) return;
     // Our own probes and API calls report on themselves.
     if (d.initiator === OWN_ORIGIN) return;
     hydrate().then(() => {
       if (activeMode === "vpn") scheduleHeal();
+      else if (activeMode === "pin") scheduleCheck();
     });
   },
   { urls: ["<all_urls>"] },
@@ -1335,6 +1575,29 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           if (msg.event?.kind === "feature" || msg.event?.kind === "crash") void usageCount(msg.event);
           sendResponse({ ok: true });
           break;
+        case "sitesGet": {
+          const o = await chrome.storage.local.get(SITES_KEY);
+          sendResponse({ ok: true, mode: o?.[SITES_KEY]?.mode || "all", text: o?.[SITES_KEY]?.text || "" });
+          break;
+        }
+        case "sitesSet":
+          await setSites(msg.mode, msg.text);
+          sendResponse({ ok: true });
+          break;
+        case "moveOnGet":
+          sendResponse({ ok: true, on: await moveOnWanted() });
+          break;
+        case "moveOnSet":
+          await chrome.storage.local.set({ [MOVE_ON_KEY]: !!msg.on });
+          sendResponse({ ok: true, on: !!msg.on });
+          break;
+        case "killSwitchGet":
+          sendResponse({ ok: true, on: await killSwitchOn() });
+          break;
+        case "killSwitchSet":
+          await setKillSwitch(!!msg.on);
+          sendResponse({ ok: true, on: !!msg.on });
+          break;
         case "status":
           sendResponse({
             ok: true,
@@ -1380,7 +1643,7 @@ serial(async () => {
   const setting = await readProxySetting();
   const ours = setting.level === "controlled_by_this_extension";
   const free = setting.level === "controllable_by_this_extension";
-  if (session && (ours || free) && !inEffect(setting, session)) {
+  if (session && !session.ownAddress && (ours || free) && !inEffect(setting, session)) {
     try {
       await applyProxy(proxyConfig(session.proxy));
       await setWebRtcLock(true);
@@ -1425,6 +1688,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     refreshIdleBadge();
     void usageSendDue();
   }
+  if (alarm.name === WATCH_ALARM) lookAgain().catch(() => {});
 });
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.hproxy_byo) refreshIdleBadge();

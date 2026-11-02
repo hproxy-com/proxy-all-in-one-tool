@@ -1,8 +1,8 @@
 /* ============================================================
-   power-video.mjs: the power button moving, as a video (and stills).
+   switch-video.mjs: the switch moving, as a video (and stills).
 
-     node scripts/power-video.mjs <output folder>                 power.mp4
-     node scripts/power-video.mjs <output folder> --stills        off, connecting, on
+     node scripts/switch-video.mjs <output folder>                 switch.mp4
+     node scripts/switch-video.mjs <output folder> --stills        off, connecting, on
 
    The real popup of THIS folder in Chrome for Testing (never the browser in
    use: tests/e2e/cdp.mjs), with a stand-in for the background worker that
@@ -25,7 +25,7 @@ import { extensionIdFromKey, launchWithExtension, navigate, newPage } from "../t
 
 const EXT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ARGS = process.argv.slice(2);
-const OUT = resolve(ARGS.find((a) => !a.startsWith("--")) || join(EXT, "dist", "power"));
+const OUT = resolve(ARGS.find((a) => !a.startsWith("--")) || join(EXT, "dist", "switch"));
 const STILLS = ARGS.includes("--stills");
 mkdirSync(OUT, { recursive: true });
 const ID = extensionIdFromKey(JSON.parse(readFileSync(join(EXT, "manifest.json"), "utf8")).key);
@@ -38,13 +38,13 @@ const STAND_IN = `(() => {
   const listeners = [];
   const changed = () => listeners.forEach((fn) => { try { fn({ type: "statusChanged" }); } catch {} });
   chrome.runtime.onMessage.addListener = (fn) => listeners.push(fn);
-  const exit = { mode: "vpn", scheme: "socks5", host: "192.0.2.61", port: 1080, label: "US", exitIp: "203.0.113.24",
+  const exit = { mode: "pin", scheme: "socks5", host: "192.0.2.61", port: 1080, label: "US", exitIp: "203.0.113.24",
     country: "US", auth: false, failing: false, verified: true, rechecking: false, loginRefused: false, hijacked: false, policy: false };
   chrome.runtime.sendMessage = (msg, cb) => {
     const reply = (v) => setTimeout(() => cb && cb(v), 0);
     switch (msg && msg.type) {
       case "status": return reply({ ok: true, active: state.active, searching: state.searching, testing: false });
-      case "vpnConnect":
+      case "pinConnect":
         state.searching = true;
         changed();
         return setTimeout(() => { state.searching = false; state.active = { ...exit }; cb && cb({ ok: true, active: state.active }); changed(); }, 1800);
@@ -65,8 +65,8 @@ try {
   const js = (e) => cdp.evaluate(s, e);
   const popup = `chrome-extension://${ID}/popup.html`;
   await navigate(cdp, s, popup, 30_000);
-  // Nothing kept and no last place: the button goes to the fastest free proxy.
-  await js(`chrome.storage.local.clear()`);
+  // One proxy kept: the switch goes to it.
+  await js(`chrome.storage.local.clear().then(() => chrome.storage.local.set({ hproxy_byo: [{ host: "192.0.2.61", port: 1080, scheme: "socks5", username: "", password: "", country: "US" }] }))`);
   await navigate(cdp, s, popup, 30_000);
   await sleep(1500);
   const top = await js(`(() => { const r = document.getElementById("conn").getBoundingClientRect(); const b = document.getElementById("connSwitch").getBoundingClientRect(); return { h: Math.ceil(r.height), x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
@@ -78,7 +78,7 @@ try {
     await js(`document.documentElement.style.zoom = "${Z}"`);
   }
   await sleep(400);
-  if (!(await js(`!!document.elementFromPoint(${top.x * Z}, ${top.y * Z})?.closest("#connSwitch")`))) throw new Error("the pointer would miss the power button");
+  if (!(await js(`!!document.elementFromPoint(${top.x * Z}, ${top.y * Z})?.closest("#connSwitch")`))) throw new Error("the pointer would miss the switch");
 
   const at = { x: top.x * Z, y: top.y * Z };
   const press = async () => {
@@ -90,7 +90,7 @@ try {
     await sleep(260);
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 10, y: 10 }, s);
   };
-  const name = "power";
+  const name = "switch";
 
   if (STILLS) {
     const shot = async (label) => {

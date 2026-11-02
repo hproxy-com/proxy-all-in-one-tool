@@ -29,15 +29,18 @@
 //! chat clients. One address that answers both means nobody has to know which
 //! kind their program wants.
 
+use std::future::Future;
 use std::io;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::stats::{Counted, Stats, Why};
+use crate::routes::Login;
+use crate::stats::{Counted, Said, Stats, Why};
 use crate::switchable::Ticket;
 use crate::upstream::{self, Scheme, Upstream};
 
@@ -122,6 +125,28 @@ fn why_of(e: &io::Error) -> Why {
         return Why::Refused;
     }
     Why::Other
+}
+
+/// What the proxy itself said (stats.rs, `Said`), read from the words this file
+/// writes.
+fn said_of(e: &io::Error) -> Said {
+    if is_wrong_protocol(e) {
+        return Said::WrongProtocol;
+    }
+    let text = e.to_string();
+    if let Some((_, status)) = text.rsplit_once("upstream refused CONNECT: ") {
+        // 0: nothing a person could read came back, so it was no HTTP proxy.
+        return match status.parse() {
+            Ok(0) | Err(_) => Said::WrongProtocol,
+            Ok(status) => Said::Status(status),
+        };
+    }
+    if let Some((_, words)) = text.rsplit_once("SOCKS5 upstream refused the connection: ") {
+        if let Some(code) = (1..=8).find(|code| socks_reply(*code) == words) {
+            return Said::Socks(socks_reply(code));
+        }
+    }
+    Said::Nothing
 }
 
 /// How a plain http:// request reached its server: through the HTTP proxy
@@ -230,8 +255,20 @@ fn rewrite_head(head: &[u8], request_line: &str, auth: Option<&str>) -> Vec<u8> 
     out
 }
 
-/// Connect to the upstream proxy itself, within `limit`.
+/// `first` carrying a connection to `up`. A function of its own with a named
+/// type: dialling goes round through itself here, and the compiler can only see
+/// that such a future may cross threads when its type is written out.
+fn hop<'a>(first: &'a Upstream, up: &'a Upstream) -> Pin<Box<dyn Future<Output = io::Result<TcpStream>> + Send + 'a>> {
+    Box::pin(dial_through(first, &up.host, up.port))
+}
+
+/// Connect to the upstream proxy itself, within `limit`. With a proxy in front
+/// of it, that one carries us there, and its tunnel is our connection from then
+/// on: everything said to the upstream goes through it.
 async fn connect_upstream(up: &Upstream, limit: Duration) -> io::Result<TcpStream> {
+    if let Some(first) = &up.via {
+        return hop(first, up).await;
+    }
     match tokio::time::timeout(limit, TcpStream::connect(up.addr())).await {
         Ok(Ok(s)) => Ok(s),
         Ok(Err(e)) => Err(io::Error::new(
@@ -585,7 +622,7 @@ fn socks5_reply(code: u8) -> [u8; 10] {
 /// real login upstream. A client that offers only username and password is
 /// accepted and its words ignored, because some programs always send the
 /// fields they were configured with, even empty ones.
-async fn socks5_read_request<S>(s: &mut S) -> io::Result<Socks5Request>
+async fn socks5_read_request<S>(s: &mut S, login: Option<&Login>) -> io::Result<Socks5Request>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -596,7 +633,27 @@ where
     }
     let mut methods = vec![0u8; greeting[1] as usize];
     s.read_exact(&mut methods).await?;
-    if methods.contains(&0x00) {
+    if let Some(login) = login {
+        // A relay other devices use: the login is the way in, and the only one.
+        if !methods.contains(&0x02) {
+            s.write_all(&[0x05, 0xff]).await?;
+            return Err(io::Error::other("the client offered no login"));
+        }
+        s.write_all(&[0x05, 0x02]).await?;
+        let mut ver_ulen = [0u8; 2];
+        s.read_exact(&mut ver_ulen).await?;
+        let mut user = vec![0u8; ver_ulen[1] as usize];
+        s.read_exact(&mut user).await?;
+        let mut plen = [0u8; 1];
+        s.read_exact(&mut plen).await?;
+        let mut pass = vec![0u8; plen[0] as usize];
+        s.read_exact(&mut pass).await?;
+        if user != login.username.as_bytes() || pass != login.password.as_bytes() {
+            s.write_all(&[0x01, 0x01]).await?;
+            return Err(io::Error::other("the client's login is wrong"));
+        }
+        s.write_all(&[0x01, 0x00]).await?;
+    } else if methods.contains(&0x00) {
         s.write_all(&[0x05, 0x00]).await?;
     } else if methods.contains(&0x02) {
         s.write_all(&[0x05, 0x02]).await?;
@@ -655,11 +712,57 @@ where
     })
 }
 
+/// Straight to a site, past the proxy: what the person's rules ask for (routes.rs).
+async fn dial_direct(host: &str, port: u16) -> io::Result<TcpStream> {
+    match tokio::time::timeout(UPSTREAM_CONNECT, TcpStream::connect((host, port))).await {
+        Ok(reached) => reached,
+        Err(_) => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("{host} did not answer within {} s", UPSTREAM_CONNECT.as_secs()),
+        )),
+    }
+}
+
+/// The way to a site for a connection that becomes a tunnel: straight out when
+/// the rules say so, else through the proxy, with its failover. A site that
+/// fails on its own says nothing about the proxy, so only the second kind counts.
+async fn open_tunnel(ticket: &Ticket, stats: &Arc<Stats>, host: &str, port: u16) -> io::Result<Counted<TcpStream>> {
+    if ticket.routing.sites.direct(host) {
+        return dial_direct(host, port).await.map(Counted::uncounted);
+    }
+    let first_hop = ticket.routing.first_hop.as_ref();
+    let dialed = ticket
+        .source
+        .dial_with_failover(|up| {
+            let h = host.to_string();
+            let up = up.after(first_hop);
+            async move { dial_through(&up, &h, port).await }
+        })
+        .await;
+    match dialed {
+        Ok(d) => {
+            if d.rotated {
+                stats.rotated();
+            }
+            Ok(Counted::new(d.stream, Arc::clone(stats)))
+        }
+        Err(e) => {
+            stats.failed_for(why_of(&e), said_of(&e));
+            Err(e)
+        }
+    }
+}
+
 /// Serve a client that spoke SOCKS5 to us: read its request, dial the target
 /// through the upstream exactly as a CONNECT would, then relay bytes.
-async fn socks5_client(mut client: TcpStream, ticket: &mut Ticket, verbose: bool, stats: &Arc<Stats>) {
-    let src = Arc::clone(&ticket.source);
-    let request = match tokio::time::timeout(CLIENT_IDLE, socks5_read_request(&mut client)).await {
+async fn socks5_client(
+    mut client: TcpStream,
+    ticket: &mut Ticket,
+    verbose: bool,
+    stats: &Arc<Stats>,
+    login: Option<&Login>,
+) {
+    let request = match tokio::time::timeout(CLIENT_IDLE, socks5_read_request(&mut client, login)).await {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {
             if verbose {
@@ -682,21 +785,9 @@ async fn socks5_client(mut client: TcpStream, ticket: &mut Ticket, verbose: bool
     if verbose {
         eprintln!("  SOCKS5 {host}:{port}");
     }
-    let dialed = src
-        .dial_with_failover(|up| {
-            let h = host.clone();
-            async move { dial_through(&up, &h, port).await }
-        })
-        .await;
-    let mut server = match dialed {
-        Ok(d) => {
-            if d.rotated {
-                stats.rotated();
-            }
-            Counted::new(d.stream, Arc::clone(stats))
-        }
+    let mut server = match open_tunnel(ticket, stats, &host, port).await {
+        Ok(server) => server,
         Err(e) => {
-            stats.failed_for(why_of(&e));
             let code = match e.kind() {
                 io::ErrorKind::ConnectionRefused => 0x05,
                 io::ErrorKind::TimedOut => 0x04,
@@ -715,6 +806,26 @@ async fn socks5_client(mut client: TcpStream, ticket: &mut Ticket, verbose: bool
     carry(&mut client, &mut server, ticket).await;
 }
 
+/// Whether an address is this computer or a device on its own private network.
+fn on_this_network(ip: IpAddr) -> bool {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => {
+            let first = v6.segments()[0];
+            v6.is_loopback() || first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80
+        }
+    }
+}
+
+/// Whether a request's head carries `login` in `Proxy-Authorization`.
+fn carries_login(head: &[u8], login: &Login) -> bool {
+    let wanted = upstream::basic(&login.username, &login.password);
+    String::from_utf8_lossy(head).lines().any(|line| {
+        line.split_once(':')
+            .is_some_and(|(name, value)| name.eq_ignore_ascii_case("proxy-authorization") && value.trim() == wanted)
+    })
+}
+
 /// Serve one client connection start to finish.
 ///
 /// Takes the connection's [`Ticket`] rather than an `Upstream`: its `Source`
@@ -725,16 +836,26 @@ async fn socks5_client(mut client: TcpStream, ticket: &mut Ticket, verbose: bool
 ///
 /// `stats` counts this connection, its failure if it cannot reach the proxy,
 /// and every byte that crosses the proxy side of it.
-pub async fn handle(mut client: TcpStream, mut ticket: Ticket, verbose: bool, stats: &Arc<Stats>) {
+pub async fn handle(
+    mut client: TcpStream,
+    mut ticket: Ticket,
+    verbose: bool,
+    stats: &Arc<Stats>,
+    login: Option<&Login>,
+) {
     let _open = stats.opened();
     let src = Arc::clone(&ticket.source);
+    // A relay other devices use serves this network and nobody further away.
+    if login.is_some() && !client.peer_addr().is_ok_and(|peer| on_this_network(peer.ip())) {
+        return;
+    }
 
     // One port, two protocols. A SOCKS5 greeting starts with the byte 5; an
     // HTTP request starts with its method's first letter.
     let mut first_byte = [0u8; 1];
     match tokio::time::timeout(CLIENT_IDLE, client.peek(&mut first_byte)).await {
         Ok(Ok(1)) if first_byte[0] == 0x05 => {
-            socks5_client(client, &mut ticket, verbose, stats).await;
+            socks5_client(client, &mut ticket, verbose, stats, login).await;
             return;
         }
         Ok(Ok(n)) if n > 0 => {}
@@ -753,6 +874,17 @@ pub async fn handle(mut client: TcpStream, mut ticket: Ticket, verbose: bool, st
         Err(_) => return,
     };
 
+    if login.is_some_and(|login| !carries_login(&head, login)) {
+        let _ = client
+            .write_all(
+                b"HTTP/1.1 407 Proxy Authentication Required\r\n\
+                  Proxy-Authenticate: Basic realm=\"HProxy\"\r\n\
+                  Content-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .await;
+        return;
+    }
+
     let first = String::from_utf8_lossy(&head).lines().next().unwrap_or("").to_string();
     let mut it = first.split_whitespace();
     let (method, uri) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
@@ -770,23 +902,11 @@ pub async fn handle(mut client: TcpStream, mut ticket: Ticket, verbose: bool, st
         if verbose {
             eprintln!("  CONNECT {host}:{port}");
         }
-        let dialed = src
-            .dial_with_failover(|up| {
-                let h = host.clone();
-                async move { dial_through(&up, &h, port).await }
-            })
-            .await;
-        let mut server = match dialed {
-            Ok(d) => {
-                if d.rotated {
-                    stats.rotated();
-                }
-                Counted::new(d.stream, Arc::clone(stats))
-            }
+        let mut server = match open_tunnel(&ticket, stats, &host, port).await {
+            Ok(server) => server,
             Err(e) => {
                 // 502 rather than a silent drop: a browser showing "the proxy
                 // refused the connection" is a debuggable symptom, a hang is not.
-                stats.failed_for(why_of(&e));
                 reply_error(&mut client, "502 Bad Gateway", &e.to_string()).await;
                 if verbose {
                     eprintln!("  upstream: {e}");
@@ -830,13 +950,36 @@ pub async fn handle(mut client: TcpStream, mut ticket: Ticket, verbose: bool, st
     proxies refuse CONNECT to port 80, and the origin server then receives an
     absolute-URI request, which many reject outright. Found by the end-to-end
     test: the origin echoed back `http://host:port/path` as its path. */
+    // A site that skips the proxy is talked to as its own server.
+    if ticket.routing.sites.direct(&host) {
+        let mut server = match dial_direct(&host, port).await {
+            Ok(server) => Counted::uncounted(server),
+            Err(e) => {
+                reply_error(&mut client, "502 Bad Gateway", &e.to_string()).await;
+                return;
+            }
+        };
+        let ver = first.split_whitespace().nth(2).unwrap_or("HTTP/1.1");
+        let out = rewrite_head(&head, &format!("{method} {path} {ver}"), None);
+        if server.write_all(&out).await.is_err() {
+            return;
+        }
+        if !leftover.is_empty() && server.write_all(&leftover).await.is_err() {
+            return;
+        }
+        carry(&mut client, &mut server, &mut ticket).await;
+        return;
+    }
+
     // A bare line goes by what its address was found to speak. One that was
     // never dialled yet is taken as HTTP here: a plain request cannot be
     // re-sent in the other protocol once it is on its way, and the first
     // https:// tunnel (nearly all traffic) or the app's own check settles it.
+    let first_hop = ticket.routing.first_hop.clone();
     let dialed = src
         .dial_with_failover(|up| {
             let h = host.clone();
+            let up = up.after(first_hop.as_ref());
             async move {
                 match upstream::first_try(&up) {
                     Scheme::Http => connect_upstream(&up, UPSTREAM_CONNECT).await.map(|s| (s, Leg::Proxy)),
@@ -857,7 +1000,7 @@ pub async fn handle(mut client: TcpStream, mut ticket: Ticket, verbose: bool, st
             (Counted::new(stream, Arc::clone(stats)), d.used, leg)
         }
         Err(e) => {
-            stats.failed_for(why_of(&e));
+            stats.failed_for(why_of(&e), said_of(&e));
             reply_error(&mut client, "502 Bad Gateway", &e.to_string()).await;
             return;
         }
@@ -960,6 +1103,25 @@ mod tests {
     }
 
     #[test]
+    fn what_the_proxy_said_is_kept() {
+        let other = |m: &str| io::Error::other(m.to_string());
+        assert_eq!(said_of(&other("upstream refused CONNECT: 502")), Said::Status(502));
+        assert_eq!(said_of(&other("upstream refused CONNECT: 0")), Said::WrongProtocol);
+        assert_eq!(
+            said_of(&other(&format!(
+                "SOCKS5 upstream refused the connection: {}",
+                socks_reply(0x04)
+            ))),
+            Said::Socks("host unreachable")
+        );
+        assert_eq!(
+            said_of(&wrong_protocol("upstream is not a SOCKS5 proxy")),
+            Said::WrongProtocol
+        );
+        assert_eq!(said_of(&other("something else")), Said::Nothing);
+    }
+
+    #[test]
     fn a_failed_dial_is_named_in_one_word() {
         let other = |m: &str| io::Error::other(m.to_string());
         let cases = [
@@ -993,7 +1155,7 @@ mod tests {
     async fn socks5_exchange(client_bytes: &[u8]) -> (io::Result<Socks5Request>, Vec<u8>) {
         let (mut ours, mut theirs) = tokio::io::duplex(1024);
         theirs.write_all(client_bytes).await.unwrap();
-        let result = socks5_read_request(&mut ours).await;
+        let result = socks5_read_request(&mut ours, None).await;
         drop(ours);
         let mut answered = Vec::new();
         let _ = theirs.read_to_end(&mut answered).await;

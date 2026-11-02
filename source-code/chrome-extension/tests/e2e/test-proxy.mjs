@@ -19,7 +19,7 @@
 import http from "node:http";
 import net from "node:net";
 
-export function startTestProxy({ user = "", pass = "", refuse = [], stallMs = 0 } = {}) {
+export function startTestProxy({ user = "", pass = "", refuse = [], stallMs = 0, port = 0 } = {}) {
   const wakeAt = Date.now() + stallMs;
   const stats = { challenges: 0, accepted: 0, refused: 0, tunnels: 0 };
   const expected = user ? `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}` : null;
@@ -120,7 +120,7 @@ export function startTestProxy({ user = "", pass = "", refuse = [], stallMs = 0 
   });
 
   return new Promise((resolve) => {
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(port, "127.0.0.1", () => {
       resolve({
         port: server.address().port,
         stats,

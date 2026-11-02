@@ -35,7 +35,7 @@ fn answer(r: Result<Value, String>) -> String {
 }
 
 /// Runs `f`, a panic turned into an error.
-fn guarded(f: impl FnOnce() -> Result<Value, String>) -> String {
+pub(crate) fn guarded(f: impl FnOnce() -> Result<Value, String>) -> String {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(r) => answer(r),
         Err(p) => {

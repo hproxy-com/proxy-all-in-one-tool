@@ -255,6 +255,16 @@ export function changePlaces(
   return { places: places.slice(0, Math.max(0, max)), working: working.length };
 }
 
+/** The next of yours to try when `failed` did not work: the fastest that answered its last check,
+    never the one that failed. None answered: null, and there is nothing to offer. */
+export function nextWorking(proxies: ProxyView[], failed: Place | null): Place | null {
+  const next = proxies
+    .filter(answered)
+    .filter((p) => !samePlace({ kind: "proxy", id: p.id }, failed))
+    .sort(fastestFirst)[0];
+  return next ? { kind: "proxy", id: next.id } : null;
+}
+
 /** What the switch connects to when the pick is no help (none, a free one, or one that is gone):
     the place used last, else the proxy or group added last (since 2026-10-18). Never a free
     proxy: with none of yours it asks you to add them. The app's library

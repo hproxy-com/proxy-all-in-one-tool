@@ -74,20 +74,77 @@ pub enum Support {
 }
 
 pub fn support() -> Support {
+    #[cfg(debug_assertions)]
+    if stand_in::file().is_some() {
+        return Support::Automatic {
+            how: "a file standing in for the setting".into(),
+        };
+    }
     platform::support()
 }
 
 /// The current setting.
 pub fn current() -> Result<ProxySetting, String> {
+    #[cfg(debug_assertions)]
+    if let Some(file) = stand_in::file() {
+        return Ok(stand_in::read(&file));
+    }
     platform::current()
+}
+
+/// Put `setting` in place.
+fn apply(setting: &ProxySetting) -> Result<(), String> {
+    #[cfg(debug_assertions)]
+    if let Some(file) = stand_in::file() {
+        return stand_in::write(&file, setting);
+    }
+    platform::apply(setting)
+}
+
+/// Point the system at `host:port`.
+fn point_at(host: &str, port: u16) -> Result<(), String> {
+    #[cfg(debug_assertions)]
+    if let Some(file) = stand_in::file() {
+        let mut setting = stand_in::read(&file);
+        setting.enabled = true;
+        setting.server = Some(format!("{host}:{port}"));
+        return stand_in::write(&file, &setting);
+    }
+    platform::set(host, port)
+}
+
+/// Debug builds only: with `HPROXY_SYSTEM_FILE` set, the setting lives in that
+/// file instead of the operating system's, so a test can walk the whole of
+/// connecting, the kill switch and disconnecting on a computer somebody is
+/// using, without taking their browsers along. A release build has none of it.
+#[cfg(debug_assertions)]
+mod stand_in {
+    use super::ProxySetting;
+    use std::path::{Path, PathBuf};
+
+    pub fn file() -> Option<PathBuf> {
+        std::env::var_os("HPROXY_SYSTEM_FILE").map(PathBuf::from)
+    }
+
+    pub fn read(file: &Path) -> ProxySetting {
+        std::fs::read_to_string(file)
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn write(file: &Path, setting: &ProxySetting) -> Result<(), String> {
+        let json = serde_json::to_string_pretty(setting).map_err(|e| e.to_string())?;
+        std::fs::write(file, json).map_err(|e| e.to_string())
+    }
 }
 
 /// Point the system at `host:port` for HTTP and HTTPS, remembering what was
 /// there.
 pub fn set(host: &str, port: u16) -> Result<Snapshot, String> {
-    let before = platform::current()?;
-    platform::set(host, port)?;
-    let ours = platform::current()?;
+    let before = current()?;
+    point_at(host, port)?;
+    let ours = current()?;
     Ok(Snapshot {
         before,
         ours,
@@ -99,11 +156,11 @@ pub fn set(host: &str, port: u16) -> Result<Snapshot, String> {
 /// changed it while connected) it is left alone, because overwriting a choice
 /// they made deliberately is worse than leaving a proxy they set.
 pub fn restore(snapshot: &Snapshot) -> Result<RestoreOutcome, String> {
-    let now = platform::current()?;
+    let now = current()?;
     if now != snapshot.ours {
         return Ok(RestoreOutcome::LeftAlone { now });
     }
-    platform::apply(&snapshot.before)?;
+    apply(&snapshot.before)?;
     Ok(RestoreOutcome::Restored)
 }
 

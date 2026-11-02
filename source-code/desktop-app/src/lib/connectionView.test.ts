@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { phaseOf, placeView, type PlaceViewInput } from "./connectionView";
+import { errorParts, phaseOf, placeView, type PlaceViewInput } from "./connectionView";
 import type { GroupView, ProxyView } from "./places";
 import type { ConnectStatus, SourceInfo } from "./tauri";
 
@@ -87,5 +87,18 @@ describe("what the card says about a place", () => {
 
   it("shows nothing with no place and no relay", () => {
     expect(placeView(null, input())).toBeNull();
+  });
+});
+
+describe("an error by its name", () => {
+  it("parts the engine's words into the name and what it means", () => {
+    expect(errorParts("timed out: no answer from hproxy.com within 12 seconds")).toEqual({
+      name: "Timed out",
+      detail: "No answer from hproxy.com within 12 seconds",
+    });
+    expect(errorParts("proxy error 502: it did not open hproxy.com").name).toBe("Proxy error 502");
+  });
+  it("keeps words without a name whole", () => {
+    expect(errorParts("the proxy did not answer")).toEqual({ name: "", detail: "The proxy did not answer" });
   });
 });

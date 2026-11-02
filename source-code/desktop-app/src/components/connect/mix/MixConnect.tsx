@@ -6,8 +6,9 @@ import { copyText } from "../../../lib/tauri";
 import { FraudChip } from "../../FraudScore";
 import HLetter from "../../HLetter";
 import { DigitRoll, Flag, Icon, cx } from "../../ui";
-import { ConnMessages, LeakCheck, SystemProxyRow, connectionWords, type ConnectionCardProps } from "../ConnectionCard";
+import { ConnMessages, KillSwitchRow, LeakCheck, SystemProxyRow, connectionWords, type ConnectionCardProps } from "../ConnectionCard";
 import { useConnection } from "../connection";
+import { errorParts } from "../../../lib/connectionView";
 import { ChangeRows, useChangeList } from "../QuickChange";
 import MixMap, { type Fade, type PinPlace } from "./MixMap";
 import { CITY_S, Flight, TONES, WORLD_S, camOn, centreOf, countryOf, countryScale } from "./worldMap";
@@ -104,10 +105,15 @@ export default function MixConnect({ card: p, side, note }: Props) {
     if ((phase === "connecting" || phase === "switching") && (shownSheet.current === "places" || shownSheet.current === "change")) closeSheet();
   }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
   // Why the last connect did not go through, until the next one starts: under the switch,
-  // where you look (it showed only on the Proxies page's row before).
-  const failedWords = phase === "off" && p.error ? p.error.replace(/^Error:\s*/, "") : "";
-  const failed = failedWords ? failedWords.charAt(0).toUpperCase() + failedWords.slice(1) : null;
+  // where you look (it showed only on the Proxies page's row before). A place that failed while
+  // another stays connected says so too, under the connection that goes on.
+  const errorWords = p.error ? p.error.replace(/^Error:\s*/, "") : "";
+  const said = errorWords ? errorWords.charAt(0).toUpperCase() + errorWords.slice(1) : null;
+  const failed = phase === "off" ? said : null;
+  const failedParts = failed ? errorParts(failed) : null;
   const health = p.status?.health ?? null;
+  // What stopped a proxy that was working, by its name: "Timed out", "Connection refused".
+  const stoppedError = health?.error ? errorParts(health.error) : null;
 
   // Where the camera goes and the pin stands: the exit's own city once a probe said it; before
   // that the middle of the place's country (as on the phone).
@@ -165,7 +171,8 @@ export default function MixConnect({ card: p, side, note }: Props) {
   const pinned = target != null;
   const base = { width, height: H || 700, px, py, pitch: 10, radius: 3.3, pin: pinned };
   const darkScene = useMemo(() => ({ ...base, tone: dark ? TONES.dark : TONES.light, lit: busy }), [width, H, px, py, pinned, dark, busy]); // eslint-disable-line react-hooks/exhaustive-deps
-  const blueScene = useMemo(() => ({ ...base, tone: TONES.blue, lit: true }), [width, H, px, py, pinned]); // eslint-disable-line react-hooks/exhaustive-deps
+  const failing = on && p.failing;
+  const blueScene = useMemo(() => ({ ...base, tone: failing ? TONES.red : TONES.blue, lit: true }), [width, H, px, py, pinned, failing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The blue flood: from where the knob lands, the same map in blue.
   const trackRef = useRef<HTMLButtonElement>(null);
@@ -199,7 +206,9 @@ export default function MixConnect({ card: p, side, note }: Props) {
   }, [on, blueUp, open]);
 
   const state = phase === "off"
-    ? "Not connected"
+    ? failed
+      ? "Didn't work"
+      : "Not connected"
     : phase === "connecting"
       ? "Reaching the proxy"
       : phase === "switching"
@@ -211,9 +220,15 @@ export default function MixConnect({ card: p, side, note }: Props) {
             : p.failing
               ? "Not answering"
               : "Connected";
+  // A proxy that stopped: what that means for this computer right now.
+  const stoppedWords = p.status?.on_own_address
+    ? "You are on your own address until it answers"
+    : p.status?.system_proxy && p.killSwitch
+      ? "Kill switch on: nothing goes out on your own address"
+      : (stoppedError?.detail ?? "The proxy did not answer");
   const where = on
     ? p.failing
-      ? (health?.error ? health.error.charAt(0).toUpperCase() + health.error.slice(1) : "The proxy did not answer")
+      ? stoppedWords
       : probe
         ? [[probe.city, probe.country ?? countryName(probe.country_code ?? undefined)].filter(Boolean).join(", "), probe.latency_ms != null ? `${probe.latency_ms} ms` : ""].filter(Boolean).join(" · ")
         : "Checking where you appear"
@@ -227,7 +242,7 @@ export default function MixConnect({ card: p, side, note }: Props) {
   const press = p.onToggle;
 
   return (
-    <div ref={rootRef} className="mix" data-on={on || undefined} data-busy={busy || undefined} data-dark={dark || undefined} data-compact={compact || undefined}>
+    <div ref={rootRef} className="mix" data-on={on || undefined} data-busy={busy || undefined} data-dark={dark || undefined} data-compact={compact || undefined} data-failing={failing || undefined} data-failed={failed ? true : undefined}>
       <MixMap className="mix-map" flight={flight} fade={fade} place={place} fadeKey={fadeKey} scene={darkScene} hidden={on && blueUp && !!W}>
         <Pin on={busy} white={false} cc={pinCc} words={pinWords} dark={dark} />
       </MixMap>
@@ -264,12 +279,20 @@ export default function MixConnect({ card: p, side, note }: Props) {
             <HLetter className="mix-h" gid="mixh" />
           </span>
         </button>
-        <div className="mix-ip num">
-          {on && probe?.exit_ip ? <DigitRoll text={probe.exit_ip} /> : on && p.failing ? "No answer" : on ? "…" : ""}
+        <div className="mix-ip num" title={p.failing ? (health?.error ?? undefined) : undefined}>
+          {on && probe?.exit_ip ? (
+            <DigitRoll text={probe.exit_ip} />
+          ) : on && p.failing ? (
+            stoppedError?.name || "No answer"
+          ) : on ? (
+            "…"
+          ) : (
+            (failedParts?.name ?? "")
+          )}
         </div>
-        {failed ? (
-          <div className="mix-where is-bad" role="alert" title={failed}>
-            {failed}
+        {failedParts ? (
+          <div className="mix-where is-bad" role="alert" title={failed ?? undefined}>
+            {failedParts.detail}
           </div>
         ) : phase === "off" && !p.view ? (
           // None of yours yet: the words that ask you to pick are the way to My proxies.
@@ -279,7 +302,17 @@ export default function MixConnect({ card: p, side, note }: Props) {
         ) : (
           <div className="mix-where">{where}</div>
         )}
+        {(failed || failing) && p.onNext && (
+          <button type="button" className="mix-next" onClick={p.onNext}>
+            Try the next one that works
+          </button>
+        )}
         {p.ended && (on || busy) && <div className="mix-ended">{p.ended}</div>}
+        {on && !failing && said && (
+          <div className="mix-ended" role="alert" title={said}>
+            That one did not work. {said}
+          </div>
+        )}
         <div className="mix-stats num" aria-hidden={!on}>
           <span>
             <Icon.download /> {formatRate(p.rate?.down ?? 0)}
@@ -328,7 +361,7 @@ export default function MixConnect({ card: p, side, note }: Props) {
             </>
           )}
         </button>
-        <button type="button" className="mix-menu" data-shown={on || undefined} onClick={() => openSheet("menu")} tabIndex={on ? 0 : -1} aria-hidden={!on}>
+        <button type="button" className="mix-menu" onClick={() => openSheet("menu")}>
           <Icon.more />
           <span>Menu</span>
         </button>
@@ -348,7 +381,7 @@ export default function MixConnect({ card: p, side, note }: Props) {
             }}
           >
             <div className="mix-sheet-head">
-              <b>{sheet === "places" ? "Connect to" : sheet === "change" ? "Quick change" : (p.view?.name ?? "Menu")}</b>
+              <b>{sheet === "places" ? "Connect to" : sheet === "change" ? "Quick change" : on ? (p.view?.name ?? "Menu") : "Menu"}</b>
               {sheet === "menu" && probe && (
                 <small className="num">{[probe.exit_ip, probe.city].filter(Boolean).join(" · ")}</small>
               )}
@@ -364,7 +397,7 @@ export default function MixConnect({ card: p, side, note }: Props) {
                 <ChangeRows list={changes} onDone={closeSheet} />
               </div>
             ) : (
-              <Menu p={p} w={w} />
+              <Menu p={p} w={w} connected={on} />
             )}
           </div>
         </div>
@@ -373,8 +406,9 @@ export default function MixConnect({ card: p, side, note }: Props) {
   );
 }
 
-/** What only a computer has, once you are on: in tiles, as the phone's menu. */
-function Menu({ p, w }: { p: ConnectionCardProps; w: ReturnType<typeof connectionWords> }) {
+/** What only a computer has: how a connection takes this computer, any time, and once you are on
+    what the connection is, in tiles, as the phone's menu. */
+function Menu({ p, w, connected }: { p: ConnectionCardProps; w: ReturnType<typeof connectionWords>; connected: boolean }) {
   const health = p.status?.health ?? null;
   const [copied, setCopied] = useState(false);
   const ip = health?.ok ? health.exit_ip : undefined;
@@ -386,6 +420,8 @@ function Menu({ p, w }: { p: ConnectionCardProps; w: ReturnType<typeof connectio
   };
   return (
     <div className="mix-sheet-body mix-menu-body">
+      {connected && (
+        <>
       <div className="mix-tiles">
         <button type="button" className="mix-tile-btn" onClick={copyIp} disabled={!ip}>
           <span className="mix-tile-ico">
@@ -420,9 +456,15 @@ function Menu({ p, w }: { p: ConnectionCardProps; w: ReturnType<typeof connectio
         <h3>What sites see</h3>
         {p.leaks?.length ? <LeakCheck rows={p.leaks} onAction={p.onLeakAction} /> : <p className="mix-quiet">Checked once you are connected.</p>}
       </section>
+        </>
+      )}
       <section className="mix-section">
         <h3>Programs</h3>
         <SystemProxyRow p={p} w={w} />
+      </section>
+      <section className="mix-section">
+        <h3>If the proxy stops</h3>
+        <KillSwitchRow p={p} />
       </section>
       <ConnMessages p={p} />
     </div>

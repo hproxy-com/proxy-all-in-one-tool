@@ -321,6 +321,7 @@ impl Pool {
                         port: p.port,
                         // Pool exits are open proxies. There is no login to attach.
                         auth: None,
+                        via: None,
                     },
                     country: p.country_code.unwrap_or_default(),
                     city: p.city.unwrap_or_default(),
@@ -606,6 +607,7 @@ mod tests {
             host: "203.0.113.9".into(),
             port: 4145,
             auth: None,
+            via: None,
         };
         assert_eq!(proxy_url(&exit(Scheme::Socks5)), "socks5h://203.0.113.9:4145");
         assert_eq!(proxy_url(&exit(Scheme::Http)), "http://203.0.113.9:4145");
@@ -634,6 +636,7 @@ mod tests {
                 host: host.into(),
                 port,
                 auth: None,
+                via: None,
             },
             country: country.into(),
             city: city.into(),

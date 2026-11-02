@@ -95,12 +95,37 @@ fun SettingsPage(nav: Nav, onBack: () -> Unit) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 8.dp, end = 8.dp, top = 14.dp, bottom = 30.dp)) {
             SetRow(I.shield, "Fraud score checkers", value = using.ifEmpty { "None" }, more = true) { nav.push(Page.Fraud) }
             SetRow(I.apps, "Apps that use the proxy", value = apps, more = true) { nav.push(Page.Apps) }
-            // What the people of other apps ask for most: a kill switch.
-            SetRow(I.lock, "If the proxy stops", value = if (prefs.blockWhenDown) "Block the internet" else "Use your own", more = true) {
-                Settings.update { it.copy(blockWhenDown = !it.blockWhenDown) }
-                AppState.rulesChanged()
-                AppState.toast(if (!prefs.blockWhenDown) "If it stops, apps wait for it" else "If it stops, apps use your own internet")
-            }
+            // What the people of other apps ask for most.
+            SetRow(I.lock, "Kill switch", end = {
+                Toggle(prefs.blockWhenDown, { v ->
+                    Settings.update { it.copy(blockWhenDown = v) }
+                    AppState.rulesChanged()
+                })
+            })
+            Txt(
+                if (prefs.blockWhenDown) "If your proxy stops, apps wait for it. Nothing goes out on your own address." else "If your proxy stops, apps use your own internet until it answers.",
+                type(13.5.sp, FontWeight.Medium, C.ink2, lineHeight = 19.sp),
+                modifier = Modifier.padding(start = 52.dp, end = 12.dp, bottom = 12.dp),
+            )
+            SetRow(I.bolt, "If a proxy stops, move on", end = {
+                Toggle(prefs.moveOn, { v -> Settings.update { it.copy(moveOn = v) } })
+            })
+            Txt(
+                "The next of your proxies that works takes over.",
+                type(13.5.sp, FontWeight.Medium, C.ink2, lineHeight = 19.sp),
+                modifier = Modifier.padding(start = 52.dp, end = 12.dp, bottom = 12.dp),
+            )
+            SetRow(
+                I.globe,
+                "Sites",
+                value = when (prefs.routeMode) {
+                    "except" -> "All except some"
+                    "only" -> "Only some"
+                    else -> "All"
+                },
+                more = true,
+            ) { nav.push(Page.Sites) }
+            SetRow(I.rule, "Two proxies in a row", value = if (prefs.firstHop.isEmpty()) "Off" else "On", more = true) { nav.push(Page.FirstHop) }
             SetRow(I.bolt, "Connect when the phone starts", end = {
                 Toggle(prefs.connectOnStartup, { v -> Settings.update { it.copy(connectOnStartup = v) } })
             })

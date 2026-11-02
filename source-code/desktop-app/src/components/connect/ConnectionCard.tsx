@@ -65,6 +65,8 @@ export type ConnectionCardProps = {
   now: number;
   busy: boolean;
   onToggle: () => void;
+  /** The next of yours that works: after a failed connect, or with a proxy that stopped. */
+  onNext?: () => void;
   canConnect: boolean;
   onChangeTarget: () => void;
   onRotate: () => void;
@@ -79,6 +81,9 @@ export type ConnectionCardProps = {
 
   useSystem: boolean;
   setUseSystem: (v: boolean) => void;
+  /** The kill switch (Settings, While connected). */
+  killSwitch: boolean;
+  setKillSwitch: (v: boolean) => void;
   canAutomate: boolean;
   manualWhy?: string;
   /** Where the address goes by hand when the system proxy cannot be switched
@@ -123,7 +128,7 @@ export function connectionWords(p: ConnectionCardProps) {
             : phase === "leaving"
               ? "Disconnecting"
               : failing
-                ? "Connected, not answering"
+                ? "Not answering"
                 : "Connected";
 
   const headline =
@@ -176,7 +181,7 @@ export function connectionWords(p: ConnectionCardProps) {
   const mapCc = on || phase === "rotating" ? (exitCc ?? view?.cc) : view?.cc;
 
   // With none of yours a press still answers: it opens Proxies, which says to add them first.
-  const toggleTitle = phase === "off" ? (p.canConnect ? "Connect" : ADD_FIRST) : "Disconnect";
+  const toggleTitle = phase === "off" ? (p.canConnect ? "Connect" : ADD_FIRST) : phase === "connecting" ? "Cancel" : "Disconnect";
   const lit = phase !== "off" && phase !== "leaving";
   // The word under the H button: what pressing it does now.
   // Grey while nothing is picked yet (the route names "Pick a place").
@@ -265,7 +270,7 @@ export function ConnStatus({ p, w }: ConnPart) {
             <span className="name">{thisDevice(true)}</span>
           </span>
           {p.hub === "switch" ? (
-            <HSwitch on={lit} disabled={p.busy} onToggle={p.onToggle} title={toggleTitle} />
+            <HSwitch on={lit} disabled={p.busy && phase !== "connecting"} onToggle={p.onToggle} title={toggleTitle} />
           ) : (
             <>
               <span className="ux-wire left">
@@ -274,7 +279,7 @@ export function ConnStatus({ p, w }: ConnPart) {
               </span>
               {p.hub === "button" ? (
                 <span className="ux-hbutton" data-hub-origin>
-                  <button type="button" className="ux-hface" aria-pressed={lit} aria-label={caption} title={toggleTitle} disabled={p.busy} onClick={p.onToggle}>
+                  <button type="button" className="ux-hface" aria-pressed={lit} aria-label={caption} title={toggleTitle} disabled={p.busy && phase !== "connecting"} onClick={p.onToggle}>
                     <HFaceParts />
                   </button>
                   <button type="button" className="ux-hcaption" data-ready={p.canConnect || undefined} tabIndex={-1} aria-hidden="true" disabled={p.busy} onClick={p.onToggle}>
@@ -462,8 +467,7 @@ export function SystemProxyRow({ p, w }: ConnPart) {
               on={p.canAutomate ? p.useSystem : false}
               onChange={(v) => p.canAutomate && p.setUseSystem(v)}
               label="Use for the whole computer"
-              disabled={!p.canAutomate || on}
-              title={on ? "Changes the next time you connect" : undefined}
+              disabled={!p.canAutomate}
             />
             <InfoTip label="using it for the whole computer">
               <p>Browsers and most programs go through the proxy while you are connected. Your settings are put back as they were when you disconnect.</p>
@@ -506,6 +510,30 @@ export function SystemProxyRow({ p, w }: ConnPart) {
   );
 }
 
+/** The kill switch, as in Settings. It covers what follows the computer's proxy setting: a program
+    that ignores the setting never went through the proxy, and the words say so. */
+export function KillSwitchRow({ p }: { p: ConnectionCardProps }) {
+  return (
+    <div className="ux-connrow flex items-center gap-1.5">
+      <Check on={p.killSwitch} onChange={p.setKillSwitch} label="Kill switch" />
+      <InfoTip label="the kill switch">
+        <KillSwitchWords />
+      </InfoTip>
+    </div>
+  );
+}
+
+/** What the kill switch does, in the Connect page's Menu and in Settings. */
+export function KillSwitchWords() {
+  return (
+    <>
+      <p>On: if your proxy stops answering, browsers and programs wait for it. Nothing goes out on your own address.</p>
+      <p>Off: they go back to your own address until it answers.</p>
+      <p>It covers what follows this computer&rsquo;s proxy setting. A program that ignores that setting never goes through the proxy.</p>
+    </>
+  );
+}
+
 export default function ConnectionCard(p: ConnectionCardProps) {
   const w = connectionWords(p);
   const { phase, status } = p;
@@ -529,6 +557,7 @@ export default function ConnectionCard(p: ConnectionCardProps) {
       {on && status && !status.system_proxy && <ProgramSettings listen={status.listen ?? ""} phone={phone} steps={p.manualSteps} />}
 
       <SystemProxyRow p={p} w={w} />
+      {!phone && <KillSwitchRow p={p} />}
     </div>
   );
 }

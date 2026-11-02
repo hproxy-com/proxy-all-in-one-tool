@@ -4,8 +4,10 @@ import {
   MAX_CONCURRENCY,
   MAX_WAIT_SECONDS,
   PROBE_PRESETS,
+  newSharePassword,
   waitWords,
   type Protocols,
+  type RouteMode,
   type Settings as SettingsType,
 } from "../lib/settings";
 import { FRAUD_SERVICES, fraudServicesOf, missingKey, testFraudService, type FraudKeys, type FraudService } from "../lib/fraud";
@@ -36,8 +38,10 @@ import { updatesItself } from "../lib/versions";
 import { slideIn } from "../lib/motion";
 import { USAGE_HOLDS, USAGE_NEVER, usageAnswer, usageGet, type UsageView } from "../lib/usage";
 import BackgroundPicker from "./BackgroundPicker";
+import { KillSwitchWords } from "./connect/ConnectionCard";
+import { useConnection } from "./connect/connection";
 import { pushPage, usePhoneSub } from "./phone/PhoneShell";
-import { Button, ButtonGroup, Card, Check, Icon, InfoTip, Input, PageHead, Range, cx, useSlidingPill } from "./ui";
+import { Button, ButtonGroup, Card, Check, Icon, InfoTip, Input, PageHead, Range, TextArea, cx, useSlidingPill } from "./ui";
 
 /* Settings: four sections in a nav of their own (2026-09-30), one shown at a
    time, each setting one line: its name, the "i", the control.
@@ -68,10 +72,11 @@ const PROTOCOL_LABEL: Record<keyof Protocols, string> = {
 /* "While connected" was "Connect" until 2026-10-22: the same word as the page, for what only runs
    while connected. Its id stays, so a saved choice still opens
    it. The fraud score has a section of its own since that day. */
-type SectionId = "checking" | "connect" | "fraud" | "look" | "app";
+type SectionId = "checking" | "connect" | "advanced" | "fraud" | "look" | "app";
 const SECTIONS: readonly { id: SectionId; name: string; icon: (p: { className?: string }) => JSX.Element }[] = [
   { id: "checking", name: "Checking", icon: Icon.listCheck },
   { id: "connect", name: "While connected", icon: Icon.connect },
+  { id: "advanced", name: "Advanced", icon: Icon.route },
   { id: "fraud", name: "Fraud score", icon: Icon.shield },
   { id: "look", name: "Look", icon: Icon.sun },
   { id: "app", name: "App", icon: Icon.settings },
@@ -91,6 +96,123 @@ function loadSection(): SectionId {
 /** One setting: its name, the "i" with the explanation, a reading, and the
     control on the right (under it with `stacked`). `note` is one short line
     for what is happening now, never an explanation. */
+/** How connections travel: which sites use the proxy, two proxies in a row, moving on by itself,
+    and letting the other devices on this network use the connection. */
+function AdvancedSection({ settings, update }: { settings: SettingsType; update: (p: Partial<SettingsType>) => void }) {
+  const { card, destinations, routingProblem, shareProblem } = useConnection();
+  const network = card.status?.network;
+  const others = destinations.proxies;
+  const share = (on: boolean) => update({ shareOn: on, sharePassword: settings.sharePassword || newSharePassword() });
+  return (
+    <>
+      <Row
+        name="Sites"
+        stacked
+        info={
+          <p>
+            Which sites use the proxy. A site that skips it leaves on your own address, also with the kill switch on. Names,
+            addresses and ranges all work, and a name counts for everything under it.
+          </p>
+        }
+        note={routingProblem && <span className="text-danger">{routingProblem.replace(/^Error:\s*/, "")}</span>}
+      >
+        <div className="flex w-full flex-col gap-2">
+          <ButtonGroup
+            size="sm"
+            value={settings.routeMode}
+            onChange={(routeMode: RouteMode) => update({ routeMode })}
+            options={[
+              ["all", "All sites"],
+              ["except", "All except these"],
+              ["only", "Only these"],
+            ]}
+          />
+          {settings.routeMode !== "all" && (
+            <div className="relative h-24 w-full">
+              <TextArea
+                value={settings.routeSites}
+                onChange={(routeSites) => update({ routeSites })}
+                placeholder={"example.com\nexample.org"}
+                label="Sites"
+              />
+            </div>
+          )}
+        </div>
+      </Row>
+
+      <Row
+        name="If a proxy stops"
+        info={<p>Your connection moves to the fastest of your other proxies that answered. Your current one is only given up once the next one works.</p>}
+      >
+        <Check on={settings.moveOn} onChange={(moveOn) => update({ moveOn })} label="Move to the next one that works" />
+      </Row>
+
+      <Row
+        name="Two proxies in a row"
+        info={
+          <p>
+            Your connection goes through this proxy first, then through the one you connect to. That second proxy only sees the
+            first one&apos;s address. Useful for a proxy that only accepts one allowed address.
+          </p>
+        }
+      >
+        <select
+          className="ux-setselect"
+          value={settings.firstHop}
+          aria-label="The proxy to go through first"
+          onChange={(e) => update({ firstHop: e.target.value })}
+        >
+          <option value="">Off</option>
+          {others.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name || p.address}
+            </option>
+          ))}
+        </select>
+      </Row>
+
+      <Row
+        name="Share with my network"
+        info={
+          <p>
+            A TV, a console or another computer on your network uses this connection, with this address and login. It only
+            answers devices on your own network. Windows may ask you to allow it the first time.
+          </p>
+        }
+        note={
+          shareProblem ? (
+            <span className="text-danger">{shareProblem.replace(/^Error:\s*/, "")}</span>
+          ) : settings.shareOn ? (
+            network ? (
+              <>
+                Address <b className="num">{network}</b>, user <b>hproxy</b>, password <b className="num">{settings.sharePassword}</b>
+              </>
+            ) : (
+              "It starts when you connect."
+            )
+          ) : undefined
+        }
+      >
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <Check on={settings.shareOn} onChange={share} label="Let other devices use it" />
+          {settings.shareOn && (
+            <Input
+              value={String(settings.sharePort)}
+              onChange={(v) => {
+                const port = Number(v);
+                if (Number.isInteger(port) && port >= 1024 && port <= 65535) update({ sharePort: port });
+              }}
+              width="short"
+              mono
+              label="Port"
+            />
+          )}
+        </div>
+      </Row>
+    </>
+  );
+}
+
 function Row({
   name,
   info,
@@ -783,9 +905,15 @@ export default function Settings({
                       </div>
                     </Row>
 
+                    <Row name="Kill switch" info={<KillSwitchWords />}>
+                      <Check on={settings.killSwitch} onChange={(killSwitch) => update({ killSwitch })} label="Block if the proxy stops" />
+                    </Row>
+
                     <TimeZoneRow on={settings.matchTimeZone} setOn={(matchTimeZone) => update({ matchTimeZone })} />
                   </>
                 )}
+
+                {section === "advanced" && <AdvancedSection settings={settings} update={update} />}
 
                 {section === "fraud" && <FraudSection settings={settings} update={update} />}
 

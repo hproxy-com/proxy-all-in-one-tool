@@ -42,3 +42,9 @@ desktop-app/store/google-play/listing/raw-*.png
 # The Android app's raw store screens (phone-android/tools/store-pictures.mjs draws the
 # finished pictures from them; only those are kept)
 phone-android/store/google-play/raw/
+
+# The iPhone app: made by XcodeGen and the engine build, never committed.
+ios-app/HProxy.xcodeproj/
+ios-app/build/
+ios-app/engine/
+ios-app/pictures/

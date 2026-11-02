@@ -1,28 +1,31 @@
-//! Connect: the relay and the system proxy setting, driven from the window.
+//! Connect on a computer: the connection (`hproxy_connection`, the same for
+//! every door) and what only a computer has around it.
 //!
-//! One relay at a time. `connect_start` binds a local port with no password,
-//! forwards to the chosen source with the login attached, and, when asked,
-//! points the operating system's proxy setting at it after taking a snapshot
-//! of what was there. `connect_stop` puts the setting back exactly as found
-//! and ends the relay. `connect_status` says what is running.
+//! The engine runs the relay, tests a place before it counts (proxy-engine,
+//! verify.rs) and keeps probing through it. This file adds the rest:
+//!
+//! The system proxy setting. Once a place passed its test the setting is
+//! pointed at the relay, after a snapshot of what was there, and `connect_stop`
+//! puts it back exactly as found. A place that fails its test never touches the
+//! setting, so a dead proxy cannot take a computer offline. The person decides
+//! whether a connection takes the whole computer (Settings, the Connect page's
+//! Menu), and can change it while connected.
+//!
+//! The kill switch (Settings). Two probes in a row failed and the proxy counts
+//! as stopped. On, the setting stays: everything that follows it waits, and
+//! nothing leaves on the person's own address. Off, the setting goes back for
+//! now and returns the moment the proxy answers. It covers what follows the
+//! system proxy setting; a program that ignores the setting never went through
+//! the proxy at all.
+//!
+//! Telling the person. A proxy that stops changes the tray icon and, when the
+//! window is not in front, says so in a notification (tray.rs).
 //!
 //! It connects to a place (`hproxy_places::Place`): one of the person's saved
-//! proxies, one of their groups (moved through by its rule: the same member
-//! until it dies, every N minutes, every connection, every N connections, at
-//! random), or a free exit from the hproxy.com pool by country. A saved line
-//! is read from the library here (places.rs), so the window names a place by
-//! its id and never sends a password. The relay's `Source` owns rotation and
-//! failover; this file builds it from the place. The window and the tray start
-//! a connection the same way (`start_place`).
-//!
-//! While connected, a probe goes THROUGH the relay to our own judge every
-//! `PROBE_EVERY`: it measures the round trip, reads the exit address the judge
-//! saw, and labels it with country, city and network. That is what lets the
-//! screen say "you are leaving through 203.0.113.9 in Frankfurt, 140 ms" and,
-//! when a fixed proxy dies, "not answering for three checks" instead of
-//! nothing. The probe is one connection like any other, so under a
-//! per-connection rotation rule it takes one turn. `connect_probe` runs one
-//! on request, `connect_rotate` switches upstream on request.
+//! proxies, one of their groups, or a free exit from the hproxy.com pool by
+//! country. A saved line is read from the library here (places.rs), so the
+//! window names a place by its id and never sends a password. The window and
+//! the tray start a connection the same way (`start_place`).
 //!
 //! The snapshot is also written to the app's config directory. If the app
 //! dies while connected (a crash, a forced reboot) the next start finds the
@@ -31,77 +34,81 @@
 //! at a dead proxy has no internet and no explanation. `restore_on_exit` does
 //! the same the moment the app ends, whichever way it ends.
 
-use crate::check::AppState;
-use crate::places::{place_words, PlacesState};
+use crate::notify::Look;
+use crate::places::PlacesState;
 use hproxy_api::geo::Geo;
 use hproxy_api::usage::Event;
-use hproxy_places::{Place, Verdict};
+use hproxy_connection::health::{probe_url_from, Health};
+use hproxy_connection::{routing_of, Built, Change, Connection, ProbePolicy, Share};
+use hproxy_places::Place;
 use hproxy_relay::pool::Pool;
 use hproxy_relay::upstream::Upstream;
-use hproxy_relay::{Rotation, Source, SourceKind, Stats, StatsSnapshot, SwitchableSource, Why};
+use hproxy_relay::{Login, StatsSnapshot};
 use hproxy_system::{ProxySetting, RestoreOutcome, Snapshot, Support};
 use serde::Serialize;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 
-/// How often the relay is probed while connected.
-const PROBE_EVERY: Duration = Duration::from_secs(20);
-/// The default probe target, our TLS judge, and the helpers a probe uses:
-/// one copy for every door (proxy-engine/hproxy-connection, health.rs).
-pub use hproxy_connection::health::DEFAULT_PROBE_URL;
-use hproxy_connection::health::{failure_word, probe_url_from, Health, HealthState};
+pub use hproxy_connection::SourceInfo;
 
-#[derive(Default)]
+/// How many probes in a row have to fail before the proxy counts as stopped.
+/// One failure is often one bad exit of a gateway, and the next probe is seconds away.
+const STOPPED_AFTER: u32 = 2;
+
 pub struct RelayState {
-    inner: Mutex<Option<Running>>,
-    /// The probe target the window asked for last (Settings, "Connect
-    /// check"), so a connection the tray starts probes the same way.
-    last_probe_url: Mutex<Option<String>>,
+    connection: Connection,
+    computer: Mutex<Computer>,
+    /// The kill switch (Settings, While connected). On until asked otherwise.
+    kill_switch: AtomicBool,
+    /// "Use for the whole computer", for a connection the tray starts.
+    whole_computer: AtomicBool,
+    /// The proxy stopped answering (`STOPPED_AFTER`) and has not come back.
+    stopped: AtomicBool,
 }
 
-struct Running {
-    /// The place connected through: what the window and the tray name.
-    place: Place,
-    listen: SocketAddr,
-    /// What the relay forwards through. Switching places replaces what is in
-    /// it while the port stays open (`switch_in_place`).
-    source: Arc<SwitchableSource>,
-    stats: Arc<Stats>,
-    /// The pool's own description of the exit in use (place and latency), or
-    /// nothing for the other sources.
-    exit_label: Option<String>,
-    started_at_ms: u64,
-    /// The route in use: a new number whenever the place or the exit changes
-    /// (a switch, "Next IP"). A probe that started on an earlier route is not
-    /// recorded, and the time zone match takes its zone only from this one.
-    route: Arc<AtomicU64>,
-    /// Whether the system proxy was asked for when connecting. A switch that
-    /// asks the same happens in place; one that asks otherwise reconnects.
-    system_wanted: bool,
-    stop: Option<tokio::sync::oneshot::Sender<()>>,
-    task: tauri::async_runtime::JoinHandle<Result<(), String>>,
-    probe: tauri::async_runtime::JoinHandle<()>,
-    health: Arc<Mutex<HealthState>>,
-    /// Where the probe goes; the loop reads it on every tick.
-    probe_url: Arc<Mutex<String>>,
+/// What the connection changed on this computer.
+#[derive(Default)]
+struct Computer {
+    /// What the setting said before: kept for as long as it points at the relay.
     system: Option<Snapshot>,
+    /// The kill switch is off, the proxy stopped, and the setting went back
+    /// for now: it returns when the proxy answers.
+    on_own_address: bool,
     /// On a phone, the VPN that carries every app to the relay (vpn.rs): what
     /// the system proxy is on a computer.
     #[cfg(target_os = "android")]
     vpn: Option<crate::vpn::android::Running>,
 }
 
-impl Running {
+impl Computer {
     /// Whether every program (every app, on a phone) goes through the relay.
     fn whole_device(&self) -> bool {
         #[cfg(target_os = "android")]
         return self.vpn.is_some();
         #[cfg(not(target_os = "android"))]
         self.system.is_some()
+    }
+}
+
+impl RelayState {
+    pub fn new(app: &AppHandle, geo: Arc<Geo>) -> Self {
+        let handle = app.clone();
+        Self {
+            connection: Connection::new(geo, "hproxy-checker", ProbePolicy::COMPUTER, move |change| {
+                heard(&handle, change);
+            }),
+            computer: Mutex::new(Computer::default()),
+            kill_switch: AtomicBool::new(true),
+            whole_computer: AtomicBool::new(true),
+            stopped: AtomicBool::new(false),
+        }
+    }
+
+    fn computer(&self) -> std::sync::MutexGuard<'_, Computer> {
+        self.computer.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -116,129 +123,187 @@ fn whole_device_support() -> Support {
     hproxy_system::support()
 }
 
-/// Routes are numbered across the whole run, so a probe of a relay already
-/// stopped can never pass for one of the relay running now.
-static NEXT_ROUTE: AtomicU64 = AtomicU64::new(1);
-
-/// Start a new route: what the last probe found belongs to the old one, so it
-/// goes, and the card shows nothing stale while the first probe of the new
-/// place is under way.
-fn start_route(route: &AtomicU64, health: &Mutex<HealthState>) -> u64 {
-    let n = NEXT_ROUTE.fetch_add(1, Ordering::SeqCst);
-    route.store(n, Ordering::SeqCst);
-    if let Ok(mut h) = health.lock() {
-        *h = HealthState::default();
-    }
-    n
-}
-
-/// One probe through the relay, recorded only if the route is still the one
-/// it started on: a probe of the place switched away from must not land on
-/// the card of the new one, nor set the time zone to the old exit's.
-async fn probe_route(
-    app: &AppHandle,
-    geo: &Geo,
-    listen: SocketAddr,
-    url: &str,
-    route: &AtomicU64,
-    health: &Arc<Mutex<HealthState>>,
-) {
-    let at = route.load(Ordering::SeqCst);
-    let h = probe_once(listen, geo, url).await;
-    if route.load(Ordering::SeqCst) == at {
-        took_probe(app, at, health, h).await;
-    }
-}
-
-/// The handles a switch needs from the running relay, taken under the lock
-/// and used after it is let go.
-struct Live {
-    listen: SocketAddr,
-    source: Arc<SwitchableSource>,
-    stats: Arc<Stats>,
-    route: Arc<AtomicU64>,
-    health: Arc<Mutex<HealthState>>,
-    probe_url: Arc<Mutex<String>>,
-}
-
-impl Live {
-    fn of(r: &Running) -> Self {
-        Self {
-            listen: r.listen,
-            source: Arc::clone(&r.source),
-            stats: Arc::clone(&r.stats),
-            route: Arc::clone(&r.route),
-            health: Arc::clone(&r.health),
-            probe_url: Arc::clone(&r.probe_url),
+/// What the engine says on its own, from the relay's tasks.
+fn heard(app: &AppHandle, change: Change) {
+    match change {
+        // A new place or a new exit starts with a clean slate.
+        Change::Up => proxy_is_back(app, false),
+        Change::Down => {}
+        Change::Health(h) => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move { took_probe(&app, *h).await });
+        }
+        // The row of a saved proxy that failed its test says so.
+        Change::DidNotWork { place, health } => {
+            if let (Place::Proxy { id }, Some(places)) = (place, app.try_state::<PlacesState>()) {
+                places.probed(&id, health.verdict());
+            }
+        }
+        Change::Outcome { ok, why } => {
+            let event = if ok {
+                Event::ConnectOk
+            } else {
+                Event::ConnectFailed {
+                    reason: why.unwrap_or("other").into(),
+                }
+            };
+            crate::usage::count(app, event);
         }
     }
+}
 
-    fn probe_url(&self) -> String {
-        self.probe_url
-            .lock()
-            .map(|u| u.clone())
-            .unwrap_or_else(|_| DEFAULT_PROBE_URL.to_string())
+/// A probe's answer: the row of a saved proxy, the kill switch, and the exit's
+/// zone handed to the time zone match (timezone.rs) while it is on, off the
+/// async threads because Windows' `tzutil` blocks.
+async fn took_probe(app: &AppHandle, h: Health) {
+    let Some(state) = app.try_state::<RelayState>() else {
+        return;
+    };
+    // A probe through a saved proxy is also the freshest word on it: its row
+    // shows what the last probe found (places.rs keeps it).
+    if let Some(Place::Proxy { id }) = state.connection.place() {
+        if let Some(places) = app.try_state::<PlacesState>() {
+            places.probed(&id, h.verdict());
+        }
+    }
+    if h.ok {
+        proxy_is_back(app, true);
+    } else if h.failures_in_a_row >= STOPPED_AFTER {
+        proxy_stopped(app);
+    }
+    let session = state.connection.status().route;
+    if let (Some(session), Some(zone)) = (
+        session,
+        h.timezone.filter(|_| h.ok && crate::timezone::is_matching(app)),
+    ) {
+        let app = app.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || crate::timezone::follow_exit(&app, session, &zone)).await;
     }
 }
 
-/// The source behind the relay, as the window shows it.
-#[derive(Serialize, Clone)]
-pub struct SourceInfo {
-    pub kind: SourceKind,
-    /// How many upstreams it chooses from; unknown for the pool.
-    pub size: Option<usize>,
-    /// The list's rotation rule, as a sentence.
-    pub rotation: Option<String>,
-    /// The upstream in use, never with its password.
-    pub in_use: String,
-    /// The pool's description of the exit (place, latency).
-    pub detail: Option<String>,
-    pub can_rotate: bool,
-    /// For a group, the member in use: its place in the group (from 0), the
-    /// number `places_group_members` gives it.
-    pub member: Option<usize>,
+/// The proxy stopped answering. With the kill switch off the setting goes back
+/// for now; the tray and a notification say what happened either way.
+fn proxy_stopped(app: &AppHandle) {
+    let state = app.state::<RelayState>();
+    if state.stopped.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let held = state.kill_switch.load(Ordering::SeqCst);
+    if !held {
+        step_aside(app, &state);
+    }
+    let meaning = if held {
+        "Kill switch on: nothing goes out on your own address."
+    } else {
+        "You are on your own address until it answers."
+    };
+    // The error by its name: the last probe's words.
+    let error = state.connection.status().health.and_then(|h| h.error).map(sentence);
+    log::warn!(
+        "the proxy stopped answering; kill switch {}",
+        if held { "on" } else { "off" }
+    );
+    crate::tray::trouble(app, true);
+    let lines: Vec<&str> = error.as_deref().into_iter().chain([meaning]).collect();
+    crate::tray::tell(app, "Your proxy stopped answering", &lines, Look::Stopped);
 }
 
-#[derive(Serialize, Clone)]
-pub struct ConnectStatus {
-    pub running: bool,
-    pub listen: Option<String>,
-    /// The upstream in use, as shown to a person: never the password.
-    pub upstream: Option<String>,
-    /// Whether the system proxy setting currently points at the relay.
-    pub system_proxy: bool,
-    /// What this machine can do about its system proxy setting.
-    pub support: Support,
-    /// A message worth showing: the setting was restored after a crash, or
-    /// left alone because it had been changed.
-    pub notice: Option<String>,
-    pub source: Option<SourceInfo>,
-    /// Unix milliseconds, for the uptime counter.
-    pub started_at_ms: Option<u64>,
-    pub stats: Option<StatsSnapshot>,
-    pub health: Option<Health>,
-    /// The place connected through, whoever started it (the window or the tray).
-    pub place: Option<Place>,
+/// The engine's words as a sentence.
+fn sentence(words: String) -> String {
+    let mut letters = words.chars();
+    match letters.next() {
+        Some(first) => first.to_uppercase().chain(letters).collect(),
+        None => words,
+    }
 }
 
-use hproxy_connection::source::scheme_of;
+/// The proxy answers again, or the connection moved to another one (`say`
+/// false: nothing came back, this is something new).
+fn proxy_is_back(app: &AppHandle, say: bool) {
+    let Some(state) = app.try_state::<RelayState>() else {
+        return;
+    };
+    if !state.stopped.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    step_back(app, &state);
+    crate::tray::trouble(app, false);
+    if say {
+        crate::tray::tell(
+            app,
+            "Your proxy answers again",
+            &["You are connected through it."],
+            Look::Back,
+        );
+    }
+}
 
-/// Build the relay's source for a place: a saved proxy or group through the
+/// The kill switch is off: the setting goes back while the proxy is away.
+fn step_aside(app: &AppHandle, state: &RelayState) {
+    let mut computer = state.computer();
+    if computer.system.is_some() {
+        computer.on_own_address = true;
+        put_setting_back(app, &mut computer);
+    }
+}
+
+/// The proxy answers: the setting points at the relay again.
+fn step_back(app: &AppHandle, state: &RelayState) {
+    let Some(listen) = state.connection.listen() else {
+        return;
+    };
+    let mut computer = state.computer();
+    if std::mem::take(&mut computer.on_own_address) {
+        if let Some(e) = point_setting_at(app, &mut computer, listen) {
+            log::warn!("{e}");
+        }
+    }
+}
+
+/// Point the operating system's proxy setting at the relay. The snapshot is on
+/// disk before the change, so a crash between the two still leaves a record.
+/// Words for the window when it could not be done.
+fn point_setting_at(app: &AppHandle, computer: &mut Computer, listen: SocketAddr) -> Option<String> {
+    match hproxy_system::support() {
+        Support::Automatic { .. } => match hproxy_system::set(&listen.ip().to_string(), listen.port()) {
+            Ok(snap) => {
+                save_snapshot(app, &snap);
+                computer.system = Some(snap);
+                None
+            }
+            // The relay still works; the person can paste the address.
+            Err(e) => Some(format!(
+                "The relay is running, but the system proxy could not be set: {e}"
+            )),
+        },
+        // Nothing to set here (a phone, a Linux desktop without GNOME). The
+        // card shows the address to type in with these steps itself
+        // (ConnectionCard.tsx, ProgramSettings), so a notice would say
+        // them twice.
+        Support::Manual { .. } => None,
+    }
+}
+
+/// Put the setting back exactly as found. Words for the window when it did not go as planned.
+fn put_setting_back(app: &AppHandle, computer: &mut Computer) -> Option<String> {
+    let snap = computer.system.take()?;
+    let words = match hproxy_system::restore(&snap) {
+        Ok(RestoreOutcome::Restored) => None,
+        Ok(RestoreOutcome::LeftAlone { now }) => Some(format!(
+            "The system proxy setting was changed while connected ({}), so it was left as it is.",
+            now.server.as_deref().unwrap_or("off")
+        )),
+        Err(e) => Some(format!("The system proxy could not be restored: {e}")),
+    };
+    clear_snapshot(app);
+    words
+}
+
+/// The source behind the relay for a place: a saved proxy or group through the
 /// one step every door shares (`hproxy_cli::places::source_of`, over the
 /// library this app keeps), the free pool here, where its search can wait.
-/// Returns it with the pool's exit description and a notice about lines that
-/// were skipped, when there are any.
-async fn build_source(places: &PlacesState, place: &Place) -> Result<(Source, Option<String>, Option<String>), String> {
-    let built =
-        hproxy_connection::source::build(|p| places.read(|lib| hproxy_connection::source_of(lib, p)), place).await?;
-    Ok((built.source, built.exit_label, built.notice))
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+async fn build_source(places: &PlacesState, place: &Place) -> Result<Built, String> {
+    hproxy_connection::source::build(|p| places.read(|lib| hproxy_connection::source_of(lib, p)), place).await
 }
 
 fn snapshot_path(app: &AppHandle) -> Option<PathBuf> {
@@ -289,87 +354,23 @@ pub fn repair_on_start(app: &AppHandle) -> Option<String> {
 }
 
 /// Whether a connection is up, for the updater's "nobody is using the app"
-/// (src/update.rs). A poisoned lock answers yes: when in doubt, no update.
+/// (src/update.rs).
 pub fn is_running(app: &AppHandle) -> bool {
-    app.state::<RelayState>()
-        .inner
-        .lock()
-        .map(|g| g.is_some())
-        .unwrap_or(true)
+    app.state::<RelayState>().connection.listen().is_some()
 }
 
 /// The route in use, which names the relay's current place and exit: the time
 /// zone match takes a probe's zone only from the route that is up now.
 pub fn session(app: &AppHandle) -> Option<u64> {
-    app.state::<RelayState>()
-        .inner
-        .lock()
-        .ok()
-        .and_then(|g| g.as_ref().map(|r| r.route.load(Ordering::SeqCst)))
+    app.state::<RelayState>().connection.status().route
 }
 
 /// The exit's time zone from the last probe that answered, with the route,
 /// while connected (timezone.rs: the setting switched on, "Match again").
 pub fn exit_zone(app: &AppHandle) -> Option<(u64, String)> {
-    let state = app.state::<RelayState>();
-    let guard = state.inner.lock().ok()?;
-    let r = guard.as_ref()?;
-    let health = r.health.lock().ok()?;
-    let zone = health.last.as_ref().filter(|h| h.ok)?.timezone.clone()?;
-    Some((r.route.load(Ordering::SeqCst), zone))
-}
-
-/// The place the running relay goes through, if one runs.
-fn connected_place(app: &AppHandle) -> Option<Place> {
-    let state = app.try_state::<RelayState>()?;
-    let guard = state.inner.lock().ok()?;
-    guard.as_ref().map(|r| r.place.clone())
-}
-
-/// What a probe through a saved proxy says about it, the way its row shows it.
-fn verdict_of_health(h: &Health) -> Verdict {
-    Verdict {
-        ok: h.ok,
-        latency_ms: h.latency_ms,
-        cc: h.country_code.as_deref().map(str::to_ascii_lowercase),
-        place: place_words(h.city.as_deref(), h.country.as_deref()),
-        exit_ip: h.exit_ip.clone(),
-        anonymity: None,
-        // A live probe went through the relay itself: `ok` already means it
-        // carried traffic, and there is no check row to read words from.
-        says: None,
-        tone: None,
-        way: None,
-        datacenter: h.datacenter,
-        at: h.checked_at_ms,
-    }
-}
-
-/// The route of the newest Connect (the window's, the tray's), counted once on its first probe
-/// (usage.rs, "connects"). Next IP, Back and a member picked are moves within the place
-/// connected through, never a connection of their own.
-static CONNECT_TO_COUNT: AtomicU64 = AtomicU64::new(0);
-
-/// A Connect worked, or failed and why: the probe's own words, else the relay's, which saw
-/// the proxy behind it fail (hproxy-relay, `Stats::take_why`).
-fn count_connect(app: &AppHandle, h: &Health) {
-    let event = if h.ok {
-        Event::ConnectOk
-    } else {
-        let relay_why = || {
-            let state = app.try_state::<RelayState>()?;
-            let guard = state.inner.lock().ok()?;
-            guard.as_ref()?.stats.take_why().map(Why::as_str)
-        };
-        let reason = h
-            .error
-            .as_deref()
-            .and_then(failure_word)
-            .or_else(relay_why)
-            .unwrap_or("other");
-        Event::ConnectFailed { reason: reason.into() }
-    };
-    crate::usage::count(app, event);
+    let status = app.state::<RelayState>().connection.status();
+    let zone = status.health.filter(|h| h.ok)?.timezone?;
+    Some((status.route?, zone))
 }
 
 /// What a Connect uses, for the usage counts: a free proxy, a group and its rotation, the
@@ -400,31 +401,6 @@ fn count_place(app: &AppHandle, place: &Place, system_proxy: bool) {
     }
 }
 
-/// A probe's answer: kept for the card, and the exit's zone handed to the
-/// time zone match (timezone.rs) while it is on, off the async threads
-/// because Windows' `tzutil` blocks.
-async fn took_probe(app: &AppHandle, session: u64, health: &Arc<Mutex<HealthState>>, h: Health) {
-    if CONNECT_TO_COUNT
-        .compare_exchange(session, 0, Ordering::SeqCst, Ordering::SeqCst)
-        .is_ok()
-    {
-        count_connect(app, &h);
-    }
-    let zone = if h.ok { h.timezone.clone() } else { None };
-    // A probe through a saved proxy is also the freshest word on it: its row
-    // shows what the last probe found (places.rs keeps it).
-    if let Some(Place::Proxy { id }) = connected_place(app) {
-        if let Some(places) = app.try_state::<PlacesState>() {
-            places.probed(&id, verdict_of_health(&h));
-        }
-    }
-    record_health(health, h);
-    if let Some(zone) = zone.filter(|_| crate::timezone::is_matching(app)) {
-        let app = app.clone();
-        let _ = tauri::async_runtime::spawn_blocking(move || crate::timezone::follow_exit(&app, session, &zone)).await;
-    }
-}
-
 /// On exit (the last window closed, or the process is ending): if Connect is
 /// still on, put the system proxy back and tell the relay to stop.
 /// Synchronous on purpose, because the event loop is ending and nothing
@@ -435,77 +411,78 @@ async fn took_probe(app: &AppHandle, session: u64, health: &Arc<Mutex<HealthStat
 /// title bar's close button, a quit from the OS, a process asked to end.
 pub fn restore_on_exit(app: &AppHandle) {
     let state = app.state::<RelayState>();
-    let running = state.inner.lock().ok().and_then(|mut g| g.take());
+    state.connection.stop_now();
     // The time zone, even when no relay runs any more, and only once the relay
-    // is out of the state, so a probe still finishing cannot match it again.
+    // is down, so a probe still finishing cannot match it again.
     match crate::timezone::restore(app) {
         Ok(Some(words)) => log::info!("{words}"),
         Ok(None) => {}
         Err(e) => log::error!("could not put the time zone back on exit: {e}"),
     }
-    let Some(mut r) = running else { return };
-    if let Some(snap) = r.system.take() {
-        match hproxy_system::restore(&snap) {
-            Ok(outcome) => log::info!("system proxy put back on exit: {outcome:?}"),
-            Err(e) => log::error!("could not restore the system proxy on exit: {e}"),
-        }
-        clear_snapshot(app);
-    }
-    r.probe.abort();
-    if let Some(stop) = r.stop.take() {
-        let _ = stop.send(());
+    let mut computer = state.computer();
+    computer.on_own_address = false;
+    if let Some(words) = put_setting_back(app, &mut computer) {
+        log::warn!("on exit: {words}");
     }
 }
 
-fn status_of(running: Option<&Running>, notice: Option<String>) -> ConnectStatus {
-    match running {
-        Some(r) => {
-            let source = r.source.current();
-            ConnectStatus {
-                running: true,
-                listen: Some(r.listen.to_string()),
-                upstream: Some(source.in_use_now()),
-                system_proxy: r.whole_device(),
-                support: whole_device_support(),
-                notice,
-                source: Some(SourceInfo {
-                    kind: source.kind(),
-                    size: source.size(),
-                    rotation: source.rotation().map(Rotation::describe),
-                    in_use: source.in_use_now(),
-                    detail: r.exit_label.clone(),
-                    can_rotate: source.can_rotate(),
-                    member: source.line_in_use(),
-                }),
-                started_at_ms: Some(r.started_at_ms),
-                stats: Some(r.stats.snapshot()),
-                health: r.health.lock().ok().and_then(|h| h.last.clone()),
-                place: Some(r.place.clone()),
-            }
-        }
-        None => ConnectStatus {
-            running: false,
-            listen: None,
-            upstream: None,
-            system_proxy: false,
-            support: whole_device_support(),
-            notice,
-            source: None,
-            started_at_ms: None,
-            stats: None,
-            health: None,
-            place: None,
-        },
+#[derive(Serialize, Clone)]
+pub struct ConnectStatus {
+    pub running: bool,
+    pub listen: Option<String>,
+    /// The upstream in use, as shown to a person: never the password.
+    pub upstream: Option<String>,
+    /// Whether the system proxy setting currently points at the relay.
+    pub system_proxy: bool,
+    /// The proxy stopped and the kill switch is off: programs are on the
+    /// person's own address until it answers.
+    pub on_own_address: bool,
+    /// What this machine can do about its system proxy setting.
+    pub support: Support,
+    /// A message worth showing: the setting was restored after a crash, or
+    /// left alone because it had been changed.
+    pub notice: Option<String>,
+    pub source: Option<SourceInfo>,
+    /// Unix milliseconds, for the uptime counter.
+    pub started_at_ms: Option<u64>,
+    pub stats: Option<StatsSnapshot>,
+    pub health: Option<Health>,
+    /// The place connected through, whoever started it (the window or the tray).
+    pub place: Option<Place>,
+    /// Where other devices on this network connect, while they may.
+    pub network: Option<String>,
+}
+
+/// This computer's address on its network: the way out a packet would take to
+/// an address outside it. A datagram socket only picks the route: nothing is sent.
+fn network_address() -> Option<std::net::IpAddr> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("192.0.2.1:9").ok()?;
+    socket.local_addr().ok().map(|a| a.ip())
+}
+
+/// The status as it is right now, with a notice for the window.
+fn status_now(state: &RelayState, notice: Option<String>) -> ConnectStatus {
+    let s = state.connection.status();
+    let computer = state.computer();
+    ConnectStatus {
+        running: s.running,
+        listen: s.listen,
+        upstream: s.source.as_ref().map(|source| source.in_use.clone()),
+        system_proxy: computer.whole_device(),
+        on_own_address: computer.on_own_address,
+        support: whole_device_support(),
+        notice: notice.or(s.notice),
+        source: s.source,
+        started_at_ms: s.started_at_ms,
+        stats: s.stats,
+        health: s.health,
+        place: s.place,
+        network: s.network.and_then(|bound| {
+            let bound: SocketAddr = bound.parse().ok()?;
+            Some(SocketAddr::new(network_address()?, bound.port()).to_string())
+        }),
     }
-}
-
-/// One probe through the relay to `url` (hproxy-connection, health.rs).
-async fn probe_once(listen: SocketAddr, geo: &Geo, url: &str) -> Health {
-    hproxy_connection::health::probe_once(listen, geo, url, "hproxy-checker").await
-}
-
-fn record_health(health: &Arc<Mutex<HealthState>>, h: Health) {
-    hproxy_connection::health::record(health, h);
 }
 
 /// The window's Connect: connect to `place` on `listen` (default
@@ -524,8 +501,14 @@ pub async fn connect_start(
     counted_start(&app, place, listen, system_proxy, probe_url, member).await
 }
 
-/// `start_place`, counted: what the place uses, and a failure that came before any probe (no
-/// free exit, a port taken) as a Connect that failed.
+/// Call off a connect that is still testing (the switch pressed again).
+#[tauri::command]
+pub fn connect_cancel(state: State<'_, RelayState>) {
+    state.connection.cancel();
+}
+
+/// `start_place`, counted: what the place uses. How it went is the connection's to say
+/// (`Change::Outcome`); a place that could not even be built never got that far.
 pub async fn counted_start(
     app: &AppHandle,
     place: Place,
@@ -535,11 +518,7 @@ pub async fn counted_start(
     member: Option<usize>,
 ) -> Result<ConnectStatus, String> {
     count_place(app, &place, system_proxy);
-    let started = start_place(app, place, listen, system_proxy, probe_url, member).await;
-    if started.is_err() {
-        crate::usage::count(app, Event::ConnectFailed { reason: "other".into() });
-    }
-    started
+    start_place(app, place, listen, system_proxy, probe_url, member).await
 }
 
 /// Connect from outside the window (the tray, the phone's quick tile): the
@@ -552,16 +531,24 @@ pub async fn connect_picked(app: &AppHandle) -> Result<ConnectStatus, String> {
         .state::<PlacesState>()
         .switch_place()
         .ok_or("add your proxies in HProxy first")?;
-    counted_start(app, place, None, true, None, None).await
+    start_from_outside(app, place).await
+}
+
+/// A place connected from outside the window: with the choice the window keeps.
+pub async fn start_from_outside(app: &AppHandle, place: Place) -> Result<ConnectStatus, String> {
+    let whole = app.state::<RelayState>().whole_computer.load(Ordering::SeqCst);
+    counted_start(app, place, None, whole, None, None).await
 }
 
 /// Connect to `place`, from the window or the tray.
 ///
-/// Already connected, this is a switch: the relay keeps running on its port,
-/// the system proxy setting is not touched, and only the place behind the
-/// relay changes (`switch_in_place`). It reconnects from scratch only when the
-/// switch asks for another address or another answer about the system proxy.
-/// Either way the place is counted as used and remembered as the pick.
+/// Answers once traffic got through it, and until then nothing on this
+/// computer changes: a place that fails leaves the setting, and a connection
+/// already up, exactly as they were. Already connected, this is a switch: the
+/// relay keeps running on its port, the system proxy setting is not touched,
+/// and only the place behind the relay changes. It reconnects from scratch only
+/// when the switch asks for another address. Either way the place is counted as
+/// used and remembered as the pick.
 pub async fn start_place(
     app: &AppHandle,
     place: Place,
@@ -571,20 +558,12 @@ pub async fn start_place(
     member: Option<usize>,
 ) -> Result<ConnectStatus, String> {
     let state = app.state::<RelayState>();
-    let app_state = app.state::<AppState>();
     let places = app.state::<PlacesState>();
-    // The probe the window asks for is remembered for a connection the tray
-    // starts; the tray asks for none and gets the one asked for last.
-    let probe_url = match probe_url {
-        Some(url) => {
-            if let Ok(mut last) = state.last_probe_url.lock() {
-                *last = Some(url.clone());
-            }
-            Some(url)
-        }
-        None => state.last_probe_url.lock().ok().and_then(|l| l.clone()),
-    };
-    let probe_url = probe_url_from(probe_url)?;
+    // The probe the window asks for is kept for a connection the tray starts:
+    // the tray asks for none and gets the one asked for last.
+    if let Some(url) = probe_url {
+        state.connection.set_probe_url(probe_url_from(Some(url))?);
+    }
     let asked = listen.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let mut addr: SocketAddr = asked
         .unwrap_or(hproxy_relay::DEFAULT_LISTEN)
@@ -594,238 +573,163 @@ pub async fn start_place(
 
     // The source is built before anything changes: a pool that has no exit
     // right now must not cost the person the connection they had.
-    let (source, exit_label, mut notice) = build_source(&places, &place).await?;
-    // A group started on the member the person picked carries the very first
-    // connection through it.
-    if let Some(member) = member {
-        source.go_to_line(member)?;
+    let built = build_source(&places, &place).await.inspect_err(|_| {
+        crate::usage::count(app, Event::ConnectFailed { reason: "other".into() });
+    })?;
+
+    // Another address asked for: the relay moves. Stopping it puts the system
+    // setting back first.
+    let mut notice = None;
+    if state
+        .connection
+        .listen()
+        .is_some_and(|now| asked.is_some() && now != addr)
+    {
+        notice = stop_running(app, &state).await;
     }
-
-    let live = state.inner.lock().ok().and_then(|guard| {
-        guard
-            .as_ref()
-            .filter(|r| (asked.is_none() || r.listen == addr) && r.system_wanted == system_proxy)
-            .map(Live::of)
-    });
-    if let Some(live) = live {
-        places.used(&place);
-        crate::tray::places_changed(app);
-        return Ok(switch_in_place(
-            app,
-            &state,
-            &app_state.geo,
-            live,
-            place,
-            source,
-            exit_label,
-            notice,
-            probe_url,
-        )
-        .await);
-    }
-
-    let probe_url = Arc::new(Mutex::new(probe_url));
-    let source = Arc::new(SwitchableSource::new(source));
-    let stats = Arc::new(Stats::default());
-
-    // One relay at a time keeps "which proxy am I on" a question with one
-    // answer. Stopping the old one restores the system setting first.
-    stop_running(app, &state).await;
-
     // The default port is a popular one (development servers live on 8080).
     // When nobody asked for a specific port and the default is taken, take a
     // free one instead of failing: the address is shown and copied from the
     // screen anyway, so which port it is does not matter to the person.
-    if asked.is_none() && std::net::TcpListener::bind(addr).is_err() {
+    if state.connection.listen().is_none() && asked.is_none() && std::net::TcpListener::bind(addr).is_err() {
         addr.set_port(0);
     }
 
-    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<SocketAddr, String>>();
-    let task = {
-        let source = Arc::clone(&source);
-        let stats = Arc::clone(&stats);
-        tauri::async_runtime::spawn(async move {
-            let mut ready = Some(ready_tx);
-            let r = hproxy_relay::serve(
-                addr,
-                false,
-                false,
-                source,
-                stats,
-                |bound| {
-                    if let Some(tx) = ready.take() {
-                        let _ = tx.send(Ok(bound));
-                    }
-                },
-                async {
-                    let _ = stop_rx.await;
-                },
-            )
-            .await;
-            if let (Err(e), Some(tx)) = (&r, ready.take()) {
-                let _ = tx.send(Err(e.clone()));
-            }
-            r
-        })
-    };
+    let started = state.connection.start(place.clone(), built, addr, member).await?;
+    let listen_on: SocketAddr = started
+        .listen
+        .as_deref()
+        .and_then(|l| l.parse().ok())
+        .ok_or("the relay did not say where it listens")?;
 
-    let bound = match ready_rx.await {
-        Ok(Ok(b)) => b,
-        Ok(Err(e)) => return Err(e),
-        Err(_) => return Err("the relay stopped before it could report its address".into()),
-    };
-
-    // The relay is up. Now the system setting, with its snapshot saved to
-    // disk before the change so a crash between the two lines still leaves a
-    // record.
-    let mut system = None;
-    if system_proxy {
-        match hproxy_system::support() {
-            Support::Automatic { .. } => match hproxy_system::set(&bound.ip().to_string(), bound.port()) {
-                Ok(snap) => {
-                    save_snapshot(app, &snap);
-                    system = Some(snap);
-                }
-                Err(e) => {
-                    // The relay still works; the person can paste the address.
-                    notice = Some(format!(
-                        "The relay is running, but the system proxy could not be set: {e}"
-                    ));
-                }
-            },
-            // Nothing to set here (a phone, a Linux desktop without GNOME). The
-            // card shows the address to type in with these steps itself
-            // (ConnectionCard.tsx, ProgramSettings), so a notice would say
-            // them twice.
-            Support::Manual { .. } => {}
-        }
+    // The test passed. Now the computer.
+    if let Some(words) = whole_device(app, &state, listen_on, system_proxy, started.source.as_ref()).await {
+        notice = Some(words);
     }
-
-    // On a phone, "the whole phone" is a VPN that carries every app to the
-    // relay. Not allowed or refused: no connection at all, never a relay that
-    // only this app uses while the card says "connected".
-    #[cfg(target_os = "android")]
-    let vpn = if system_proxy {
-        match crate::vpn::android::start(app, bound, &source.current().in_use_now()).await {
-            Ok(vpn) => Some(vpn),
-            Err(e) => {
-                let _ = stop_tx.send(());
-                let _ = task.await;
-                return Err(e);
-            }
-        }
-    } else {
-        None
-    };
-
-    // The first probe runs at once, so the exit address is on the screen
-    // within a second or two of connecting; then every PROBE_EVERY.
-    let started_at_ms = now_ms();
-    let health = Arc::new(Mutex::new(HealthState::default()));
-    let route = Arc::new(AtomicU64::new(0));
-    CONNECT_TO_COUNT.store(start_route(&route, &health), Ordering::SeqCst);
-    let probe = {
-        let health = Arc::clone(&health);
-        let route = Arc::clone(&route);
-        let geo = Arc::clone(&app_state.geo);
-        let probe_url = Arc::clone(&probe_url);
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            loop {
-                let url = probe_url
-                    .lock()
-                    .map(|u| u.clone())
-                    .unwrap_or_else(|_| DEFAULT_PROBE_URL.to_string());
-                probe_route(&app, &geo, bound, &url, &route, &health).await;
-                tokio::time::sleep(PROBE_EVERY).await;
-            }
-        })
-    };
-
-    let now = source.current();
-    log::info!(
-        "connected: {:?} source through {}, listening on {bound}",
-        now.kind(),
-        now.in_use_now()
-    );
     places.used(&place);
-    let running = Running {
-        place,
-        listen: bound,
-        source,
-        stats,
-        exit_label,
-        started_at_ms,
-        route,
-        system_wanted: system_proxy,
-        stop: Some(stop_tx),
-        task,
-        probe,
-        health,
-        probe_url,
-        system,
-        #[cfg(target_os = "android")]
-        vpn,
-    };
-    let status = status_of(Some(&running), notice);
-    if let Ok(mut inner) = state.inner.lock() {
-        *inner = Some(running);
-    }
-    crate::tray::relay_changed(app, true, status.upstream.as_deref());
     crate::tray::places_changed(app);
+    let status = status_now(&state, notice.or(started.notice));
+    log::info!(
+        "connected through {}",
+        status.upstream.as_deref().unwrap_or("the relay")
+    );
+    crate::tray::relay_changed(app, true, status.upstream.as_deref());
     Ok(status)
 }
 
-/// A switch while connected: the new place goes behind the running relay.
-/// The port stays, the system proxy setting stays as it is (so no program
-/// ever goes out on the person's own address in between), and the open
-/// connections end so every program comes back through the new place. A
-/// probe follows at once, so the card names the new exit within a second or two.
-#[allow(clippy::too_many_arguments)]
-async fn switch_in_place(
+/// Make the whole computer go through the relay, or not, whichever it does
+/// now. Words for the window when it could not be done.
+#[cfg(not(target_os = "android"))]
+async fn whole_device(
     app: &AppHandle,
     state: &RelayState,
-    geo: &Geo,
-    live: Live,
-    place: Place,
-    source: Source,
-    exit_label: Option<String>,
-    notice: Option<String>,
-    probe_url: String,
-) -> ConnectStatus {
-    let described = source.in_use_now();
-    live.source.replace(source);
-    live.stats.rotated();
-    if let Ok(mut url) = live.probe_url.lock() {
-        *url = probe_url.clone();
+    listen: SocketAddr,
+    wanted: bool,
+    _source: Option<&SourceInfo>,
+) -> Option<String> {
+    let mut computer = state.computer();
+    if !wanted {
+        computer.on_own_address = false;
+        return put_setting_back(app, &mut computer);
     }
-    if let Ok(mut guard) = state.inner.lock() {
-        if let Some(r) = guard.as_mut() {
-            r.exit_label = exit_label;
-            r.place = place;
-        }
+    if computer.system.is_some() || computer.on_own_address {
+        return None;
     }
-    live.stats.take_why();
-    CONNECT_TO_COUNT.store(start_route(&live.route, &live.health), Ordering::SeqCst);
-    log::info!("switched in place to {described}, still listening on {}", live.listen);
-    probe_route(app, geo, live.listen, &probe_url, &live.route, &live.health).await;
-    let status = status_now(state, notice);
-    crate::tray::relay_changed(app, true, status.upstream.as_deref());
-    status
+    point_setting_at(app, &mut computer, listen)
 }
 
-/// The status as it is right now, with a notice for the window.
-fn status_now(state: &RelayState, notice: Option<String>) -> ConnectStatus {
-    let guard = state.inner.lock().ok();
-    status_of(guard.as_ref().and_then(|g| g.as_ref()), notice)
+/// On a phone, "the whole phone" is a VPN that carries every app to the relay.
+/// Not allowed or refused: said, and the relay ends with the next stop.
+#[cfg(target_os = "android")]
+async fn whole_device(
+    app: &AppHandle,
+    state: &RelayState,
+    listen: SocketAddr,
+    wanted: bool,
+    source: Option<&SourceInfo>,
+) -> Option<String> {
+    if !wanted || state.computer().vpn.is_some() {
+        return None;
+    }
+    let in_use = source.map(|s| s.in_use.clone()).unwrap_or_default();
+    match crate::vpn::android::start(app, listen, &in_use).await {
+        Ok(vpn) => {
+            state.computer().vpn = Some(vpn);
+            None
+        }
+        Err(e) => Some(e),
+    }
+}
+
+/// "Use for the whole computer" changed: while connected it happens now, and
+/// the window keeps the choice for the next connection.
+#[tauri::command]
+pub async fn connect_set_whole_computer(
+    app: AppHandle,
+    state: State<'_, RelayState>,
+    on: bool,
+) -> Result<ConnectStatus, String> {
+    state.whole_computer.store(on, Ordering::SeqCst);
+    let Some(listen) = state.connection.listen() else {
+        return Ok(status_now(&state, None));
+    };
+    let source = state.connection.status().source;
+    let notice = whole_device(&app, &state, listen, on, source.as_ref()).await;
+    Ok(status_now(&state, notice))
+}
+
+/// Which sites use the proxy, and the saved proxy in front of it (Settings). The
+/// window sends what the person wrote: words that are no site come back as an error.
+#[tauri::command]
+pub fn connect_set_routing(
+    state: State<'_, RelayState>,
+    places: State<'_, PlacesState>,
+    mode: String,
+    sites: String,
+    first_hop: Option<String>,
+) -> Result<(), String> {
+    let routing = places.read(|lib| routing_of(lib, &mode, &sites, first_hop.as_deref()))?;
+    state.connection.set_routing(routing);
+    Ok(())
+}
+
+/// Other devices on this network use this connection, with a login (Settings).
+#[tauri::command]
+pub async fn connect_set_share(
+    state: State<'_, RelayState>,
+    on: bool,
+    port: u16,
+    password: String,
+) -> Result<ConnectStatus, String> {
+    let share = on.then_some(Share {
+        port,
+        login: Login {
+            username: "hproxy".into(),
+            password,
+        },
+    });
+    state.connection.share(share).await?;
+    Ok(status_now(&state, None))
+}
+
+/// The kill switch (Settings). Changed while the proxy is stopped, it counts at once.
+#[tauri::command]
+pub fn connect_set_kill_switch(app: AppHandle, state: State<'_, RelayState>, on: bool) {
+    state.kill_switch.store(on, Ordering::SeqCst);
+    if state.stopped.load(Ordering::SeqCst) {
+        if on {
+            step_back(&app, &state);
+        } else {
+            step_aside(&app, &state);
+        }
+    }
 }
 
 #[tauri::command]
 pub async fn connect_stop(app: AppHandle, state: State<'_, RelayState>) -> Result<ConnectStatus, String> {
     let notice = stop_running(&app, &state).await;
     crate::tray::relay_changed(&app, false, None);
-    Ok(status_of(None, notice))
+    Ok(status_now(&state, notice))
 }
 
 /// Disconnect from outside the window: the tray icon, the phone's
@@ -841,8 +745,7 @@ pub async fn stop_from_outside(app: &AppHandle) {
 
 #[tauri::command]
 pub fn connect_status(state: State<'_, RelayState>) -> ConnectStatus {
-    let guard = state.inner.lock().ok();
-    status_of(guard.as_ref().and_then(|g| g.as_ref()), None)
+    status_now(&state, None)
 }
 
 /// How many free exits the Free tab lists for a country.
@@ -863,7 +766,7 @@ pub struct FreeExit {
 /// with `free_test` and shows the result on its row.
 #[tauri::command]
 pub async fn free_list(country: Option<String>, socks5: bool) -> Result<Vec<FreeExit>, String> {
-    let pool = Pool::new(country, scheme_of(socks5))?;
+    let pool = Pool::new(country, hproxy_connection::source::scheme_of(socks5))?;
     Ok(pool
         .list(FREE_LIST_SIZE)
         .await?
@@ -916,10 +819,11 @@ pub struct FreeTest {
 #[tauri::command]
 pub async fn free_test(host: String, port: u16, socks5: bool) -> FreeTest {
     let up = Upstream {
-        scheme: scheme_of(socks5),
+        scheme: hproxy_connection::source::scheme_of(socks5),
         host,
         port,
         auth: None,
+        via: None,
     };
     match hproxy_relay::pool::test(&up).await {
         Ok(ms) => FreeTest {
@@ -935,20 +839,24 @@ pub async fn free_test(host: String, port: u16, socks5: bool) -> FreeTest {
     }
 }
 
+/// What follows every move within the place connected through (Next IP, Back,
+/// a member picked): the probe that shows where the move went, and the tray told.
+async fn moved(app: &AppHandle, state: &RelayState) -> ConnectStatus {
+    state.connection.probed().await;
+    let status = status_now(state, None);
+    crate::tray::relay_changed(app, true, status.upstream.as_deref());
+    status
+}
+
 /// "Next IP": a different upstream because the person asked, the next member
 /// of a list or a fresh exit from the pool. The open connections end with it,
 /// so the tabs already open move to the new IP too. A fixed proxy refuses. A
 /// probe follows at once so the screen shows the new exit.
 #[tauri::command]
-pub async fn connect_rotate(
-    app: AppHandle,
-    state: State<'_, RelayState>,
-    app_state: State<'_, AppState>,
-) -> Result<ConnectStatus, String> {
-    let live = live_now(&state)?;
-    let label = live.source.next_ip().await?;
+pub async fn connect_rotate(app: AppHandle, state: State<'_, RelayState>) -> Result<ConnectStatus, String> {
+    state.connection.next_ip().await?;
     crate::usage::feature(&app, "new_ip");
-    Ok(moved(&app, &state, &app_state.geo, live, label).await)
+    Ok(moved(&app, &state).await)
 }
 
 /// Next IP from outside the window (the phone's notification). The window
@@ -956,15 +864,10 @@ pub async fn connect_rotate(
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 pub async fn next_ip_from_outside(app: &AppHandle) {
     let state = app.state::<RelayState>();
-    let app_state = app.state::<AppState>();
-    let live = match live_now(&state) {
-        Ok(live) => live,
-        Err(_) => return,
-    };
-    match live.source.next_ip().await {
-        Ok(label) => {
+    match state.connection.next_ip().await {
+        Ok(_) => {
             crate::usage::feature(app, "new_ip");
-            moved(app, &state, &app_state.geo, live, label).await;
+            moved(app, &state).await;
         }
         Err(e) => log::warn!("next IP from outside the window: {e}"),
     }
@@ -973,14 +876,9 @@ pub async fn next_ip_from_outside(app: &AppHandle) {
 /// Back: the member of the connected group before the one in use, the open
 /// connections moved with it as with Next IP. Anything but a group refuses.
 #[tauri::command]
-pub async fn connect_back(
-    app: AppHandle,
-    state: State<'_, RelayState>,
-    app_state: State<'_, AppState>,
-) -> Result<ConnectStatus, String> {
-    let live = live_now(&state)?;
-    let label = live.source.previous_ip()?;
-    Ok(moved(&app, &state, &app_state.geo, live, label).await)
+pub async fn connect_back(app: AppHandle, state: State<'_, RelayState>) -> Result<ConnectStatus, String> {
+    state.connection.back()?;
+    Ok(moved(&app, &state).await)
 }
 
 /// One member of the connected group, by its place in the group (from 0):
@@ -989,65 +887,17 @@ pub async fn connect_back(
 pub async fn connect_member(
     app: AppHandle,
     state: State<'_, RelayState>,
-    app_state: State<'_, AppState>,
     member: usize,
 ) -> Result<ConnectStatus, String> {
-    let live = live_now(&state)?;
-    let label = live.source.go_to_line(member)?;
-    Ok(moved(&app, &state, &app_state.geo, live, label).await)
-}
-
-/// The running relay, for a command that changes what is behind it.
-fn live_now(state: &RelayState) -> Result<Live, String> {
-    let guard = state
-        .inner
-        .lock()
-        .map_err(|_| "the relay state is unavailable".to_string())?;
-    Ok(Live::of(guard.as_ref().ok_or("not connected")?))
-}
-
-/// What follows every move within the place connected through (Next IP,
-/// Back, a member picked): the pool's description of its new exit kept, a
-/// probe at once so the screen shows where the move went, and the tray told.
-async fn moved(app: &AppHandle, state: &RelayState, geo: &Geo, live: Live, label: String) -> ConnectStatus {
-    live.stats.rotated();
-    let is_pool = live.source.current().kind() == SourceKind::Pool;
-    if let Ok(mut guard) = state.inner.lock() {
-        if let Some(r) = guard.as_mut() {
-            r.exit_label = is_pool.then_some(label);
-        }
-    }
-    start_route(&live.route, &live.health);
-    probe_route(app, geo, live.listen, &live.probe_url(), &live.route, &live.health).await;
-    let status = status_now(state, None);
-    crate::tray::relay_changed(app, true, status.upstream.as_deref());
-    status
+    state.connection.go_to_member(member)?;
+    Ok(moved(&app, &state).await)
 }
 
 /// One probe through the relay right now, for the "Test now" button.
 #[tauri::command]
-pub async fn connect_probe(
-    app: AppHandle,
-    state: State<'_, RelayState>,
-    app_state: State<'_, AppState>,
-) -> Result<ConnectStatus, String> {
-    let live = {
-        let guard = state
-            .inner
-            .lock()
-            .map_err(|_| "the relay state is unavailable".to_string())?;
-        Live::of(guard.as_ref().ok_or("not connected")?)
-    };
-    probe_route(
-        &app,
-        &app_state.geo,
-        live.listen,
-        &live.probe_url(),
-        &live.route,
-        &live.health,
-    )
-    .await;
-    Ok(connect_status(state))
+pub async fn connect_probe(state: State<'_, RelayState>) -> Result<ConnectStatus, String> {
+    state.connection.test_now().await?;
+    Ok(status_now(&state, None))
 }
 
 pub use hproxy_connection::leak::DnsLeakView;
@@ -1056,46 +906,19 @@ pub use hproxy_connection::leak::DnsLeakView;
 /// looks names up with, and where it is. The leak check runs it once a
 /// connection is up and again on "Test now".
 #[tauri::command]
-pub async fn leak_dns(
-    app: AppHandle,
-    state: State<'_, RelayState>,
-    app_state: State<'_, AppState>,
-) -> Result<DnsLeakView, String> {
+pub async fn leak_dns(app: AppHandle, state: State<'_, RelayState>) -> Result<DnsLeakView, String> {
     crate::usage::feature(&app, "leak_checks");
-    let listen = {
-        let guard = state
-            .inner
-            .lock()
-            .map_err(|_| "the relay state is unavailable".to_string())?;
-        guard.as_ref().ok_or("not connected")?.listen
-    };
-    Ok(hproxy_connection::leak::dns_leak(listen, &app_state.geo, "hproxy-checker").await)
+    state.connection.dns_leak().await
 }
 
 /// Point the running probe somewhere else (Settings, "Connect check"), and
 /// run one at once so the card shows the new target's answer. Empty means
 /// back to our judge.
 #[tauri::command]
-pub async fn connect_set_probe(
-    app: AppHandle,
-    state: State<'_, RelayState>,
-    app_state: State<'_, AppState>,
-    url: Option<String>,
-) -> Result<ConnectStatus, String> {
-    let url = probe_url_from(url)?;
-    let live = {
-        let guard = state
-            .inner
-            .lock()
-            .map_err(|_| "the relay state is unavailable".to_string())?;
-        let r = guard.as_ref().ok_or("not connected")?;
-        if let Ok(mut u) = r.probe_url.lock() {
-            *u = url.clone();
-        }
-        Live::of(r)
-    };
-    probe_route(&app, &app_state.geo, live.listen, &url, &live.route, &live.health).await;
-    Ok(connect_status(state))
+pub async fn connect_set_probe(state: State<'_, RelayState>, url: Option<String>) -> Result<ConnectStatus, String> {
+    state.connection.set_probe_url(probe_url_from(url)?);
+    state.connection.test_now().await?;
+    Ok(status_now(&state, None))
 }
 
 /// What the OS proxy setting says right now, for the panel.
@@ -1105,35 +928,25 @@ pub fn system_proxy_current() -> Result<ProxySetting, String> {
 }
 
 async fn stop_running(app: &AppHandle, state: &RelayState) -> Option<String> {
-    let running = state.inner.lock().ok().and_then(|mut g| g.take());
-    let mut notice = None;
-    if let Some(mut r) = running {
-        // The system setting goes back BEFORE the relay stops, so no program
-        // is ever pointed at a port with nothing behind it.
-        if let Some(snap) = r.system.take() {
-            match hproxy_system::restore(&snap) {
-                Ok(RestoreOutcome::Restored) => {}
-                Ok(RestoreOutcome::LeftAlone { now }) => {
-                    notice = Some(format!(
-                        "The system proxy setting was changed while connected ({}), so it was left as it is.",
-                        now.server.as_deref().unwrap_or("off")
-                    ));
-                }
-                Err(e) => notice = Some(format!("The system proxy could not be restored: {e}")),
-            }
-            clear_snapshot(app);
-        }
-        // On a phone the VPN goes first, for the same reason: once it is
-        // down, apps go out the normal way instead of into a stopped relay.
-        #[cfg(target_os = "android")]
-        if let Some(vpn) = r.vpn.take() {
+    // The system setting goes back BEFORE the relay stops, so no program
+    // is ever pointed at a port with nothing behind it.
+    let notice = {
+        let mut computer = state.computer();
+        computer.on_own_address = false;
+        put_setting_back(app, &mut computer)
+    };
+    // On a phone the VPN goes first, for the same reason: once it is
+    // down, apps go out the normal way instead of into a stopped relay.
+    #[cfg(target_os = "android")]
+    {
+        let vpn = state.computer().vpn.take();
+        if let Some(vpn) = vpn {
             crate::vpn::android::stop(app, vpn).await;
         }
-        r.probe.abort();
-        if let Some(stop) = r.stop.take() {
-            let _ = stop.send(());
-        }
-        let _ = r.task.await;
+    }
+    state.connection.stop().await;
+    if state.stopped.swap(false, Ordering::SeqCst) {
+        crate::tray::trouble(app, false);
     }
     // The time zone, when it was matched to the exit (timezone.rs): back on
     // every disconnect, even when the relay had already stopped by itself.
@@ -1151,44 +964,7 @@ async fn stop_running(app: &AppHandle, state: &RelayState) -> Option<String> {
 mod tests {
     use super::*;
     use hproxy_places::Rule;
-
-    #[test]
-    fn a_new_route_is_a_new_number_and_forgets_what_the_old_one_found() {
-        let route = AtomicU64::new(0);
-        let health = Arc::new(Mutex::new(HealthState::default()));
-        let first = start_route(&route, &health);
-        record_health(&health, health_of(true));
-        assert!(health.lock().unwrap().last.is_some());
-
-        let second = start_route(&route, &health);
-        assert!(second > first, "routes only ever count up");
-        assert_eq!(route.load(Ordering::SeqCst), second);
-        assert!(
-            health.lock().unwrap().last.is_none(),
-            "the card must not show the old place's exit after a switch"
-        );
-    }
-
-    fn health_of(ok: bool) -> Health {
-        Health {
-            ok,
-            latency_ms: None,
-            exit_ip: None,
-            country_code: None,
-            country: None,
-            city: None,
-            asn_org: None,
-            datacenter: None,
-            timezone: None,
-            latitude: None,
-            longitude: None,
-            error: None,
-            checked_at_ms: 1,
-            failures_in_a_row: 0,
-            target: "hproxy.com".into(),
-            reflects_exit: true,
-        }
-    }
+    use hproxy_relay::SourceKind;
 
     /// A library with one saved proxy and one group, the group's lines as
     /// given (a group moved in from the window's storage may hold anything).
@@ -1218,10 +994,10 @@ mod tests {
             &["198.51.100.1:8080:u:p", "", "not a proxy", "198.51.100.2:8080"],
             Rule::EveryConnection,
         );
-        let (source, exit, notice) = build_source(&places, &Place::Group { id: group }).await.unwrap();
-        assert_eq!(source.size(), Some(2));
-        assert!(exit.is_none());
-        let notice = notice.expect("a skipped line is worth a notice");
+        let built = build_source(&places, &Place::Group { id: group }).await.unwrap();
+        assert_eq!(built.source.size(), Some(2));
+        assert!(built.exit_label.is_none());
+        let notice = built.notice.expect("a skipped line is worth a notice");
         assert!(notice.starts_with("1 of the lines"), "{notice}");
         assert!(notice.contains("line 3"), "{notice}");
         assert!(!notice.contains("not a proxy"), "never the line itself: {notice}");
@@ -1242,7 +1018,7 @@ mod tests {
             ],
             Rule::OnFailure,
         );
-        let (source, _, _) = build_source(&places, &Place::Group { id: group }).await.unwrap();
+        let source = build_source(&places, &Place::Group { id: group }).await.unwrap().source;
         assert_eq!(source.size(), Some(2));
         assert_eq!(source.line_in_use(), Some(0));
         assert!(source.go_to_line(3).unwrap().contains("198.51.100.4"));
@@ -1264,10 +1040,14 @@ mod tests {
     #[tokio::test]
     async fn a_saved_proxy_builds_a_fixed_source_from_the_library() {
         let (places, proxy, _) = places_with("user:pass@198.51.100.1:3128", &["198.51.100.2:8080"], Rule::OnFailure);
-        let (source, _, notice) = build_source(&places, &Place::Proxy { id: proxy }).await.unwrap();
-        assert_eq!(source.kind(), SourceKind::Fixed);
-        assert!(notice.is_none());
-        assert!(!source.in_use_now().contains("pass"), "{}", source.in_use_now());
+        let built = build_source(&places, &Place::Proxy { id: proxy }).await.unwrap();
+        assert_eq!(built.source.kind(), SourceKind::Fixed);
+        assert!(built.notice.is_none());
+        assert!(
+            !built.source.in_use_now().contains("pass"),
+            "{}",
+            built.source.in_use_now()
+        );
     }
 
     #[tokio::test]
@@ -1313,20 +1093,5 @@ mod tests {
             }
             _ => panic!("a picked free exit read as another kind of place"),
         }
-    }
-
-    #[test]
-    fn a_probe_becomes_the_verdict_on_a_saved_proxys_row() {
-        let mut h = health_of(true);
-        h.latency_ms = Some(140);
-        h.exit_ip = Some("203.0.113.9".into());
-        h.country_code = Some("DE".into());
-        h.country = Some("Germany".into());
-        h.city = Some("Berlin".into());
-        let v = verdict_of_health(&h);
-        assert!(v.ok);
-        assert_eq!(v.cc.as_deref(), Some("de"));
-        assert_eq!(v.place.as_deref(), Some("Berlin, Germany"));
-        assert_eq!(v.at, h.checked_at_ms);
     }
 }

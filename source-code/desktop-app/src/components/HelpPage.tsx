@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
-import { HELLO, STARTERS, supportChat, supportWords, type Msg } from "../lib/supportChat";
+import { HELLO, STARTERS, bareStarter, supportChat, supportWords, type Msg } from "../lib/supportChat";
 import HLetter from "./HLetter";
 import { Icon, cx } from "./ui";
 
@@ -38,6 +38,8 @@ export default function HelpPage({ active }: { active: boolean }) {
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+    // A bar only once the text is longer than the box.
+    el.style.overflowY = el.scrollHeight > 132 ? "auto" : "hidden";
   }, [draft]);
 
   const send = () => {
@@ -96,7 +98,7 @@ export default function HelpPage({ active }: { active: boolean }) {
           aria-label="Write a message to HProxy support"
           className="ux-help-box"
         />
-        <button type="button" className={cx("ux-help-send", draft.trim() && "is-ready")} onClick={send} aria-label="Send" title="Send (Enter)">
+        <button type="button" className={cx("ux-help-send", draft.trim() && !bareStarter(draft) && "is-ready")} onClick={send} aria-label="Send" title="Send (Enter)">
           <Icon.send />
         </button>
       </div>

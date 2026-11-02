@@ -69,18 +69,17 @@ try {
   await js(`chrome.storage.local.clear().then(() => true)`);
   await navigate(cdp, s, POPUP);
   await sleep(1500);
-  check(await shown("usageAsk"), "a new copy asks", null);
-  check(!(await shown("usageLink")), "and has no switch in the footer before an answer", null);
+  check(!(await js(`!!document.getElementById("usageAsk")`)), "a new copy asks nothing", null);
+  check((await js(`document.getElementById("usageOn").checked`)) === false, "Settings says off", null);
   check((await book()) === null, "and has counted and written nothing", await book());
 
   // 2. Yes.
-  await js(`document.getElementById("usageYes").click(); true`);
+  await js(`document.getElementById("usageOn").click(); true`);
   await sleep(800);
   let b = await book();
   check(b?.answer === "yes" && /^[0-9a-f]{32}$/.test(b?.copy || ""), "a yes makes the copy's random number", b);
   check((b?.days?.[day(0)]?.opened ?? 0) >= 1, "and counts this opening", b?.days);
-  check(!(await shown("usageAsk")), "the question goes", null);
-  check((await js(`document.getElementById("usageLink").textContent`)) === "Usage counts: on", "the footer says on", await js(`document.getElementById("usageLink").textContent`));
+  check((await js(`document.getElementById("usageOn").checked`)) === true, "Settings says on", null);
   check(posted.length === 0, "nothing is sent for a day that is not over", posted);
 
   // 3. A finished day goes, once.
@@ -125,10 +124,10 @@ try {
   await navigate(cdp, s, POPUP);
   await sleep(2000);
   check(posted.length === 1, "an opening later sends nothing twice", posted.length);
-  await js(`document.getElementById("usageLink").click(); true`);
+  await js(`document.getElementById("settingsBtn").click(); true`);
   await sleep(300);
   const last = await js(`document.getElementById("usageLast").textContent`);
-  check(last.includes(`"day": "${yesterday}"`) && (await shown("usagePanel")), "the footer's panel shows the report as it went", last);
+  check(last.includes(`"day": "${yesterday}"`) && (await shown("usageLast")), "Settings shows the report as it went", last);
 
   // 4. Off.
   await js(`(() => { const box = document.getElementById("usageOn"); box.click(); return true; })()`);
@@ -139,8 +138,7 @@ try {
   await navigate(cdp, s, POPUP);
   await sleep(2000);
   check(posted.length === 1, "and nothing is sent after a no", posted.length);
-  check(!(await shown("usageAsk")), "the question does not come back", null);
-  check((await js(`document.getElementById("usageLink").textContent`)) === "Usage counts: off", "the footer says off", null);
+  check((await js(`document.getElementById("usageOn").checked`)) === false, "Settings says off", null);
 } finally {
   await close();
 }

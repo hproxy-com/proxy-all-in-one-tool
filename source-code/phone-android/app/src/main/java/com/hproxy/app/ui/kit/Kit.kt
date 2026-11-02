@@ -13,8 +13,10 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,10 +60,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -69,8 +79,10 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -102,7 +114,28 @@ fun Modifier.pressable(onClick: () -> Unit, scale: Float = 0.975f, enabled: Bool
             scaleX = k
             scaleY = k
         }
+        .focusLine(source)
         .clickable(interactionSource = source, indication = null, enabled = enabled, onClick = onClick)
+}
+
+/** A TV remote or a keyboard moves a focus, which a finger never does: what has it wears a white
+ *  line, seen on any surface of the app. Under a finger nothing ever has it, so nothing shows. */
+@Composable
+fun Modifier.focusLine(source: MutableInteractionSource): Modifier {
+    val focused by source.collectIsFocusedAsState()
+    return drawWithContent {
+        drawContent()
+        if (focused) {
+            val line = 2.dp.toPx()
+            drawRoundRect(
+                Color.White,
+                topLeft = Offset(line / 2, line / 2),
+                size = Size(size.width - line, size.height - line),
+                cornerRadius = CornerRadius(12.dp.toPx()),
+                style = Stroke(line),
+            )
+        }
+    }
 }
 
 @Composable
@@ -265,12 +298,14 @@ fun SettingRow(
     onClick: (() -> Unit)? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
+    val source = remember { MutableInteractionSource() }
     Column {
         Row(
             modifier
                 .fillMaxWidth()
                 .height(60.dp)
-                .let { if (onClick != null) it.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick) else it }
+                .focusLine(source)
+                .let { if (onClick != null) it.clickable(interactionSource = source, indication = null, onClick = onClick) else it }
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -342,6 +377,7 @@ private fun RollDigit(target: Int, index: Int, lineH: Dp, style: TextStyle, colo
  * keep), the sheet glides up, a swipe down or Back closes it. `heightFraction` null: as tall as
  * what it holds, up to nearly the whole screen.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun Sheet(open: Boolean, onClose: () -> Unit, heightFraction: Float? = 0.78f, content: @Composable ColumnScope.() -> Unit) {
     BackHandler(open, onClose)
@@ -352,6 +388,7 @@ fun Sheet(open: Boolean, onClose: () -> Unit, heightFraction: Float? = 0.78f, co
                 Modifier
                     .fillMaxSize()
                     .background(Color(0x99000000))
+                    .focusProperties { canFocus = false }
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClose),
             )
         }
@@ -364,6 +401,13 @@ fun Sheet(open: Boolean, onClose: () -> Unit, heightFraction: Float? = 0.78f, co
         ) {
             var drag by remember { mutableFloatStateOf(0f) }
             val dragDp = with(LocalDensity.current) { drag.toDp() }
+            // A remote's focus starts inside an open sheet and stays there until it closes. A
+            // finger has no focus, and a box to type in only opens its keyboard when it is pressed.
+            val focus = remember { FocusRequester() }
+            val input = LocalInputModeManager.current
+            LaunchedEffect(Unit) {
+                if (input.inputMode == InputMode.Keyboard) runCatching { focus.requestFocus() }
+            }
             Column(
                 Modifier
                     .widthIn(max = AppWidth)
@@ -373,6 +417,10 @@ fun Sheet(open: Boolean, onClose: () -> Unit, heightFraction: Float? = 0.78f, co
                     .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
                     .background(C.s1)
                     .border(1.dp, C.line, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                    .focusRequester(focus)
+                    .focusProperties { exit = { FocusRequester.Cancel } }
+                    .focusGroup()
+                    .focusProperties { canFocus = false }
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                     // Above the keyboard while one is open (a sheet with a box to type in).
                     .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime)),

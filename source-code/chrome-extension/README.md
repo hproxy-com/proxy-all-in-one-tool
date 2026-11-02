@@ -1,14 +1,25 @@
 # HProxy: Proxy Connector and Checker (Chrome extension)
 
 A Manifest V3 browser extension, and a proxy connector first (2026-10-12): it
-connects your own proxies, and the free exits are the extra. Its popup: on
-top the power button, the one control, as a VPN app has it (a blue arc runs
-round it while it connects; on, blue floods the whole top from the button
-out and one ring travels out from it), with the state in words and where
-you appear under it; while connected, the checks of that connection as one line that
-opens; then two places to connect to, each a list of rows you connect with
-one click. (Until 1.0.3 a large card stood on top: the desktop app's
-Connect card with the route through the H, the H itself a button.)
+connects your own proxies, and the free exits are the extra. Its popup is the
+computer app's Connect page made small (1.0.6), dark by default as the app is,
+white in Settings: the dot map with the H switch on it, the state in words over
+the switch and where you appear under it. On, blue floods the top from where
+the knob lands and the camera flies to the country; a proxy that stopped turns
+it solid red. That stays on top while the rest scrolls under it: the checks of
+a connection as one line that opens, then two places to connect to, each a list
+of rows you connect with one click. Settings is a page of its own behind the
+gear: the kill switch, the look, the usage counts.
+
+**The kill switch** (on by default, in Settings): when a proxy stops answering,
+pages wait for it, so nothing goes out on your own address. Off, Chrome goes
+back to your own address until the proxy answers again. Either way the top
+turns red and names what went wrong: Timed out, Connection refused, Login
+refused and so on, the words every app of ours uses.
+
+**Sites and moving on** (in Settings): which sites use the proxy (all, all except
+some, only some), and whether a proxy that stops moves to the next saved one that
+works. The connection's own test always goes through the proxy.
 
 1. **My proxies**: paste any proxy line (every shape the desktop app reads,
    login included), and it is tested **in this browser** (only the test goes
@@ -49,7 +60,7 @@ Two connection modes inside the worker:
   certificate. Exits that fail are skipped for 30 minutes. When a connected
   exit throws proxy or certificate errors, the worker first probes it (one
   blocked site is not a dead exit), then searches again; after 3 searches in a
-  row that find nothing it stops and the badge turns amber.
+  row that find nothing it stops and the badge turns red.
 - `pin` — a fixed proxy (a saved BYO proxy or a generated paid line), probed
   once after connecting so the popup can say whether anything answers. Never
   moved automatically. Authenticated proxies answer the 407 challenge from
@@ -89,9 +100,14 @@ kills exits to force failover, and runs two small proxies of its own on
 |------|---------|
 | `manifest.json` | MV3 manifest, permissions, action/popup wiring |
 | `background.js` | Service worker: session, proxy plumbing, failover, auth |
-| `popup.html/css/js` | Popup UI (light only; the site's white Electric theme) |
+| `popup.html/css/js` | Popup UI, the computer app's Connect page made small; dark by default, white in Settings |
+| `theme.js` | Puts the white look on before anything paints |
+| `world.js` | **GENERATED.** The dot map, from the computer app's data. Never edit |
+| `failure.js` | Why a proxy failed, by its name, from Chrome's error codes (the worker and the popup) |
+| `sites.js` | Which sites use the proxy: Chrome's bypass list, or a small script for "only these" |
 | `tokens.css` | **GENERATED.** Every colour, copied from the website. Never edit |
-| `scripts/sync-tokens.mjs` | Writes `tokens.css` from the website's `app/globals.css` |
+| `scripts/sync-tokens.mjs` | Writes `tokens.css` from the website's `app/globals.css` and the computer app's styles |
+| `scripts/sync-world.mjs` | Writes `world.js`, the dot map, from the computer app's `worldDots.ts` |
 | `scripts/verify-design.mjs` | Fails the build on any off-system colour, dead token, off-ruler size or see-through fill |
 | `flags/` | 271 country flags: the SVGs (flag-icons 7.5.0, MIT, `flags/LICENSE`) are the source, the 66x48 PNGs are what ships (259 KB instead of 2.0 MB) |
 | `scripts/rasterize-flags.mjs` | Draws `flags/*.png` from `flags/*.svg`; `--check` fails the build on a stale PNG |
@@ -202,32 +218,41 @@ website's design rules:
   ×, a country its star); the one in use has the H's crossbar on its left and
   says Connected in green. Amber is the warning colour (a login refused, no
   answer yet), green and red status only, never a surface.
-- **Light only, on purpose** (decided 2026-07-23). The popup is always the white
-  Electric theme regardless of the OS scheme. `color-scheme: light` on `:root`
-  plus the `<meta name="color-scheme" content="light">` tag stop a dark-OS
-  browser from dark-ifying the inputs and scrollbar. No `prefers-color-scheme`
-  block exists; do not re-add one.
+- **Two looks, chosen by hand.** Dark, the computer app's Graphite, is the
+  default and stands in the markup (`data-theme="midnight"`); white is the
+  website's Electric theme, chosen in Settings. `theme.js` applies a white
+  choice from localStorage before anything paints: chrome.storage answers too
+  late, and the popup would open dark and turn white. The look never follows
+  the system's: no `prefers-color-scheme` block exists; do not add one.
 - **The type ruler.** Sizes come from the ruler (10, 11, 12, 13, 13.5 and
   15 px; `verify-design.mjs` holds the list). Inter only, the computer app's
   font (`fonts/Inter-Variable-latin.woff2`; DM Sans until 1.0.3). The address
   you appear on is plain text with kerning off: when it changes its digits
   roll over and land exactly where the plain text puts them, then it is plain
   text again (`motion.js` rollDigits, the app's Roll.tsx).
-- **Grammars borrowed from the computer app.** The tabs are words on a
-  hairline with the H's crossbar under the current one, sliding to the next;
-  inputs and buttons have the H's corners. No emoji, no icon tiles: an icon
-  stands alone.
-- **The power button's moves are all CSS** (`popup.css`, "THE POWER
-  BUTTON"), driven by `data-phase` and `data-failing` on `#conn`, which
-  `popup.js` sets. The blue is solid at every moment, uncovered by a circle
-  growing out of the button (and the button's mark turns blue under a
-  circle of its own, never faded); only the travelling ring, a line, fades.
-  The moves are recorded with `scripts/power-video.mjs`.
+- **Grammars borrowed from the computer app.** The tabs are its menu, the
+  current one solid blue, sliding to the next; inputs and buttons have the H's
+  corners. No emoji, no icon tiles: an icon stands alone.
+- **The top stays, the list scrolls** (`.page`, `.scroller`). The switch is
+  always in view, the blue reaches the popup's edge, and the popup still sizes
+  itself to its content, up to Chrome's 600 px.
+- **The switch's moves are all CSS** (`popup.css`, "THE TOP"), driven by
+  `data-phase` and `data-failing` on `#conn`, which `popup.js` sets. The flood
+  is solid at every moment, uncovered by a circle growing out of where the
+  knob lands, and carries its own copy of the map, so the dots change colour
+  exactly where it reaches them; only the pin's ring, a line, fades. The moves
+  are recorded with `scripts/switch-video.mjs`.
+- **The map** is one path of dots for the land and one for the country lit
+  (`popup.js`, "the map"), used under the flood and on it, three times side by
+  side so the camera never reaches an edge. A camera moves it (`--cam`).
+  Many countries fall between the cells of a map this coarse (the Netherlands,
+  Singapore, Hong Kong): those are one dot, where they are.
 
 Every state of the popup, drawn in Chrome for Testing (never the browser in
 use): `node scripts/popup-states.mjs <folder>` (not connected, a hover, your
 own proxy connected with its checks open, Free, a login refused, a proxy that
-does not answer, a first-time user; `--free` adds a live free exit). The store's
+does not answer, a first-time user, Settings; `--free` adds a live free exit,
+`--white` draws the white look). The store's
 three pictures: `node scripts/store-shots.mjs <folder>`. Both swap every
 address on screen for an example one.
 
@@ -274,11 +299,14 @@ opens a 404 page.
 
 - [x] One home with the rest of HProxy's software
 - [x] Light-only popup, locked to the site's white Electric theme (v0.3.1)
+- [x] The computer app's look, dark by default, white in Settings (1.0.6)
+- [x] Kill switch (1.0.6)
 - [x] Drop the Origin-rewrite bandaid (backend went CORS-open; removed in v0.2.1)
 - [ ] Website → extension bridge: one-click Connect from the free-proxy-list pages
 - [ ] CORS on `/api/v1/*` for extension origins ("My proxies" is blocked on this)
 - [ ] Account login (OAuth) so "My proxies" uses the session instead of an API key
-- [ ] Per-site / per-tab proxy rules, kill switch, WebRTC leak-protection toggle
+- [x] Per-site rules, moving to the next proxy by itself (1.0.6)
+- [ ] Per-tab proxy rules, WebRTC leak-protection toggle
 
 ## Marketing
 

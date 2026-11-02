@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use hproxy_places::reminders::{due, Said};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_notification::NotificationExt;
 
 use crate::places::PlacesState;
 
@@ -41,7 +40,7 @@ fn run(app: &AppHandle) {
         return;
     }
     for n in &notices {
-        match app.notification().builder().title(&n.title).body(&n.body).show() {
+        match crate::notify::show(app, &n.title, &[&n.body], crate::notify::Look::Reminder) {
             Ok(()) => {
                 log::info!("reminder: {}", n.body);
                 said.note(&n.key, &today);

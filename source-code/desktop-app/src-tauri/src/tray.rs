@@ -7,6 +7,9 @@
 //! place or disconnects, and quits; its tooltip says what the relay is doing.
 //! The relay itself tells the icon when it starts and stops
 //! (`relay_changed`), so the icon is right whichever way the change was made.
+//! The icon's colour says how things stand: grey not connected, blue connected,
+//! red a proxy that stopped answering (`trouble`), and with the window away a
+//! notification says so too (`tell`).
 //!
 //! "Connect" goes to the place the person picked last and "Disconnect" ends the
 //! connection, both here: the places live in the library (places.rs), not in
@@ -101,6 +104,24 @@ fn menu(
     Ok((menu, toggle))
 }
 
+/// How the icon by the clock looks (scripts/tray-icons.mjs draws them).
+#[cfg(desktop)]
+#[derive(Clone, Copy)]
+enum Look {
+    Off,
+    On,
+    Stopped,
+}
+
+#[cfg(desktop)]
+fn image_of(look: Look) -> tauri::image::Image<'static> {
+    match look {
+        Look::Off => tauri::include_image!("icons/tray-off.png"),
+        Look::On => tauri::include_image!("icons/tray-on.png"),
+        Look::Stopped => tauri::include_image!("icons/tray-stopped.png"),
+    }
+}
+
 /// Build the icon and its menu. Desktop only; called once from `setup`.
 #[cfg(desktop)]
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
@@ -133,9 +154,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 show_main(tray.app_handle());
             }
         });
-    if let Some(image) = app.default_window_icon() {
-        icon = icon.icon(image.clone());
-    }
+    icon = icon.icon(image_of(Look::Off));
     icon.build(app)?;
 
     if let Some(state) = app.try_state::<TrayState>() {
@@ -167,6 +186,13 @@ fn toggle_connection(app: &AppHandle) {
     });
 }
 
+/// Back to the own address, from outside the window (a notification's Disconnect).
+#[cfg(desktop)]
+pub fn disconnect(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move { crate::connect::stop_from_outside(&app).await });
+}
+
 /// One of Quick connect's places, by its place in the menu.
 #[cfg(desktop)]
 fn connect_to_listed(app: &AppHandle, i: usize) {
@@ -179,7 +205,7 @@ fn connect_to_listed(app: &AppHandle, i: usize) {
     let Some(place) = place else { return };
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = crate::connect::counted_start(&app, place, None, true, None, None).await {
+        if let Err(e) = crate::connect::start_from_outside(&app, place).await {
             log::warn!("the tray could not connect: {e}");
             show_main(&app);
         }
@@ -215,8 +241,49 @@ pub fn relay_changed(app: &AppHandle, connected: bool, through: Option<&str>) {
             (false, _) => "HProxy: not connected".to_string(),
         };
         let _ = tray.set_tooltip(Some(tip));
+        let _ = tray.set_icon(Some(image_of(if connected { Look::On } else { Look::Off })));
     }
     let _ = app.emit("relay-changed", connected);
+}
+
+/// The proxy stopped answering, or came back: the icon follows.
+pub fn trouble(app: &AppHandle, stopped: bool) {
+    #[cfg(desktop)]
+    if let Some(tray) = app.tray_by_id("main") {
+        let connected = app
+            .try_state::<TrayState>()
+            .is_some_and(|s| s.connected.load(Ordering::SeqCst));
+        let look = match (stopped, connected) {
+            (true, _) => Look::Stopped,
+            (false, true) => Look::On,
+            (false, false) => Look::Off,
+        };
+        let _ = tray.set_icon(Some(image_of(look)));
+        if stopped {
+            let _ = tray.set_tooltip(Some("HProxy: your proxy stopped answering"));
+        }
+    }
+    #[cfg(not(desktop))]
+    let _ = (app, stopped);
+}
+
+/// Say something in the computer's own notifications, unless the window is in
+/// front and shows it anyway.
+pub fn tell(app: &AppHandle, title: &str, lines: &[&str], look: crate::notify::Look) {
+    #[cfg(desktop)]
+    {
+        let in_front = app
+            .get_webview_window("main")
+            .is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false));
+        if in_front {
+            return;
+        }
+        if let Err(e) = crate::notify::show(app, title, lines, look) {
+            log::warn!("a notification could not be shown: {e}");
+        }
+    }
+    #[cfg(not(desktop))]
+    let _ = (app, title, lines, look);
 }
 
 /// The places changed (one saved, removed, renamed, used): Quick connect in

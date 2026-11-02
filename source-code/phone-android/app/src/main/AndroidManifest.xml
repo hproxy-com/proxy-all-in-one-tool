@@ -14,12 +14,21 @@
     <!-- "Connect on startup". -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Phones, tablets, Chromebooks, Android TV and Fire TV from one app: nothing needs a
+         touchscreen, and a TV gets its own launcher entry and banner below. -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
     <!-- Which apps (the firewall) lists the apps a person opens from the launcher, never every
          package on the phone. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
         </intent>
     </queries>
 
@@ -28,6 +37,7 @@
     <application
         android:name=".HProxyApp"
         android:allowBackup="false"
+        android:banner="@drawable/tv_banner"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -47,6 +57,7 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
             <!-- Proxies shared from another app (the dashboard in the browser, a chat) land in
                  Add proxies, read and ready to add. -->

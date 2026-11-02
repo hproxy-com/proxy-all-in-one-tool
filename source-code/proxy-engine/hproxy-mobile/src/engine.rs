@@ -10,6 +10,7 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
@@ -54,6 +55,17 @@ pub struct Engine {
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
 
+/// This process only reads the library. On iOS the app and its tunnel are two
+/// processes on one folder: the app owns the file, and the tunnel reads it fresh
+/// at every connect. Two writers would lose a proxy added while connected.
+static READS_ONLY: AtomicBool = AtomicBool::new(false);
+
+/// `init`, for the process that only reads the library (`READS_ONLY`).
+pub fn init_reading(data: &Path) -> Result<&'static Engine, String> {
+    READS_ONLY.store(true, Ordering::SeqCst);
+    init(data, 0)
+}
+
 /// The engine, once `init` ran.
 pub fn engine() -> Result<&'static Engine, String> {
     ENGINE.get().ok_or_else(|| "the engine was not started".to_string())
@@ -86,6 +98,15 @@ pub fn init(data: &Path, sdk: i32) -> Result<&'static Engine, String> {
                 Change::Up => events.emit("connection", json!({ "up": true })),
                 Change::Down => events.emit("connection", json!({ "up": false })),
                 Change::Health(h) => events.emit("health", h),
+                // A place that failed its first test says so on its row.
+                Change::DidNotWork { place, health } => {
+                    if let (Place::Proxy { id }, Ok(e)) = (place, engine()) {
+                        let _ = e.change(|lib| {
+                            lib.set_verdict(&id, health.verdict());
+                            Ok(())
+                        });
+                    }
+                }
                 // A Connect worked, or why not: the usage counts (after a yes).
                 Change::Outcome { ok, why } => {
                     if let Ok(e) = engine() {
@@ -177,6 +198,15 @@ struct ConnectArgs {
     place: Place,
     #[serde(default)]
     member: Option<usize>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RoutingArgs {
+    mode: String,
+    sites: String,
+    #[serde(default)]
+    first_hop: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -354,6 +384,28 @@ impl Engine {
                 self.rt.block_on(self.connection.stop());
                 to(self.connection.status())
             }
+            "routing" => {
+                let a: RoutingArgs = from(args)?;
+                self.read_fresh();
+                let routing =
+                    hproxy_connection::routing_of(&locked(&self.lib), &a.mode, &a.sites, a.first_hop.as_deref())?;
+                self.connection.set_routing(routing);
+                Ok(Value::Null)
+            }
+            // The app's side of a connect the tunnel process made (iOS): the place was used.
+            "used" => {
+                let place: Place = from(args.get("place").cloned().unwrap_or(Value::Null))?;
+                let now = hproxy_connection::now_ms();
+                self.change(|lib| {
+                    match &place {
+                        Place::Proxy { id } => lib.proxy_used(id, now),
+                        Place::Group { id } => lib.group_used(id, now),
+                        Place::Free { .. } => {}
+                    }
+                    lib.pick(Some(place.clone()))
+                })?;
+                Ok(self.library())
+            }
             "status" => to(self.connection.status()),
             "testNow" => to(self.rt.block_on(self.connection.test_now())?),
             "dnsLeak" => {
@@ -488,7 +540,9 @@ impl Engine {
     fn change<T>(&self, f: impl FnOnce(&mut Library) -> Result<T, String>) -> Result<T, String> {
         let mut lib = locked(&self.lib);
         let out = f(&mut lib)?;
-        places::save(&self.places_dir, &lib)?;
+        if !READS_ONLY.load(Ordering::SeqCst) {
+            places::save(&self.places_dir, &lib)?;
+        }
         Ok(out)
     }
 
@@ -586,21 +640,24 @@ impl Engine {
         sent
     }
 
+    /// The library as the app last wrote it, in the process that only reads it.
+    fn read_fresh(&self) {
+        if READS_ONLY.load(Ordering::SeqCst) {
+            *locked(&self.lib) = places::open(&self.places_dir).0;
+        }
+    }
+
     async fn connect(&'static self, a: ConnectArgs) -> Result<Value, String> {
+        self.read_fresh();
         self.count_place(&a.place);
-        let started = async {
-            let built =
-                hproxy_connection::source::build(|p| hproxy_connection::source_of(&locked(&self.lib), p), &a.place)
-                    .await?;
-            let any: SocketAddr = ([127, 0, 0, 1], 0).into();
-            self.connection.start(a.place.clone(), built, any, a.member).await
-        }
-        .await;
-        // No free exit, a port taken: a Connect that failed before any probe could say so.
-        if started.is_err() {
-            self.count(Event::ConnectFailed { reason: "other".into() });
-        }
-        let status = started?;
+        let built = hproxy_connection::source::build(|p| hproxy_connection::source_of(&locked(&self.lib), p), &a.place)
+            .await
+            .inspect_err(|_| {
+                // No free exit: a Connect that failed before the connection could say how it went.
+                self.count(Event::ConnectFailed { reason: "other".into() });
+            })?;
+        let any: SocketAddr = ([127, 0, 0, 1], 0).into();
+        let status = self.connection.start(a.place.clone(), built, any, a.member).await?;
         let now = hproxy_connection::now_ms();
         let _ = self.change(|lib| {
             match &a.place {

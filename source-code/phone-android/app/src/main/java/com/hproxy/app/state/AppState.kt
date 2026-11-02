@@ -68,6 +68,8 @@ data class Failed(val ref: PlaceRef, val why: String, val member: Int? = null)
 @SuppressLint("StaticFieldLeak")
 object AppState {
     private const val TAG = "HProxy"
+    /** What the engine answers when a connect was called off (hproxy-connection, CALLED_OFF). */
+    private const val CALLED_OFF = "called off"
     lateinit var app: Context
         private set
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -98,6 +100,9 @@ object AppState {
     }.distinctUntilChanged().stateIn(scope, SharingStarted.Eagerly, Conn())
 
     val library: StateFlow<Library> = libraryFlow.asStateFlow()
+    private val libraryReadFlow = MutableStateFlow(false)
+    /** The library was read once since the app started. */
+    val libraryRead: StateFlow<Boolean> = libraryReadFlow.asStateFlow()
     val status: StateFlow<Status> = statusFlow.asStateFlow()
     val phase: StateFlow<Phase> = phaseFlow.asStateFlow()
     val health: StateFlow<Health?> = healthFlow.asStateFlow()
@@ -105,9 +110,13 @@ object AppState {
     val rates: StateFlow<Rates> = ratesFlow.asStateFlow()
     val net: StateFlow<Net> = netFlow.asStateFlow()
     val toasts: SharedFlow<String> = toastFlow.asSharedFlow()
-    /** The proxy stopped answering and "If it drops" says use your own: the phone is out of
-     *  the VPN until the proxy answers again. */
+    /** The proxy stopped answering and the kill switch is off: the phone is out of the VPN until
+     *  the proxy answers again. */
     val fallenBack: StateFlow<Boolean> = fallenBackFlow.asStateFlow()
+
+    private val routingProblemFlow = MutableStateFlow<String?>(null)
+    /** Why the sites or the first hop in Settings were refused. */
+    val routingProblem: StateFlow<String?> = routingProblemFlow.asStateFlow()
 
     /** The person wants the proxy on (the switch), whatever the proxy itself does. */
     @Volatile var wanted = false
@@ -123,6 +132,8 @@ object AppState {
         scope.launch { Engine.events.collect { onEvent(it) } }
         scope.launch {
             refreshLibrary()
+            libraryReadFlow.value = true
+            tellRouting()
             val s = statusNow()
             if (s.running) {
                 // The process came back while the engine was still connected (it never stops
@@ -239,11 +250,18 @@ object AppState {
                 wanted = false
                 phaseFlow.value = Phase.Off
                 statusFlow.value = Status.OFF
-                failedFlow.value = Failed(place, e.message ?: "It did not answer", member)
-                toast(e.message ?: "Could not connect")
+                // Called off (Disconnect, or a newer connect): nothing went wrong.
+                if (e.message != CALLED_OFF) {
+                    val why = said(e)
+                    failedFlow.value = Failed(place, why, member)
+                    toast(why)
+                }
             }
         }
     }
+
+    /** The engine's words, as a sentence. */
+    private fun said(e: EngineError): String = (e.message ?: "It did not answer").replaceFirstChar { it.uppercase() }
 
     private fun switchTo(place: PlaceRef, member: Int?) {
         connecting?.cancel()
@@ -259,8 +277,11 @@ object AppState {
                 withTimeoutOrNull(9000) { healthFlow.first { it != null } }
             } catch (e: EngineError) {
                 // The one connected before carries on; the one picked says it did not answer.
-                failedFlow.value = Failed(place, e.message ?: "It did not answer", member)
-                toast(e.message ?: "Could not switch")
+                if (e.message != CALLED_OFF) {
+                    val why = said(e)
+                    failedFlow.value = Failed(place, why, member)
+                    toast(why)
+                }
                 statusNow()
             }
             if (wanted) phaseFlow.value = Phase.On
@@ -358,6 +379,7 @@ object AppState {
                     Settings.rememberExit(place.key, Exit(h.latitude, h.longitude, h.city, h.countryCode))
                 }
                 followDrops(h)
+                moveOn(h)
                 com.hproxy.app.vpn.HProxyVpnService.running?.refresh()
             }
             "connection" -> {
@@ -374,9 +396,44 @@ object AppState {
         }
     }
 
-    /** "If it drops: use your own internet": out of the VPN after two probes in a row failed,
-     *  back in the moment one answers. "Block the internet" (the default) keeps the VPN: apps get
-     *  nothing until the proxy answers, never the phone's own address. */
+    /** Which sites use the proxy, or the proxy in front of it, changed (Settings): the engine follows. */
+    fun routingChanged() {
+        scope.launch { tellRouting() }
+    }
+
+    private suspend fun tellRouting() {
+        val p = Settings.prefs.value
+        routingProblemFlow.value = try {
+            Engine.call("routing", jsonOf("mode" to p.routeMode, "sites" to p.routeSites, "firstHop" to p.firstHop))
+            null
+        } catch (e: EngineError) {
+            said(e)
+        }
+    }
+
+    /** The proxies moved to since the last one answered: each gets its one try. */
+    private val movedTo = mutableSetOf<String>()
+
+    /** Settings, "If a proxy stops": on to the fastest other proxy of yours that answered. The one
+     *  in use is only given up once the next one passed its test (the switch tests first). */
+    private fun moveOn(h: Health) {
+        if (h.ok) {
+            movedTo.clear()
+            return
+        }
+        if (!wanted || !Settings.prefs.value.moveOn || h.failuresInARow < 2 || phaseFlow.value != Phase.On) return
+        val inUse = statusFlow.value.place?.key
+        val next = libraryFlow.value.proxies
+            .filter { it.last?.ok == true && it.id !in movedTo && PlaceRef.Proxy(it.id).key != inUse }
+            .minByOrNull { it.last?.latencyMs ?: Int.MAX_VALUE }
+            ?: return
+        movedTo += next.id
+        switchTo(PlaceRef.Proxy(next.id), null)
+    }
+
+    /** The kill switch off: out of the VPN after two probes in a row failed, back in the moment one
+     *  answers. On (the default) the VPN stays: apps get nothing until the proxy answers, never
+     *  the phone's own address. */
     private fun followDrops(h: Health) {
         if (!wanted || Settings.prefs.value.blockWhenDown) {
             if (fallenBackFlow.value) {

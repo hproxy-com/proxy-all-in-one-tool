@@ -1,5 +1,20 @@
 package com.hproxy.app.state
 
+/** An error in the engine's words, "timed out: no answer from hproxy.com": its name, shown large, and
+ *  what it means. Words without a name stay whole. */
+data class ErrorWords(val name: String, val detail: String) {
+    companion object {
+        fun of(words: String): ErrorWords {
+            val at = words.indexOf(": ")
+            return if (at < 0) {
+                ErrorWords("", words.replaceFirstChar { it.uppercase() })
+            } else {
+                ErrorWords(words.substring(0, at).replaceFirstChar { it.uppercase() }, words.substring(at + 2).replaceFirstChar { it.uppercase() })
+            }
+        }
+    }
+}
+
 /**
  * The connection as a list row reads it: what is being connected or switched to, what is in use
  * since when, whether it stopped answering, and the proxy that just did not answer. It changes only
@@ -33,7 +48,7 @@ data class Conn(
         }
         val f = failed
         if (phase !is Phase.Connecting && phase !is Phase.Switching && f != null && f.ref.key == key && same(f.member)) {
-            return RowState.Bad("Didn't answer")
+            return RowState.Bad(ErrorWords.of(f.why).name.ifEmpty { "Didn't answer" })
         }
         return RowState.Idle
     }

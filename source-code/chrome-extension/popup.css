@@ -1,32 +1,35 @@
-/* The HProxy popup, a proxy connector (2026-10-12): your own proxies first,
-   the free exits the extra; on top the power button, as a VPN app has it,
-   instead of the large card, and the checks of a connection as one line
-   that opens. The computer app's
+/* The HProxy popup: the computer app's Connect page made small (1.0.6, until
+   then a white page with a round power button). The dot map with the H switch
+   on it, dark by default as the app is; your own proxies first, the free exits
+   the extra, the checks of a connection as one line that opens. The app's
    look: Inter, words and hairlines instead of cards, one solid blue for what
    is chosen or on, the H's corners on what you press.
 
    Nothing see-through (the house rule since 2026-09-26, checked by
-   scripts/verify-design.mjs): a box is white with a hairline, what is on is
-   solid blue. Hover shows a hairline or changes the words' colour, never a
-   wash.
+   scripts/verify-design.mjs): a box is solid with a hairline, what is on is
+   solid blue, what stopped is solid red. Hover shows a hairline or changes the
+   words' colour, never a wash.
 
    ⛔ THIS FILE DECLARES NO COLOURS OF ITS OWN. Every colour comes from
-   tokens.css, which is GENERATED from the website's app/globals.css by
-   scripts/sync-tokens.mjs and regenerated on every build. No hex literals
-   (white is the one exception) and no hand-typed rgba() triples: shadows and
-   lines use rgba(var(--digi-night-rgb), 0.4) and friends; a fill never does.
+   tokens.css, which is GENERATED from the website's app/globals.css and the
+   computer app's styles by scripts/sync-tokens.mjs and regenerated on every
+   build. No hex literals (white is the one exception) and no hand-typed rgba()
+   triples: shadows and lines use rgba(var(--ink-rgb), 0.08) and friends; a
+   fill never does.
 
-   Light only, on purpose (decided 2026-07-23): `color-scheme: light` lives in
-   tokens.css and stops the browser darkening inputs on a dark system.
+   Two looks: dark (the markup's data-theme, the default) and white, chosen in
+   Settings (theme.js sets it before anything paints). `color-scheme` lives in
+   tokens.css: the look never follows the system's.
 
    The type ruler (scripts/verify-design.mjs): 10, 11, 12, 13, 13.5 and 15 px.
    Anything else says why on its own line (`ruler-exempt:`). */
 
 :root {
-  --divider: var(--hairline);
   --glide: cubic-bezier(0.2, 0.9, 0.1, 1);
   --spring: cubic-bezier(0.34, 1.45, 0.6, 1);
-  --pop-shadow: 0 1px 2px rgba(var(--ink-rgb), 0.05), 0 18px 36px -22px rgba(var(--digi-night-rgb), 0.45);
+  /* The width of the scrollbar's room: the list keeps it at its right, and
+     takes it off its padding, so its two margins stay equal. */
+  --gutter: 8px;
 }
 
 * {
@@ -41,16 +44,9 @@ html,
 body {
   margin: 0;
 }
-/* The popup is as wide as its page. Once the lists outgrow Chrome's 600 px
-   the page scrolls, and a scrollbar taken out of a fixed-width body pushed
-   the right edge off screen with a sideways scrollbar under it. So the
-   scrollbar's room is kept from the start and nothing scrolls sideways. */
 html {
   width: 384px;
-  overflow-x: hidden;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: var(--bar) transparent;
+  overflow: hidden;
 }
 /* Inter, as the computer app (2026-10-12): the variable font, latin. */
 @font-face {
@@ -69,77 +65,203 @@ button {
   font: inherit;
 }
 
+/* A page: the top stays, what is under it scrolls by itself. Until 1.0.6 the
+   whole page scrolled: the switch went out of view with the first swipe, and
+   the scrollbar's room left a white strip beside the blue. 600 px is as tall
+   as Chrome lets a popup be. */
+.page {
+  display: flex;
+  max-height: 600px;
+  flex-direction: column;
+}
+.scroller {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.scroller::-webkit-scrollbar,
+.sheet-list::-webkit-scrollbar,
+.usage-last::-webkit-scrollbar {
+  width: var(--gutter);
+  height: var(--gutter);
+}
+.scroller::-webkit-scrollbar-thumb,
+.sheet-list::-webkit-scrollbar-thumb,
+.usage-last::-webkit-scrollbar-thumb {
+  border: 2px solid var(--canvas);
+  border-radius: 4px 1px 4px 1px;
+  background: var(--bar);
+}
+
 /* ══════════════════════════════════════════════════════════════════════
-   THE POWER BUTTON (2026-10-12/13): the one control, as a VPN app has it.
-   The top carries data-phase (off, connecting, on, rotating) and
-   data-failing; popup.js sets them, and every move below follows from them.
+   THE TOP: the app's Connect page, 384 px wide. popup.js sets data-phase
+   (off, connecting, on, rotating) and data-failing on it, and every move
+   below follows from them.
 
-     off         white, and a white disc with the power mark in ink
-     connecting  a blue arc runs round the disc, the disc breathes
-     on          blue floods the whole top from the button out; the disc
-                 stays white, its mark turns blue where a growing circle
-                 reaches it, and one ring travels out from it like sonar
-     rotating    on, and finding a new exit: the arc runs round again
-     failing     on, but the exit stopped working: the same in amber
+     off         the world in dots, the knob on the left
+     connecting  the place you will appear in lit, the knob in the middle
+     on          blue floods the top from where the knob lands, the camera
+                 flies to the country, which the pin marks over the words
+     rotating    on, and finding a new exit: the knob back in the middle
+     failing     on, but the proxy stopped working: the same in solid red
 
-   Every fill is solid at every moment: the blue is uncovered by a growing
-   circle, never faded in. Only the travelling ring, a line, fades as it
-   goes. One travelling ring and no standing one: a standing ring around
-   the disc and two travelling ones read as too many circles (2026-10-13).
-   Until then a second look kept the top white and filled the disc blue.
+   Every fill is solid at every moment: the flood is uncovered by a growing
+   circle, never faded in, and it carries its own copy of the map, so the dots
+   change colour exactly where it reaches them. Only the pin's ring, a line,
+   fades as it goes.
    ══════════════════════════════════════════════════════════════════════ */
 
 .hero {
-  /* The button's middle, from the top: the flood starts there. */
-  --flood-y: 106.5px;
+  /* The middle of the knob where it lands: the flood starts there. */
+  --flood-x: 248px;
+  --flood-y: 120px;
+  --fill: var(--flood);
+  --fill-deep: var(--flood-deep);
+  --fill-words: var(--flood-words);
+  --fill-land: var(--map-flood-land);
+  --fill-lit: var(--map-flood-lit);
   position: relative;
   isolation: isolate;
   display: flex;
+  height: 230px;
+  flex: none;
   flex-direction: column;
   align-items: center;
   overflow: hidden;
-  padding: 14px 16px 16px;
   border-bottom: 1px solid var(--hairline);
   background: var(--canvas);
   transition: border-color 300ms ease;
 }
-/* The blue: drawn back into the button when off, quick at first. */
+.hero[data-failing] {
+  --fill: var(--stop);
+  --fill-deep: var(--stop-deep);
+  --fill-words: var(--stop-words);
+  --fill-land: var(--map-stop-land);
+  --fill-lit: var(--map-stop-lit);
+}
+.hero[data-phase="on"],
+.hero[data-phase="rotating"] {
+  border-bottom-color: var(--fill);
+}
+
+/* The map: dots of a world 384 px wide, a line of no length with round ends
+   each (popup.js, dots). A camera moves it: --cam, from popup.js. */
+.map {
+  --land: var(--map-land);
+  --lit: var(--map-lit);
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.hero-flood .map {
+  --land: var(--fill-land);
+  --lit: var(--fill-lit);
+  z-index: 0;
+}
+.map-cam {
+  transform: var(--cam);
+  transition: transform 1100ms var(--glide);
+}
+.map-land,
+.map-lit {
+  fill: none;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+}
+.map-land {
+  stroke: var(--land);
+}
+.map-lit {
+  stroke: var(--lit);
+  stroke-width: 2.4;
+}
+
+/* The blue: drawn back to the knob when off, quick at first. 285 px just
+   covers the top from there: a bigger circle spends its time out of sight. */
 .hero-flood {
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: var(--digi);
-  clip-path: circle(0px at 50% var(--flood-y));
+  background: var(--fill);
+  clip-path: circle(0px at var(--flood-x) var(--flood-y));
   transition:
     clip-path 420ms cubic-bezier(0.2, 0, 0.2, 1),
     background-color 300ms ease;
   pointer-events: none;
 }
-/* 250 px just covers the top from the button's middle (its far corner is
-   about 240 px away): a bigger circle spends its time out of sight. */
 .hero[data-phase="on"] .hero-flood,
 .hero[data-phase="rotating"] .hero-flood {
-  clip-path: circle(250px at 50% var(--flood-y));
+  clip-path: circle(285px at var(--flood-x) var(--flood-y));
   transition:
-    clip-path 720ms cubic-bezier(0.25, 0.7, 0.2, 1),
+    clip-path 760ms var(--glide),
     background-color 300ms ease;
 }
-.hero[data-failing] .hero-flood {
-  background: var(--warn);
+
+/* The pin: where the camera brings the country, over the words. */
+.map-pin {
+  position: absolute;
+  left: 192px;
+  top: 34px;
+  visibility: hidden;
+  pointer-events: none;
 }
-.hero[data-phase="on"],
-.hero[data-phase="rotating"] {
-  border-bottom-color: var(--digi);
+.map-pin::before {
+  content: "";
+  position: absolute;
+  left: -4.5px;
+  top: -4.5px;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: #fff;
+  rotate: 45deg;
 }
-.hero[data-failing] {
-  border-bottom-color: var(--warn);
+.map-pin::after {
+  content: "";
+  position: absolute;
+  left: -15px;
+  top: -15px;
+  width: 30px;
+  height: 30px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  animation: pin-ring 2200ms var(--glide) infinite;
+}
+/* A ring is a line: lines may fade, fills never. */
+@keyframes pin-ring {
+  from {
+    scale: 0.3;
+    opacity: 1;
+  }
+  to {
+    scale: 1.9;
+    opacity: 0;
+  }
+}
+.hero[data-placed][data-phase="on"] .map-pin {
+  visibility: visible;
+  transition: visibility 0s 640ms;
 }
 
-/* The words turn with the blue: once it has reached them, and once it has
-   left them. */
+/* The bar on top: the name, and the way to Settings. The words turn with the
+   blue: once it has reached them, and once it has left them. */
+.top {
+  display: flex;
+  height: 46px;
+  flex: none;
+  align-self: stretch;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 16px;
+}
 .brand {
   display: inline-flex;
-  align-self: flex-start;
   align-items: baseline;
   gap: 1px;
   font-size: 15px;
@@ -173,237 +295,161 @@ button {
 .hero[data-phase="rotating"] .brand svg {
   fill: #fff;
 }
-
-/* The button: the disc, the arc that runs round it while it connects, and
-   the travelling ring under the disc. */
-.power {
-  position: relative;
+/* A mark that is pressed: plain, no tile behind it. */
+.top-btn {
   display: grid;
-  width: 132px;
-  height: 132px;
-  margin: 4px 0 12px;
+  width: 32px;
+  height: 32px;
+  flex: none;
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 50%;
   cursor: pointer;
+  color: var(--ink-mute);
   background: transparent;
+  transition: color 160ms ease;
 }
-.power > * {
-  grid-area: 1 / 1;
-}
-.power:focus-visible {
-  outline: 2px solid var(--digi);
-  outline-offset: 4px;
-}
-.hero[data-phase="on"] .power:focus-visible,
-.hero[data-phase="rotating"] .power:focus-visible {
-  outline-color: #fff;
-}
-.power-ring {
-  width: 132px;
-  height: 132px;
-  overflow: visible;
-  rotate: -90deg;
-}
-.power-arc {
+.top-btn svg {
+  width: 18px;
+  height: 18px;
   fill: none;
-  stroke: var(--digi);
-  stroke-width: 2.5;
-  stroke-dasharray: 0 100;
-  transition:
-    stroke-dasharray 420ms var(--glide),
-    stroke 300ms ease;
-}
-.power-face {
-  position: relative;
-  display: grid;
-  width: 104px;
-  height: 104px;
-  place-items: center;
-  overflow: hidden;
-  border-radius: 50%;
-  background: var(--surface);
-  box-shadow:
-    inset 0 0 0 1px var(--bar),
-    0 12px 26px -14px rgba(var(--digi-night-rgb), 0.5);
-  transition:
-    scale 420ms var(--spring),
-    box-shadow 360ms ease;
-}
-.power-face > * {
-  grid-area: 1 / 1;
-}
-/* The fill carries its own blue mark: one circle uncovers it, so the mark is
-   blue exactly where that circle is, on the way in and on the way out (a
-   mark that changed colour by itself vanished for a moment on the way out). */
-.power-fill {
-  display: grid;
-  width: 100%;
-  height: 100%;
-  place-items: center;
-  background: var(--surface);
-  clip-path: circle(0% at 50% 50%);
-  transition: clip-path 420ms cubic-bezier(0.45, 0, 0.25, 1);
-}
-.power-glyph {
-  position: relative;
-  width: 38px;
-  height: 38px;
-  fill: none;
-  stroke: var(--ink);
-  stroke-width: 2.2;
+  stroke: currentColor;
+  stroke-width: 2;
   stroke-linecap: square;
-  transition: stroke 260ms ease;
 }
-.power-fill .power-glyph {
-  stroke: var(--digi);
+.top-btn:hover {
+  color: var(--ink);
 }
-.hero[data-failing] .power-fill .power-glyph {
-  stroke: var(--warn);
+.top-btn:focus-visible {
+  outline: 2px solid var(--digi);
+  outline-offset: -2px;
 }
-.power:hover .power-face {
-  scale: 1.03;
+.hero[data-phase="on"] .top-btn,
+.hero[data-phase="rotating"] .top-btn {
+  color: var(--fill-words);
 }
-.power:hover .power-face > .power-glyph {
-  stroke: var(--digi);
-}
-.power:active .power-face {
-  scale: 0.94;
-}
-.power-wave {
-  width: 104px;
-  height: 104px;
-  border: 2px solid #fff;
-  border-radius: 50%;
-  visibility: hidden;
-  pointer-events: none;
+.hero[data-phase="on"] .top-btn:hover,
+.hero[data-phase="rotating"] .top-btn:hover {
+  color: #fff;
 }
 
-/* Connecting: the arc runs round the disc, the disc breathes. */
-.hero[data-phase="connecting"] .power-arc,
-.hero[data-phase="rotating"] .power-arc {
-  stroke-dasharray: 24 76;
-}
-.hero[data-phase="rotating"] .power-arc {
-  stroke: #fff;
-}
-.hero[data-phase="connecting"] .power-ring,
-.hero[data-phase="rotating"] .power-ring {
-  animation: power-spin 1100ms linear infinite;
-}
-.hero[data-phase="connecting"] .power-face > .power-glyph {
-  stroke: var(--digi);
-}
-.hero[data-phase="connecting"] .power-face {
-  animation: power-breathe 1400ms ease-in-out infinite;
-}
-@keyframes power-spin {
-  from {
-    rotate: -90deg;
-  }
-  to {
-    rotate: 270deg;
-  }
-}
-@keyframes power-breathe {
-  50% {
-    scale: 0.95;
-  }
-}
-
-/* On: the blue mark uncovered from the middle out with a spring, the disc
-   lifted off the blue, one ring going out at a time. */
-.hero[data-phase="on"] .power-fill,
-.hero[data-phase="rotating"] .power-fill {
-  clip-path: circle(50% at 50% 50%);
-  transition: clip-path 620ms var(--spring);
-}
-.hero[data-phase="on"] .power-face,
-.hero[data-phase="rotating"] .power-face {
-  box-shadow:
-    inset 0 0 0 1px #fff,
-    0 18px 34px -14px rgba(var(--digi-night-rgb), 0.7);
-}
-.hero[data-failing] .power-face {
-  box-shadow:
-    inset 0 0 0 1px #fff,
-    0 18px 34px -14px rgba(var(--ink-rgb), 0.5);
-}
-.hero[data-phase="on"] .power-face {
-  animation: power-pop 700ms var(--spring);
-}
-@keyframes power-pop {
-  0% {
-    scale: 0.88;
-  }
-  100% {
-    scale: 1;
-  }
-}
-.hero[data-phase="on"]:not([data-failing]) .power-wave {
-  animation: power-wave 3000ms cubic-bezier(0.15, 0.6, 0.35, 1) infinite;
-}
-@keyframes power-wave {
-  0% {
-    visibility: visible;
-    scale: 1;
-    opacity: 1;
-    border-color: #fff;
-  }
-  100% {
-    visibility: visible;
-    scale: 1.8;
-    opacity: 0;
-    border-color: var(--digi-light);
-  }
-}
-
-/* The state in words, under the button. */
+/* The state in words, over the switch. */
 .hero-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  font-size: 15px;
-  font-weight: 750;
-  letter-spacing: -0.01em;
+  height: 20px;
+  flex: none;
+  margin: 4px 0 0;
+  font-size: 13.5px;
+  font-weight: 650;
+  line-height: 20px;
   color: var(--ink-mute);
   transition: color 200ms ease 140ms;
 }
-.hero-state i {
-  width: 8px;
-  height: 8px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--bar);
-  transition: background-color 200ms ease 140ms;
-}
-.hero[data-phase="connecting"] .hero-state {
-  color: var(--digi);
-}
-.hero[data-phase="connecting"] .hero-state i,
-.hero[data-phase="rotating"] .hero-state i {
-  background: var(--digi);
-  animation: beat 900ms ease-in-out infinite;
-}
 .hero[data-phase="on"] .hero-state,
 .hero[data-phase="rotating"] .hero-state {
-  color: #fff;
+  color: var(--fill-words);
 }
-.hero[data-phase="on"] .hero-state i,
-.hero[data-phase="rotating"] .hero-state i {
+
+/* The switch: the track and the knob with the H on it. */
+.track {
+  position: relative;
+  width: 196px;
+  height: 84px;
+  flex: none;
+  margin-top: 8px;
+  padding: 0;
+  border: 1px solid var(--bar);
+  border-radius: 33px 11px 33px 11px;
+  cursor: pointer;
+  background: var(--raised);
+  transition:
+    background-color 500ms ease,
+    border-color 500ms ease,
+    scale 150ms ease;
+}
+.track:active {
+  scale: 0.985;
+}
+.track:focus-visible {
+  outline: 2px solid var(--digi);
+  outline-offset: 3px;
+}
+.knob {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  display: grid;
+  width: 70px;
+  height: 70px;
+  place-items: center;
+  border-radius: 27px 8px 27px 8px;
+  color: var(--digi);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--bar);
+  transition:
+    transform 640ms var(--spring),
+    background-color 400ms ease,
+    box-shadow 400ms ease,
+    color 400ms ease;
+}
+html[data-theme="midnight"] .knob {
+  background: var(--bar);
+}
+.knob svg {
+  display: block;
+  width: 29px;
+  height: auto;
+  fill: currentColor;
+}
+.hero[data-phase="connecting"] .knob,
+.hero[data-phase="rotating"] .knob {
+  transform: translateX(56px);
+  color: var(--flood);
   background: #fff;
+  box-shadow: none;
+}
+.hero[data-phase="rotating"] .knob {
+  color: var(--fill);
+}
+.hero[data-phase="connecting"] .knob svg,
+.hero[data-phase="rotating"] .knob svg {
+  animation: beat 900ms ease-in-out infinite;
 }
 @keyframes beat {
   50% {
-    scale: 1.5;
+    scale: 0.82;
   }
 }
-/* Off: where the button connects to. */
+.hero[data-phase="on"] .knob {
+  transform: translateX(112px);
+  color: var(--fill);
+  background: #fff;
+  box-shadow: none;
+}
+.hero[data-phase="on"] .track,
+.hero[data-phase="rotating"] .track {
+  border-color: var(--fill-deep);
+  background: var(--fill-deep);
+}
+.hero[data-phase="on"] .track:focus-visible,
+.hero[data-phase="rotating"] .track:focus-visible {
+  outline-color: #fff;
+}
+
+/* Under the switch: where it connects to, or where you appear. */
+.hero-foot {
+  display: flex;
+  width: 100%;
+  height: 48px;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-top: 10px;
+  padding: 0 16px;
+}
 .hero-hint {
   max-width: 100%;
-  margin: 3px 0 0;
+  margin: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -411,17 +457,22 @@ button {
   font-weight: 550;
   color: var(--ink-mute);
 }
-
-/* On or connecting: where you appear (the exit's flag, its address rolling
-   to a new one, what it is). */
 .now-line {
+  width: 100%;
+}
+.now-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.now-address {
   display: flex;
   max-width: 100%;
-  min-height: 24px;
-  margin-top: 3px;
+  height: 23px;
   align-items: center;
-  justify-content: center;
   gap: 8px;
+  margin: 0;
 }
 .now-flag {
   display: grid;
@@ -439,51 +490,55 @@ button {
 .hero[data-phase="rotating"] .now-flag svg {
   stroke: #fff;
 }
-.now-main {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  white-space: nowrap;
-}
 .now-ip {
-  flex: none;
-  font-size: 13.5px;
+  min-width: 0;
+  white-space: nowrap;
+  font-size: 15px;
   font-weight: 750;
+  letter-spacing: -0.01em;
   color: var(--ink);
   transition: color 200ms ease 140ms;
+}
+.now-sub {
+  display: flex;
+  max-width: 100%;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  margin: 0;
 }
 .now-words {
   min-width: 0;
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
   font-size: 12px;
   font-weight: 550;
   color: var(--ink-mute);
   transition: color 200ms ease 140ms;
 }
-.now-line .link-btn {
+.now-sub .link-btn {
+  flex: none;
   transition: color 200ms ease 140ms;
 }
 .hero[data-phase="on"] .now-ip,
 .hero[data-phase="rotating"] .now-ip,
-.hero[data-phase="on"] .now-line .link-btn,
-.hero[data-phase="rotating"] .now-line .link-btn,
-.hero[data-failing] .now-words {
+.hero[data-phase="on"] .now-sub .link-btn,
+.hero[data-phase="rotating"] .now-sub .link-btn {
   color: #fff;
 }
-.hero[data-phase="on"]:not([data-failing]) .now-words,
-.hero[data-phase="rotating"]:not([data-failing]) .now-words {
-  color: var(--chart-6);
+.hero[data-phase="on"] .now-words,
+.hero[data-phase="rotating"] .now-words {
+  color: var(--fill-words);
 }
-/* Without an address the line is a sentence (connecting, a warning): it wraps
-   rather than ending in "…". */
-.now-main[data-ip="0"] {
+/* Without an address the line is a sentence (connecting, a warning): it stands
+   alone, centred, and wraps rather than ending in "…". */
+.now-main[data-ip="0"] .now-address {
+  display: none;
+}
+.now-main[data-ip="0"] .now-words {
   white-space: normal;
   text-align: center;
-}
-/* A sentence stands alone, centred: no flag or globe beside it. */
-.now-line:has(> .now-main[data-ip="0"]) > .now-flag {
-  display: none;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -498,7 +553,7 @@ button {
   width: 100%;
   align-items: center;
   gap: 8px;
-  padding: 9px 16px 10px;
+  padding: 9px calc(16px - var(--gutter)) 10px 16px;
   border: 0;
   cursor: pointer;
   text-align: left;
@@ -597,7 +652,7 @@ button {
   color: var(--ink-soft);
 }
 .checks-body {
-  padding: 0 16px 12px;
+  padding: 0 calc(16px - var(--gutter)) 12px 16px;
 }
 .checks-list {
   display: flex;
@@ -685,57 +740,73 @@ button {
 }
 
 /* ══════════════════════════════════════════════════════════════════════
-   THE TABS: words on a hairline, the current one in ink with the H's
-   crossbar under it, which slides to the next (the computer app's Proxies
-   page). My proxies first: the popup connects your own proxies; Free is the
-   extra.
+   THE TABS: the computer app's menu, the current one solid blue, which slides
+   to the one you press (popup.js, placeBar). My proxies first: the popup
+   connects your own proxies; Free is the extra. They stay while the list
+   scrolls under them.
    ══════════════════════════════════════════════════════════════════════ */
 
+.tabs-band {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding: 10px calc(16px - var(--gutter)) 8px 16px;
+  background: var(--canvas);
+}
 .tabs {
   position: relative;
   display: flex;
-  gap: 22px;
-  margin: 0 16px;
-  border-bottom: 1px solid var(--hairline);
+  height: 38px;
+  padding: 3px;
+  border-radius: 12px 4px 12px 4px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hairline);
 }
 .tabs .tab {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
+  flex: 1;
   align-items: center;
+  justify-content: center;
   gap: 7px;
-  height: 42px;
-  padding: 0 1px;
+  height: 32px;
+  padding: 0 8px;
   border: 0;
+  border-radius: 10px 3px 10px 3px;
   cursor: pointer;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 700;
-  color: var(--ink-soft);
+  color: var(--ink-mute);
   background: transparent;
   transition: color 160ms ease;
 }
-.tabs .tab:hover,
-.tabs .tab.is-on {
+.tabs .tab:hover {
   color: var(--ink);
+}
+.tabs .tab.is-on {
+  color: #fff;
 }
 .tabs .tab:focus-visible {
   outline: 2px solid var(--digi);
   outline-offset: 2px;
-  border-radius: 6px;
 }
 .tabs .count {
   font-size: 12px;
   font-weight: 650;
   color: var(--ink-soft);
+  transition: color 160ms ease;
 }
 .tabs .tab.is-on .count {
-  color: var(--ink-mute);
+  color: var(--flood-words);
 }
 .tabs-bar {
   position: absolute;
   left: 0;
-  bottom: -1px;
+  top: 3px;
   width: 0;
-  height: 3px;
-  border-radius: 3px 3px 0 0;
+  height: 32px;
+  border-radius: 10px 3px 10px 3px;
   background: var(--digi);
   transition:
     transform 420ms var(--glide),
@@ -750,7 +821,7 @@ button {
    ══════════════════════════════════════════════════════════════════════ */
 
 .panel {
-  padding: 12px 16px 6px;
+  padding: 4px calc(16px - var(--gutter)) 10px 16px;
 }
 .add {
   display: flex;
@@ -862,11 +933,11 @@ button {
   font-weight: 700;
   white-space: nowrap;
   text-decoration: none;
-  color: var(--digi);
+  color: var(--accent-ink);
   background: transparent;
 }
 .link-btn:hover {
-  color: var(--digi-deep);
+  color: var(--digi);
 }
 .link-btn:disabled {
   cursor: default;
@@ -1100,7 +1171,7 @@ button {
   font-weight: 700;
   white-space: nowrap;
   visibility: hidden;
-  color: var(--digi);
+  color: var(--accent-ink);
 }
 .row:hover .row-go,
 .row:focus-visible .row-go,
@@ -1121,13 +1192,13 @@ button {
   background: var(--digi);
 }
 .row.is-active .row-name {
-  color: var(--digi-deep);
+  color: var(--accent-ink);
 }
 .row.is-active .row-go {
   color: var(--ok);
 }
 /* In use but not working (a free exit that stopped, a login refused, no
-   answer yet): the crossbar and the word in the warning colour. */
+   answer yet): the crossbar and the word in red, as the top. */
 .row.is-warn::after {
   content: "";
   position: absolute;
@@ -1136,15 +1207,15 @@ button {
   bottom: 12px;
   width: 3px;
   border-radius: 0 3px 3px 0;
-  background: var(--warn);
+  background: var(--danger);
 }
 .row.is-warn .row-go {
-  color: var(--warn);
+  color: var(--danger);
 }
 /* Pressed and not connected: the second line says why, until the next press. */
 .row.is-failed .row-meta {
   white-space: normal;
-  color: var(--warn);
+  color: var(--danger);
 }
 /* A saved proxy's pencil and ×, there when you point at the row. */
 .row-edit,
@@ -1162,12 +1233,11 @@ button {
   color: var(--ink-soft);
   background: transparent;
 }
-/* The two side by side, closer than the row's own gap. */
+/* The two side by side, closer than the row's own gap. They stand before what
+   pressing the row does, which keeps the row's right edge, as a country's star
+   does. */
 .row-edit {
   margin-right: -8px;
-}
-.row-del {
-  margin-right: -4px;
 }
 .row-edit svg,
 .row-del svg {
@@ -1362,89 +1432,146 @@ button {
 }
 
 /* ══════════════════════════════════════════════════════════════════════
-   THE FOOT
+   SETTINGS: a page of its own behind the gear (until 1.0.6 a row of links and
+   panels at the foot of the list).
    ══════════════════════════════════════════════════════════════════════ */
 
 .hand-loaded {
-  margin: 8px 16px 0;
+  margin: 8px calc(16px - var(--gutter)) 12px 16px;
   font-size: 12px;
   font-weight: 550;
   color: var(--warn);
 }
-.foot {
+.sheet-top {
+  display: flex;
+  height: 46px;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 0 16px 0 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+.sheet-top h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.sheet-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 16px;
+}
+.set {
+  padding: 14px 0;
+}
+.set + .set {
+  border-top: 1px solid var(--divider);
+}
+.set-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 16px 12px;
-  font-size: 12px;
-  font-weight: 550;
-  color: var(--ink-soft);
-}
-
-/* The usage counts (popup.js, drawUsage): the question on top until it is
-   answered, and the footer's panel with the switch and the last report. */
-.usage-ask {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 12px 16px 0;
-  padding: 12px 14px;
-  border: 1px solid var(--hairline);
-  border-radius: 14px 5px 14px 5px;
-  background: var(--surface);
-}
-.usage-title {
+  cursor: pointer;
   font-size: 13.5px;
   font-weight: 700;
   color: var(--ink);
 }
-.usage-words {
-  margin: 0;
+.set-words {
+  margin: 6px 52px 0 0;
   font-size: 12px;
   font-weight: 500;
-  line-height: 1.45;
+  line-height: 1.5;
   color: var(--ink-mute);
 }
-.usage-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.usage-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 8px 16px 0;
-  padding: 10px 12px;
-  border: 1px solid var(--hairline);
-  border-radius: 12px 4px 12px 4px;
+.set-select {
+  height: 30px;
+  max-width: 168px;
+  padding: 0 8px;
+  border: 1px solid var(--bar);
+  border-radius: 9px 3px 9px 3px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink);
   background: var(--surface);
 }
-.usage-switch {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--ink);
+.set-area {
+  display: block;
+  height: 84px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  resize: none;
+  line-height: 1.45;
 }
-.usage-switch input {
-  accent-color: var(--digi);
+/* The big switch made small: a knob with the H's corners on a track. */
+.toggle {
+  position: relative;
+  width: 40px;
+  height: 24px;
+  flex: none;
+  margin: 0;
+  border: 1px solid var(--bar);
+  border-radius: 9px 3px 9px 3px;
+  appearance: none;
+  cursor: pointer;
+  background: var(--raised);
+  transition:
+    background-color 200ms ease,
+    border-color 200ms ease;
+}
+.toggle::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 6px 2px 6px 2px;
+  background: var(--ink-soft);
+  transition:
+    transform 320ms var(--spring),
+    background-color 200ms ease;
+}
+.toggle:checked {
+  border-color: var(--digi);
+  background: var(--digi);
+}
+.toggle:checked::before {
+  transform: translateX(16px);
+  background: #fff;
+}
+.toggle:focus-visible {
+  outline: 2px solid var(--digi);
+  outline-offset: 2px;
 }
 .usage-last {
   max-height: 150px;
-  margin: 0;
+  margin: 10px 0 0;
   padding: 8px 10px;
   overflow: auto;
   border: 1px solid var(--hairline);
-  border-radius: 8px;
+  border-radius: 10px 3px 10px 3px;
   font-size: 11px;
   line-height: 1.4;
   white-space: pre-wrap;
   color: var(--ink-mute);
   background: var(--canvas);
+}
+.foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 16px 12px;
+  border-top: 1px solid var(--hairline);
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink-soft);
 }
 
 /* The quiet setting of the system: nothing moves. */

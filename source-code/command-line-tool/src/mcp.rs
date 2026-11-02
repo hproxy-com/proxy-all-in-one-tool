@@ -529,16 +529,7 @@ impl Server {
             Ok(r) => !tunnels_https(r) || r.tls_intercepted == Some(true),
             Err(_) => true,
         };
-        let mut exit = self.probe_exit(local).await;
-        let mut tries = 0;
-        while unusable(&exit) && source.current().can_rotate() && tries < 3 {
-            tries += 1;
-            if source.next_ip().await.is_err() {
-                break;
-            }
-            exit = self.probe_exit(local).await;
-        }
-        exit
+        hproxy_connection::verify::until_it_works(source, || self.probe_exit(local), |e| !unusable(e)).await
     }
 
     /// Is the link we think we have really gone? It can end without the

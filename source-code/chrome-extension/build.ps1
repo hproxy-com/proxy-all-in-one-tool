@@ -16,6 +16,8 @@ Set-Location $PSScriptRoot
 # colours for two days in July. See scripts/sync-tokens.mjs.
 node scripts/sync-tokens.mjs
 if ($LASTEXITCODE -ne 0) { throw 'Token sync failed. Fix it before packaging.' }
+node scripts/sync-world.mjs
+if ($LASTEXITCODE -ne 0) { throw 'World sync failed. Fix it before packaging.' }
 node scripts/verify-design.mjs
 if ($LASTEXITCODE -ne 0) { throw 'Design verification failed. Fix it before packaging.' }
 
@@ -38,7 +40,7 @@ $zip      = Join-Path $dist "hproxy-extension-v$version.zip"
 # review versions and their switcher are gone, as a live version picker is a
 # development affordance, not a feature.
 $include = @(
-  'manifest.json', 'background.js', 'tokens.css', 'popup.css', 'popup.js', 'analyzer.js', 'line.js', 'motion.js', 'gateways.js', 'expiry.js', 'usage.js',
+  'manifest.json', 'background.js', 'tokens.css', 'popup.css', 'popup.js', 'theme.js', 'world.js', 'analyzer.js', 'line.js', 'motion.js', 'gateways.js', 'expiry.js', 'failure.js', 'sites.js', 'usage.js',
   'popup.html',
   'icons', 'fonts', 'flags/LICENSE'
 )

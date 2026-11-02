@@ -2,7 +2,8 @@
 //! with a window around them. One module per screen or door:
 //!
 //!   check       the Checker screen: start a run, cancel it, read one line
-//!   connect     the Connect screen: the relay and the system proxy setting
+//!   connect     the Connect screen: the connection (hproxy-connection), the system
+//!               proxy setting and the kill switch
 //!   files       import a list, export results: the dialogs open from Rust
 //!   fraud       fraud scores of addresses, with the service picked in Settings
 //!   places      the person's proxies, groups and picked place, kept here, not in the window
@@ -22,6 +23,7 @@ mod check;
 mod connect;
 mod files;
 mod fraud;
+mod notify;
 mod phone;
 mod places;
 #[cfg(desktop)]
@@ -123,7 +125,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--background"]),
         ))
-        // The computer's own notifications: a plan near its last day (reminders.rs).
+        // The computer's own notifications away from Windows (notify.rs).
         .plugin(tauri_plugin_notification::init());
 
     // On Android, which app installed this copy (Google Play or a download): channel.rs.
@@ -185,7 +187,8 @@ pub fn run() {
             usage::count_panics(app.handle());
             usage::opened(app.handle());
             usage::start(app.handle());
-            app.manage(connect::RelayState::default());
+            let geo = app.state::<AppState>().geo.clone();
+            app.manage(connect::RelayState::new(app.handle(), geo));
             app.manage(tray::TrayState::default());
             app.manage(update::Pending::default());
             app.manage(timezone::ZoneState::default());
@@ -270,6 +273,7 @@ pub fn run() {
             places::places_proxy_line,
             places::places_check,
             connect::connect_start,
+            connect::connect_cancel,
             connect::connect_stop,
             connect::connect_status,
             connect::connect_rotate,
@@ -277,6 +281,10 @@ pub fn run() {
             connect::connect_member,
             connect::connect_probe,
             connect::connect_set_probe,
+            connect::connect_set_whole_computer,
+            connect::connect_set_kill_switch,
+            connect::connect_set_routing,
+            connect::connect_set_share,
             connect::system_proxy_current,
             connect::free_countries,
             connect::free_list,

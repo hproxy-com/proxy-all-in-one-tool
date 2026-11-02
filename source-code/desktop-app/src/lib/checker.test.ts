@@ -102,6 +102,42 @@ describe("readList", () => {
   });
 });
 
+describe("applyCheck, a proxy that only fetches plain pages", () => {
+  const plain = {
+    input: "1.2.3.4:8080",
+    alive: true,
+    protocols: ["http"],
+    latency_ms: 120,
+    usable: {
+      carries: false,
+      tone: "bad" as const,
+      says: "Can't open https sites",
+      why: "It only fetches plain http:// pages.",
+      notes: [{ kind: "plain_http_only" }],
+    },
+  };
+  const row = () => parseLines("1.2.3.4:8080")[0];
+
+  it("is not working, and says why", () => {
+    const r = applyCheck(row(), plain);
+    expect(r.status).toBe("dead");
+    expect(r.failure).toBe("plain_http_only");
+    expect(r.reason).toBe("It only fetches plain http:// pages.");
+    expect(r.carries).toBe(false);
+  });
+
+  it("is what was asked for when the person only tested plain HTTP", () => {
+    expect(applyCheck(row(), plain, false).status).toBe("working");
+  });
+
+  it("stays working as a SOCKS4 proxy, which Connect cannot use", () => {
+    const socks4 = { ...plain, usable: { ...plain.usable, says: "SOCKS4 only", notes: [{ kind: "socks4_only" }] } };
+    const r = applyCheck(row(), socks4);
+    expect(r.status).toBe("working");
+    expect(r.carries).toBe(false);
+  });
+});
+
 describe("applyCheck", () => {
   const base: CheckResult = { input: "1.2.3.4:8080", alive: true, protocols: ["http"] };
 

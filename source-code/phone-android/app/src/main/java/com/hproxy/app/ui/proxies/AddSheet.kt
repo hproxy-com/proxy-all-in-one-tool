@@ -74,7 +74,7 @@ import com.hproxy.app.ui.theme.type
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-private enum class AddMode { Start, Type, Name }
+private enum class AddMode { Start, Name }
 
 /** A paste, read by the engine (proxy-engine/hproxy-mobile, places.rs `review`). */
 private data class Review(
@@ -131,9 +131,9 @@ private fun sharedWords(r: Review): String = listOfNotNull(
 
 /**
  * Adding, the way someone who keeps adding proxies wants it (the button pressed most is the one
- * that matters): what is on the clipboard is already
- * there to add with one tap; the other ways in one row, the most used (Paste) on the far right,
- * where the thumb is. Then a name for each, one by one, or one name for all of them, or Skip
+ * that matters): what is on the clipboard is already there to add with one tap, and one big box takes
+ * anything else, typed or pasted, one proxy or a list; the other ways in one row, the most used
+ * (Paste) on the far right, where the thumb is. Then a name for each, one by one, or one name for all of them, or Skip
  * (2026-10-11). The proxies are
  * added at once and checked from this phone while the names are typed.
  */
@@ -160,7 +160,6 @@ fun ColumnScope.AddSheet(nav: Nav) {
         val got = nav.incoming ?: return@LaunchedEffect
         nav.incoming = null
         text = got
-        mode = AddMode.Type
     }
     LaunchedEffect(text) { review = reviewOf(text) }
 
@@ -204,7 +203,6 @@ fun ColumnScope.AddSheet(nav: Nav) {
             AppState.toast("Nothing to paste: copy your proxies first")
         } else {
             text = t
-            mode = AddMode.Type
         }
     }
 
@@ -214,18 +212,13 @@ fun ColumnScope.AddSheet(nav: Nav) {
                 clip = clip,
                 asked = nav.addAsked,
                 adding = adding,
-                onAdd = { asGroup -> clip?.let { add(it.first, asGroup) } },
-                onScan = { nav.scan { got -> text = got; mode = AddMode.Type } },
-                onType = { text = ""; mode = AddMode.Type },
-                onPaste = ::paste,
-            )
-            AddMode.Type -> Typing(
                 text = text,
                 onText = { text = it },
                 review = review,
-                adding = adding,
-                onBack = { mode = AddMode.Start },
-                onAdd = { asGroup -> add(text, asGroup) },
+                onAddClip = { asGroup -> clip?.let { add(it.first, asGroup) } },
+                onAddText = { asGroup -> add(text, asGroup) },
+                onScan = { nav.scan { got -> text = got } },
+                onPaste = ::paste,
             )
             AddMode.Name -> if (group != null) {
                 NameGroup(group!!, nav.askNotifications) { nav.sheet = null }
@@ -236,21 +229,26 @@ fun ColumnScope.AddSheet(nav: Nav) {
     }
 }
 
+/** The first screen: what is on the clipboard, one tap away, and the one box everything else goes
+ *  through: type or paste one proxy or a whole list right here, a QR code or the clipboard fill it. */
 @Composable
 private fun Start(
     clip: Pair<String, Review>?,
     asked: Boolean,
     adding: Boolean,
-    onAdd: (asGroup: Boolean) -> Unit,
+    text: String,
+    onText: (String) -> Unit,
+    review: Review?,
+    onAddClip: (asGroup: Boolean) -> Unit,
+    onAddText: (asGroup: Boolean) -> Unit,
     onScan: () -> Unit,
-    onType: () -> Unit,
     onPaste: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Txt("Add proxies", type(22.sp, FontWeight.Bold, spacing = (-0.015).em), modifier = Modifier.padding(top = 4.dp, bottom = 2.dp))
         // Opened by the switch with nothing to connect: it says why.
         if (asked) Txt(ADD_FIRST, type(15.sp, FontWeight.SemiBold, C.ink2, lineHeight = 21.sp), modifier = Modifier.padding(bottom = 4.dp))
-        if (clip != null) {
+        if (clip != null && text.isBlank()) {
             val (t, r) = clip
             val lines = t.lines().map { it.trim() }.filter { it.isNotEmpty() }
             Column(
@@ -271,27 +269,54 @@ private fun Start(
                 if (shared.isNotEmpty()) Txt(shared, type(13.5.sp, FontWeight.Bold, C.white), modifier = Modifier.padding(top = 6.dp), maxLines = 1)
                 Spacer(Modifier.height(14.dp))
                 if (r.group) {
-                    Btn(if (adding) "Adding" else "Add as a group of ${r.sessions}", { onAdd(true) }, Modifier.fillMaxWidth(), kind = BtnKind.White)
+                    Btn(if (adding) "Adding" else "Add as a group of ${r.sessions}", { onAddClip(true) }, Modifier.fillMaxWidth(), kind = BtnKind.White)
                     Spacer(Modifier.height(8.dp))
-                    Btn("Add each as its own", { onAdd(false) }, Modifier.fillMaxWidth(), kind = BtnKind.OnBlue)
+                    Btn("Add each as its own", { onAddClip(false) }, Modifier.fillMaxWidth(), kind = BtnKind.OnBlue)
                 } else {
-                    Btn(if (adding) "Adding" else if (r.proxies == 1) "Add it" else "Add all ${r.proxies}", { onAdd(false) }, Modifier.fillMaxWidth(), kind = BtnKind.White)
+                    Btn(if (adding) "Adding" else if (r.proxies == 1) "Add it" else "Add all ${r.proxies}", { onAddClip(false) }, Modifier.fillMaxWidth(), kind = BtnKind.White)
                 }
             }
-        } else {
-            val shape = cut(26.dp, 9.dp)
-            Column(Modifier.fillMaxWidth().clip(shape).border(1.dp, C.line, shape).padding(20.dp)) {
-                Ic(I.paste, 24.dp, C.ink2)
-                Spacer(Modifier.height(10.dp))
-                Txt("Nothing to add on your clipboard", type(19.sp, FontWeight.Bold, spacing = (-0.01).em))
-                Spacer(Modifier.height(4.dp))
-                Txt("Copy your proxies, then come back.", type(14.sp, FontWeight.Medium, C.ink2, lineHeight = 20.sp))
+        }
+        Area(text, onText, "One per line, any format")
+        val r = review
+        if (r != null && text.isNotBlank()) {
+            val found = when {
+                r.proxies == 0 -> "None of these lines reads as a proxy"
+                r.group -> "${r.sessions} sessions"
+                r.proxies == 1 -> "1 proxy"
+                else -> "${r.proxies} proxies"
+            }
+            val extra = listOfNotNull(
+                sharedWords(r).ifEmpty { null },
+                if (r.saved > 0) "${r.saved} saved already" else null,
+            ).joinToString(" · ")
+            Txt(listOfNotNull(found, extra.ifEmpty { null }).joinToString(" · "), type(14.sp, FontWeight.Bold, if (r.proxies == 0) C.warn else C.ink2, numbers = true))
+            if (r.unreadable > 0 && r.proxies > 0) {
+                Txt(
+                    if (r.unreadable == 1) "1 line is not a proxy and is left out" else "${r.unreadable} lines are not proxies and are left out",
+                    type(13.sp, FontWeight.SemiBold, C.warn),
+                )
             }
         }
-        Txt("Or another way", type(13.sp, FontWeight.Bold, C.ink3), modifier = Modifier.padding(start = 2.dp, top = 8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val n = r?.proxies ?: 0
+        if (r != null && r.group) {
+            Btn(if (adding) "Adding" else "Add as a group of ${r.sessions}", { onAddText(true) }, Modifier.fillMaxWidth())
+            LineBtn("Add each as its own", { onAddText(false) }, Modifier.fillMaxWidth(), height = 52.dp)
+        } else {
+            Btn(
+                when {
+                    adding -> "Adding"
+                    n == 0 -> "Add"
+                    n == 1 -> "Add it"
+                    else -> "Add all $n"
+                },
+                { onAddText(false) },
+                Modifier.fillMaxWidth(),
+                enabled = n > 0 && !adding,
+            )
+        }
+        Row(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Way(I.qr, "Scan a QR", Modifier.weight(1f), onScan)
-            Way(I.key, "Type one", Modifier.weight(1f), onType)
             Way(I.paste, "Paste", Modifier.weight(1f), onPaste)
         }
     }
@@ -347,63 +372,6 @@ internal fun Area(text: String, onText: (String) -> Unit, placeholder: String, m
     }
 }
 
-@Composable
-private fun Typing(
-    text: String,
-    onText: (String) -> Unit,
-    review: Review?,
-    adding: Boolean,
-    onBack: () -> Unit,
-    onAdd: (asGroup: Boolean) -> Unit,
-) {
-    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
-            IconBtn(I.left, onBack, Modifier.offset(x = (-10).dp), glyph = 24.dp, description = "Back")
-            Txt("Type or paste them", type(22.sp, FontWeight.Bold, spacing = (-0.015).em), modifier = Modifier.offset(x = (-6).dp))
-        }
-        Area(text, onText, "One per line", autoFocus = text.isEmpty())
-        Txt("Any format, one per line.", type(13.sp, FontWeight.SemiBold, C.ink3, lineHeight = 18.sp))
-        val r = review
-        if (r != null && text.isNotBlank()) {
-            val found = when {
-                r.proxies == 0 -> "None of these lines reads as a proxy"
-                r.group -> "${r.sessions} sessions"
-                r.proxies == 1 -> "1 proxy"
-                else -> "${r.proxies} proxies"
-            }
-            val extra = listOfNotNull(
-                sharedWords(r).ifEmpty { null },
-                if (r.saved > 0) "${r.saved} saved already" else null,
-            ).joinToString(" · ")
-            Txt(listOfNotNull(found, extra.ifEmpty { null }).joinToString(" · "), type(14.sp, FontWeight.Bold, if (r.proxies == 0) C.warn else C.ink2, numbers = true))
-            if (r.unreadable > 0 && r.proxies > 0) {
-                Txt(
-                    if (r.unreadable == 1) "1 line is not a proxy and is left out" else "${r.unreadable} lines are not proxies and are left out",
-                    type(13.sp, FontWeight.SemiBold, C.warn),
-                )
-            }
-        }
-        Spacer(Modifier.height(2.dp))
-        val n = r?.proxies ?: 0
-        if (r != null && r.group) {
-            Btn(if (adding) "Adding" else "Add as a group of ${r.sessions}", { onAdd(true) }, Modifier.fillMaxWidth())
-            LineBtn("Add each as its own", { onAdd(false) }, Modifier.fillMaxWidth(), height = 52.dp)
-        } else {
-            Btn(
-                when {
-                    adding -> "Adding"
-                    n == 0 -> "Type a proxy first"
-                    n == 1 -> "Add it"
-                    else -> "Add all $n"
-                },
-                { onAdd(false) },
-                Modifier.fillMaxWidth(),
-                enabled = n > 0 && !adding,
-            )
-        }
-    }
-}
-
 /** One name, typed into a hairline box with what it names above it. */
 @Composable
 private fun NameBox(over: String, value: String, onValue: (String) -> Unit, placeholder: String) {
@@ -436,6 +404,10 @@ private fun NameBox(over: String, value: String, onValue: (String) -> Unit, plac
         }
     }
 }
+
+/** Past this many, one name for all of them: a box each would keep the screen's thread busy for
+ *  seconds on a long list. */
+private const val NAMED_ONE_BY_ONE = 20
 
 /** What a last day promises, said where one is set. */
 private const val REMINDER_WORDS = "A last day brings a reminder 3 days before it."
@@ -490,7 +462,7 @@ private fun NameThem(ids: List<String>, askNotifications: () -> Unit, done: () -
                     ids.forEachIndexed { i, id -> if (id !in byHand) given[id] = if (label.isEmpty()) "" else "$label ${i + 1}" }
                 }, "One name, numbered: Shop 1, 2, 3")
             }
-            for (id in ids) {
+            if (ids.size <= NAMED_ONE_BY_ONE) for (id in ids) {
                 val p = library.proxies.find { it.id == id } ?: continue
                 NameBox(p.address, given[id] ?: "", { v ->
                     given[id] = v

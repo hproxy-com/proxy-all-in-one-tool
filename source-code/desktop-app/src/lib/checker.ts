@@ -38,6 +38,9 @@ export type LeakedHeader = { name: string; value: string };
 
 /** A row in the UI: the pasted line plus whatever the engine has learned. */
 export type Row = {
+  /** Whether Connect can use it, from the engine (a SOCKS4 proxy works, and Connect does not speak
+      it); unknown on rows the API checked. */
+  carries?: boolean;
   raw: string;
   host: string;
   port: string;
@@ -294,12 +297,23 @@ export function exitsElsewhere(row: Row): boolean {
   return row.status === "working" && !!row.exitIp && row.exitIp !== row.host;
 }
 
-/** Fold one engine result onto its input row. */
-export function applyCheck(row: Row, r: CheckResult): Row {
+/** The failure word of a row that answered but cannot open https sites (ResultsTable.tsx). */
+export const PLAIN_HTTP_ONLY = "plain_http_only";
+
+/** It answered and opens no tunnel: it fetches plain http:// pages and nothing else. */
+function plainHttpOnly(r: CheckResult): boolean {
+  return r.alive && !!r.usable?.notes?.some((n) => n.kind === PLAIN_HTTP_ONLY);
+}
+
+/** Fold one engine result onto its input row. `tunnels`: the check tried HTTPS or SOCKS5 at all. A
+    person who switched both off in Settings asked about plain HTTP, and gets that answer; everyone
+    else gets "working" only for a proxy that can open a site, which nearly all sites need. */
+export function applyCheck(row: Row, r: CheckResult, tunnels = true): Row {
   // The failure word decides "timeout" versus "dead"; the sentence is for people.
   // Older API rows carry no word, so the sentence is read as a fallback.
   const timedOut = r.failure ? r.failure === "timeout" : !!(r.error && /time(d)? out|timeout/i.test(r.error));
-  const status: Status = r.alive ? "working" : timedOut ? "timeout" : "dead";
+  const noTunnel = tunnels && plainHttpOnly(r);
+  const status: Status = noTunnel ? "dead" : r.alive ? "working" : timedOut ? "timeout" : "dead";
   const cc = r.country_code ? r.country_code.toLowerCase() : undefined;
   const anon = r.anonymity ? (cap(r.anonymity) as Row["anonymity"]) : undefined;
   /* A label that reached the row before its result was looked up for the
@@ -310,8 +324,9 @@ export function applyCheck(row: Row, r: CheckResult): Row {
   return {
     ...row,
     status,
-    reason: r.alive ? undefined : (r.error ?? undefined),
-    failure: r.failure ?? undefined,
+    reason: noTunnel ? (r.usable?.why ?? undefined) : r.alive ? undefined : (r.error ?? undefined),
+    failure: noTunnel ? PLAIN_HTTP_ONLY : (r.failure ?? undefined),
+    carries: r.usable?.carries ?? undefined,
     judge: r.judge ?? undefined,
     udp: r.supports_udp ?? undefined,
     speedMbps: r.speed_mbps ?? undefined,

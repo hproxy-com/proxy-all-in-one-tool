@@ -51,6 +51,7 @@ import com.hproxy.app.engine.countryName
 import com.hproxy.app.engine.spelled
 import com.hproxy.app.state.AppState
 import com.hproxy.app.state.Conn
+import com.hproxy.app.state.ErrorWords
 import com.hproxy.app.state.FreeList
 import com.hproxy.app.state.OwnIp
 import com.hproxy.app.state.Phase
@@ -65,6 +66,7 @@ import com.hproxy.app.ui.kit.Ic
 import com.hproxy.app.ui.kit.Txt
 import com.hproxy.app.ui.kit.pressable
 import com.hproxy.app.ui.map.ConnectionMap
+import com.hproxy.app.ui.proxies.TextBtn
 import com.hproxy.app.ui.theme.C
 import com.hproxy.app.ui.theme.Glide
 import com.hproxy.app.ui.theme.cut
@@ -141,6 +143,20 @@ fun HomeTab(nav: Nav) {
     val busy = phase is Phase.Connecting
     val stopped = phase == Phase.On && conn.stopped
     val failed = !on && !busy && conn.failed != null && conn.failed?.ref?.key == ref?.key
+    // What went wrong, by its name: "Timed out", and what that means.
+    val trouble = when {
+        failed -> conn.failed?.why
+        stopped -> health?.error
+        else -> null
+    }?.let(ErrorWords::of)
+    // After a failed connect, or with a proxy that stopped: the fastest of yours that answered.
+    val next = if (failed || stopped) {
+        AppState.library.value.proxies
+            .filter { it.last?.ok == true && it.id != (ref as? PlaceRef.Proxy)?.id }
+            .minByOrNull { it.last?.latencyMs ?: Int.MAX_VALUE }
+    } else {
+        null
+    }
 
     Box(Modifier.fillMaxSize().background(C.bg)) {
         Column(Modifier.fillMaxSize()) {
@@ -149,7 +165,7 @@ fun HomeTab(nav: Nav) {
                 val w = maxWidth.value.toDouble()
                 val h = maxHeight.value.toDouble()
                 ConnectionMap(w, h, w / 2, (h * 0.62).coerceAtLeast(190.0), floodFrom = null)
-                Status(phase, on, busy, stopped, failed, conn, health, own, where, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 14.dp))
+                Status(phase, on, busy, stopped, failed, trouble, health, own, where, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 14.dp))
                 // Settings, a gear at the top right (the tabs are for what is used every day).
                 com.hproxy.app.ui.kit.IconBtn(
                     I.rule,
@@ -167,7 +183,7 @@ fun HomeTab(nav: Nav) {
                             busy -> "Connecting to"
                             switching -> "Switching to"
                             on -> "Connected to"
-                            failed -> "Didn't answer"
+                            failed -> "Didn't work"
                             ref == null -> "Your proxies"
                             else -> "Last used"
                         },
@@ -195,6 +211,7 @@ fun HomeTab(nav: Nav) {
                         if (ref == null) nav.addFirst() else nav.askVpn { AppState.connect(ref) }
                     },
                     onDisconnect = { AppState.disconnect() },
+                    onNext = next?.let { p -> { nav.askVpn { AppState.connect(PlaceRef.Proxy(p.id)) } } },
                 )
 
             }
@@ -210,18 +227,18 @@ private fun Status(
     busy: Boolean,
     stopped: Boolean,
     failed: Boolean,
-    conn: Conn,
+    trouble: ErrorWords?,
     health: Health?,
     own: OwnIp?,
     where: Where?,
     modifier: Modifier,
 ) {
     val headline = when {
-        stopped -> "Not answering"
+        stopped -> trouble?.name?.ifEmpty { null } ?: "Not answering"
         phase is Phase.Switching -> "Switching"
         busy -> "Connecting"
         on -> "Connected"
-        failed -> "Didn't answer"
+        failed -> trouble?.name?.ifEmpty { null } ?: "Didn't answer"
         else -> "You're not connected"
     }
     val ink = if (stopped || failed) C.bad else C.white
@@ -245,9 +262,18 @@ private fun Status(
         val ip = health?.exitIp
         when {
             on && !stopped && health?.ok == true && ip != null -> Chip(health.countryCode ?: where?.cc, "${health.country ?: where?.country ?: "Here"} · $ip", light = true)
-            on && stopped -> Chip(null, "The proxy stopped answering", light = true)
+            on && stopped -> Chip(
+                null,
+                when {
+                    AppState.fallenBack.collectAsState().value -> "On your own address until it answers"
+                    Settings.prefs.value.blockWhenDown -> "Kill switch on: apps wait for it"
+                    else -> trouble?.detail ?: "The proxy stopped answering"
+                },
+                light = true,
+            )
             on -> Chip(null, "Checking where you appear", light = true)
             busy -> Chip(null, if ((phase as? Phase.Connecting)?.step == 1) "Checking where you appear" else "Reaching the proxy", light = false)
+            failed && trouble != null -> Chip(null, trouble.detail, light = false)
             own != null -> Chip(own.cc, listOfNotNull(countryName(own.cc), masked(own.ip)).joinToString(" · ").ifEmpty { "Your own IP" }, light = false)
             else -> Chip(null, "Your own IP", light = false)
         }
@@ -285,6 +311,7 @@ private fun PlaceCard(
     onOpen: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
+    onNext: (() -> Unit)?,
 ) {
     val shape = cut(22.dp, 8.dp)
     Column(
@@ -318,6 +345,9 @@ private fun PlaceCard(
             failed -> Btn("Try again", onConnect, Modifier.fillMaxWidth())
             empty -> Btn("Add proxies", onConnect, Modifier.fillMaxWidth())
             else -> Btn("Connect", onConnect, Modifier.fillMaxWidth())
+        }
+        if (onNext != null) {
+            TextBtn("Try the next one that works", onNext, Modifier.align(Alignment.CenterHorizontally).padding(top = 4.dp))
         }
     }
 }

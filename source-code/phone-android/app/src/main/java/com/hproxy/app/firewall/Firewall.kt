@@ -48,13 +48,15 @@ object Firewall {
 
     @Volatile private var cache: List<InstalledApp>? = null
 
-    /** The apps on the phone (launcher apps, this one left out), by name. */
+    /** The apps on the phone (launcher apps, a TV's too, this one left out), by name. One reading at a time:
+     *  it takes seconds on a slow phone with many apps, so it never runs on the screen's thread. */
+    @Synchronized
     fun installed(context: Context, fresh: Boolean = false): List<InstalledApp> {
         cache?.takeIf { !fresh }?.let { return it }
         val pm = context.packageManager
-        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val launchers = listOf(Intent.CATEGORY_LAUNCHER, Intent.CATEGORY_LEANBACK_LAUNCHER)
         @Suppress("DEPRECATION")
-        val found = pm.queryIntentActivities(launcher, 0)
+        val found = launchers.flatMap { pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(it), 0) }
             .map { it.activityInfo.packageName }
             .filter { it != context.packageName }
             .distinct()

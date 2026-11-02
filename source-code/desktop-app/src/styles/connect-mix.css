@@ -23,6 +23,13 @@
   color: var(--ink);
   user-select: none;
 }
+/* A proxy that stopped answering: the blue goes, the page turns red, so nobody takes it for a
+   connection that is fine. Solid, like the blue. */
+.mix[data-failing] {
+  --mix-blue: #c62828;
+  --mix-blue-deep: #9e1f1f;
+  --mix-on-blue: #ffe3e3;
+}
 
 .mix-map {
   position: absolute;
@@ -43,7 +50,7 @@
   position: absolute;
   inset: 0;
   background: var(--mix-blue);
-  transition: clip-path 760ms var(--mix-glide);
+  transition: clip-path 760ms var(--mix-glide), background 500ms ease;
 }
 
 /* ---------- the pin ---------- */
@@ -170,6 +177,20 @@
   background: var(--mix-blue-deep);
   border-color: var(--mix-blue-deep);
 }
+/* A connect that did not go through: the switch is back, in red, until the next try, and the
+   error by its name stands where the address would. */
+.mix[data-failed] .mix-state,
+.mix[data-failed]:not([data-on]) .mix-ip {
+  color: var(--danger-ink);
+}
+.mix[data-failed] .mix-track {
+  background: #c62828;
+  border-color: #c62828;
+}
+.mix[data-failed] .mix-track .mix-knob {
+  background: #ffffff;
+  color: #c62828;
+}
 .mix-knob {
   position: absolute;
   left: 8px;
@@ -240,6 +261,29 @@
   outline: 2px solid var(--digi);
   outline-offset: 3px;
   border-radius: 4px;
+}
+/* After a failed connect, or with a proxy that stopped: the next one of yours, one press away. */
+.mix-next {
+  margin-top: 12px;
+  padding: 9px 16px;
+  border: 1px solid var(--bar);
+  border-radius: 14px 5px 14px 5px;
+  background: var(--surface);
+  color: var(--accent-ink);
+  font: 700 14px/1.2 var(--font-sans);
+  cursor: pointer;
+}
+.mix-next:hover {
+  border-color: var(--digi);
+}
+.mix-next:focus-visible {
+  outline: 2px solid var(--digi);
+  outline-offset: 3px;
+}
+.mix[data-on] .mix-next {
+  border-color: #ffffff;
+  background: #ffffff;
+  color: var(--mix-blue);
 }
 /* Connected to a place past the day it expires (it still works): amber on the
    dark page, white once the page is blue. */
@@ -313,10 +357,6 @@
   transform: translateX(-50%);
   width: min(560px, calc(100% - 40px));
   display: flex;
-  gap: 0;
-  transition: gap 520ms var(--mix-glide);
-}
-.mix[data-on] .mix-bottom {
   gap: 10px;
 }
 .mix-place {
@@ -367,29 +407,27 @@
 .mix[data-on] .mix-place-words small {
   color: #4f5a70;
 }
+/* The place's mark alone: a flag or a glyph, nothing behind it. */
 .mix-tile {
-  width: 48px;
+  width: 34px;
   height: 48px;
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 13px;
-  background: var(--raised);
   color: var(--ink-mute);
 }
 .mix[data-on] .mix-tile {
-  background: #0b0e17;
+  color: #0b0e17;
 }
 .mix-tile svg {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
 }
 .mix-tile[data-kind="free"] {
   color: #f5b83d;
 }
 .mix-tile[data-kind="add"] {
-  background: var(--mix-blue);
-  color: #ffffff;
+  color: var(--accent-ink);
 }
 .mix-tile .ux-flag {
   width: 30px;
@@ -424,7 +462,7 @@
   padding-bottom: 18px;
 }
 .mix-menu {
-  width: 0;
+  width: 84px;
   height: 84px;
   flex: none;
   overflow: hidden;
@@ -434,14 +472,20 @@
   justify-content: center;
   gap: 4px;
   border-radius: 24px 8px 24px 8px;
-  background: var(--mix-blue-deep);
-  color: #ffffff;
+  border: 1px solid var(--bar);
+  background: var(--surface);
+  color: var(--ink-mute);
   font: 700 11.5px/1 var(--font-sans);
   cursor: pointer;
-  transition: width 520ms var(--mix-glide);
+  transition: background 420ms ease, border-color 420ms ease, color 420ms ease;
 }
-.mix-menu[data-shown] {
-  width: 84px;
+.mix-menu:hover {
+  color: var(--ink);
+}
+.mix[data-on] .mix-menu {
+  background: var(--mix-blue-deep);
+  border-color: var(--mix-blue-deep);
+  color: #ffffff;
 }
 .mix-menu svg {
   width: 23px;
@@ -523,9 +567,8 @@
   height: 36px;
   display: grid;
   place-items: center;
-  border-radius: 12px;
-  background: var(--surface);
-  border: 1px solid var(--bar);
+  border: 0;
+  background: none;
   color: var(--ink-mute);
   cursor: pointer;
 }
@@ -573,18 +616,13 @@
   border-color: var(--bar);
 }
 .mix-tile-ico {
-  width: 36px;
-  height: 36px;
   margin-bottom: 8px;
   display: grid;
-  place-items: center;
-  border-radius: 11px;
-  background: var(--raised);
   color: var(--ink-mute);
 }
 .mix-tile-ico svg {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
 }
 .mix-tile-btn b {
   font: 700 15px/1.25 var(--font-sans);
@@ -632,8 +670,7 @@
   .mix-flood,
   .mix-knob,
   .mix-stats,
-  .mix-menu,
-  .mix-bottom {
+  .mix-menu {
     transition: none;
   }
   .mix-pin .ring {

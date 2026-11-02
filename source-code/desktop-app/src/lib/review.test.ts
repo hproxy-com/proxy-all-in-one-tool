@@ -120,6 +120,15 @@ describe("names", () => {
 });
 
 describe("testOf", () => {
+  it("calls nothing working that the saved list would call broken", () => {
+    const carries = (tone: "good" | "warn" | "bad", ok: boolean) => ({ carries: ok, tone, says: "words", why: "the sentence" });
+    const alive = { input: "a", alive: true, latency_ms: 90 };
+    expect(testOf({ ...alive, usable: carries("good", true) }).ok).toBe(true);
+    expect(testOf({ ...alive, usable: carries("warn", true) }).ok).toBe(true);
+    expect(testOf({ ...alive, usable: carries("bad", false) })).toEqual({ ok: false, why: "the sentence" });
+    expect(testOf({ ...alive, usable: carries("bad", true) }).ok).toBe(false);
+    expect(testOf({ ...alive, usable: { carries: false, tone: "bad", says: "Can't open https sites" } })).toEqual({ ok: false, why: "Can't open https sites" });
+  });
   it("keeps what the row shows", () => {
     expect(testOf({ input: "a", alive: false, error: "refused" })).toEqual({ ok: false, why: "refused" });
     expect(testOf({ input: "a", alive: true, latency_ms: 90, country_code: "DE", city: "Berlin", country: "Germany" })).toMatchObject({ ok: true, ms: 90, cc: "de" });

@@ -137,7 +137,14 @@ The second screen. A proxy with no password runs on `127.0.0.1` and forwards
 everything to the proxy you chose, login attached, so every program can use it,
 including the ones with no login box and the operating systems that cannot speak
 SOCKS5. The same port answers HTTP and SOCKS5, so it does not matter which kind
-a program asks for. The line you type is checked for real before you connect.
+a program asks for.
+
+**"Connected" means traffic got through.** Every connection is tested first,
+through the relay, with HTTPS to our judge and the certificate checked. Nothing
+on the computer points at the relay until that passes, so a dead proxy never
+takes your connection down with it: you get the reason and the next one to try.
+Pressing the switch while it tests calls it off.
+
 Three sources: your own proxy, your own list moved through by a rule (the same
 proxy until it dies, which is what a new group starts with; a new one every N
 minutes; every connection; every N connections; or at random), or a free exit
@@ -157,6 +164,32 @@ A proxy that goes silent is given up on after 10 seconds without a connection
 and 30 seconds without an answer, so a list or the free pool moves to the next
 proxy quickly instead of waiting out the operating system's own two minutes.
 
+**Advanced options**, in Settings:
+
+- **Sites.** Which sites use the proxy: all of them, all except the ones you name,
+  or only those. A site that skips the proxy leaves on your own address. The
+  connection's own test always goes through the proxy, so a dead proxy can never
+  pass by way of a rule.
+- **Two proxies in a row.** Your connection goes through one saved proxy first,
+  then the one you connect to. The second only sees the first one's address, which
+  also makes a proxy that accepts one allowed address usable from anywhere.
+- **If a proxy stops.** It moves to the next of yours that works by itself, and the
+  old one is only given up once the new one passed its test.
+- **Share with my network** (computer). A TV, a console or another computer on your
+  network uses this connection, with an address and a login. It only answers
+  private addresses, and it never opens without a password.
+
+**The kill switch**, on by default in every app. When a proxy stops answering,
+the screen turns red and names what went wrong: Timed out, Connection refused,
+Login refused, Proxy error 502. Away from the window a notification says the
+same, with Disconnect on it. On: everything that follows the
+system proxy waits for it, and nothing leaves on your own address. Off: the
+setting goes back after two failed checks, the app says you are on your own
+address, and it returns by itself the moment the proxy answers. On a computer it
+covers what follows the system proxy; a program that ignores that setting is
+outside it, and stopping those takes a firewall rule and admin rights. On the
+phone it covers every app you send through the proxy.
+
 ## Command line
 
 One file, no installer, no dependencies. Same engine, same verdicts.
@@ -169,6 +202,9 @@ hproxy list --protocol socks5 | hproxy check --first 5 --alive   # 5 free SOCKS5
 hproxy connect host:port:user:pass                          # 127.0.0.1:8080, no password
 hproxy connect --file proxies.txt --rotate every:10 --listen 127.0.0.1:0 --json
 hproxy connect --file sessions.txt --rotate every:10m      # a new proxy every 10 minutes
+hproxy connect host:port --skip bank.example,10.0.0.0/8    # these sites go straight out
+hproxy connect host:port --only shop.example               # only this site uses the proxy
+hproxy connect host:port --via first.example:8080          # two proxies in a row
 hproxy free --country DE                                    # a free exit, swapped when it dies
 hproxy places california                                    # what you saved in the app, no passwords
 hproxy connect --place "US sessions" --member 3             # one of them, by name

@@ -96,10 +96,20 @@ object SupportChat {
         }
     }.getOrNull()
 
+    /** The three ways people start: an idea, a problem, a country. */
+    val STARTERS = listOf(
+        "I have an idea" to "Idea: ",
+        "Something broke" to "Something broke: ",
+        "I need a country" to "A country I need: ",
+    )
+
+    /** A starter with nothing added: it says nothing yet, and sent alone it leaves support guessing. */
+    fun bare(text: String): Boolean = STARTERS.any { (_, words) -> words.trim() == text.trim() }
+
     /** Send what the box holds. It shows at once, "Sending" until the chat has it. */
     fun send(text: String): Boolean {
         val body = text.trim()
-        if (body.isEmpty()) return false
+        if (body.isEmpty() || bare(body)) return false
         val id = "app-${System.currentTimeMillis()}-${counter++}"
         messagesFlow.value = messagesFlow.value + Msg(id, mine = true, body = body, at = System.currentTimeMillis(), sent = Sent.Sending)
         draftFlow.value = ""

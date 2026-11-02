@@ -154,6 +154,7 @@ private fun <K> PillRow(
                             val p = c.positionInParent()
                             bounds[i] = Rect(p.x, p.y, p.x + c.size.width, p.y + c.size.height)
                         }
+                        .focusLine(sources[i])
                         .clickable(interactionSource = sources[i], indication = null, role = Role.Tab) { onChange(k) },
                 )
             }

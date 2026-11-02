@@ -94,5 +94,7 @@ Var OldStartedWithComputer
 !macro NSIS_HOOK_PREUNINSTALL
   ${If} $UpdateMode <> 1
     ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --forget-tool-path "$LOCALAPPDATA\${BUNDLEID}\tool"'
+    ; The name and icon the app registered for its notifications (src-tauri/src/notify.rs).
+    DeleteRegKey HKCU "Software\Classes\AppUserModelId\${BUNDLEID}"
   ${EndIf}
 !macroend

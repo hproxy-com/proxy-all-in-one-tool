@@ -109,6 +109,7 @@ const FAILURE_SHORT: Record<string, string> = {
   transport_error: "Connection lost",
   no_echo: "Not a proxy",
   unresolved: "Unknown host",
+  plain_http_only: "No https",
 };
 
 function failureShort(r: Row): string {
@@ -177,6 +178,7 @@ export default function ResultsTable({
   onFraud?: (ips: string[]) => void;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
+  // None picked: as the page hands them, the fastest first once a check is done.
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null);
   const [copied, setCopied] = useState(false);
 

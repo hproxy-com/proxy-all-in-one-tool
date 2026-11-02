@@ -37,6 +37,8 @@ object C {
     val ok = Color(0xFF2FD07F)
     val warn = Color(0xFFF5B83D)
     val bad = Color(0xFFFF5A5F)
+    /** The page behind a proxy that stopped answering, solid as the blue. */
+    val badFill = Color(0xFFC62828)
     val gone = Color(0xFF3A4357)
     val white = Color(0xFFFFFFFF)
     val nearBlack = Color(0xFF0B0E17)

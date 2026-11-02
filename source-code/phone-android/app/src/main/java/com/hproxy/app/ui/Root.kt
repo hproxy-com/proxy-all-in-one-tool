@@ -38,6 +38,7 @@ import androidx.compose.ui.zIndex
 import com.hproxy.app.engine.PlaceRef
 import com.hproxy.app.state.AppState
 import com.hproxy.app.state.JustAdded
+import com.hproxy.app.state.Settings
 import com.hproxy.app.ui.checker.CardSheet
 import com.hproxy.app.ui.checker.CheckTypeSheet
 import com.hproxy.app.ui.checker.CheckerTab
@@ -45,6 +46,7 @@ import com.hproxy.app.ui.checker.JudgeSheet
 import com.hproxy.app.ui.connection.ConnectionPage
 import com.hproxy.app.ui.help.HelpTab
 import com.hproxy.app.ui.home.HomeTab
+import com.hproxy.app.ui.home.WelcomeSheet
 import com.hproxy.app.ui.kit.LocalTint
 import com.hproxy.app.ui.kit.Sheet
 import com.hproxy.app.ui.kit.Toast
@@ -58,8 +60,10 @@ import com.hproxy.app.ui.proxies.GroupPage
 import com.hproxy.app.ui.proxies.ProxiesTab
 import com.hproxy.app.ui.proxies.ProxySheet
 import com.hproxy.app.ui.proxies.SortSheet
+import com.hproxy.app.ui.settings.FirstHopPage
 import com.hproxy.app.ui.settings.FraudPage
 import com.hproxy.app.ui.settings.SettingsPage
+import com.hproxy.app.ui.settings.SitesPage
 import com.hproxy.app.ui.settings.UsagePage
 import com.hproxy.app.ui.theme.AppWidth
 import com.hproxy.app.ui.theme.C
@@ -99,6 +103,14 @@ fun Root(nav: Nav) {
             nav.addAsked = false
         }
         if (ready != null && nav.sheet == null) JustAdded.takeReady()?.let { id -> nav.askVpn { AppState.connect(PlaceRef.Proxy(id)) } }
+    }
+
+    // A new copy's first start, once, for someone with nothing saved.
+    val libraryRead by AppState.libraryRead.collectAsState()
+    LaunchedEffect(libraryRead) {
+        if (!libraryRead || Settings.welcomed) return@LaunchedEffect
+        Settings.welcomed = true
+        if (AppState.library.value.empty && nav.sheet == null) nav.sheet = SheetKind.Welcome
     }
 
     // While the keyboard is up the nav steps aside, so what is typed in sits right on it.
@@ -162,6 +174,8 @@ fun Root(nav: Nav) {
                                 Page.Apps -> AppsPage(nav, back)
                                 Page.Details -> DetailsPage(nav, back)
                                 Page.Usage -> UsagePage(back)
+                                Page.Sites -> SitesPage(back)
+                                Page.FirstHop -> FirstHopPage(back)
                             }
                         }
                     }
@@ -170,6 +184,7 @@ fun Root(nav: Nav) {
 
             // Sheets rise over the pages too: the whole screen dims, the sheet keeps the app's width.
             Box(Modifier.fillMaxSize().zIndex(50f)) {
+                Sheet(nav.sheet == SheetKind.Welcome, close, heightFraction = null) { WelcomeSheet(nav) }
                 Sheet(nav.sheet == SheetKind.Add, close, heightFraction = null) { AddSheet(nav) }
                 Sheet(nav.sheet == SheetKind.Proxy, close, heightFraction = 0.84f) { ProxySheet(nav) }
                 Sheet(nav.sheet == SheetKind.Sort, close, heightFraction = null) { SortSheet(nav) }

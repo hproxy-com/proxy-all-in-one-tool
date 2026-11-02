@@ -9,7 +9,7 @@
 
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use serde::Serialize;
@@ -58,6 +58,27 @@ impl Why {
     }
 }
 
+/// What the proxy itself said when a connection failed, beyond the fixed word:
+/// for the person's eyes, never for the usage counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Said {
+    #[default]
+    Nothing,
+    /// An HTTP proxy's answer to CONNECT.
+    Status(u16),
+    /// A SOCKS5 proxy's reply, in the standard's words.
+    Socks(&'static str),
+    /// What answered does not speak the protocol it was asked in.
+    WrongProtocol,
+}
+
+/// Why a connection could not reach the proxy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Failure {
+    pub why: Why,
+    pub said: Said,
+}
+
 #[derive(Debug, Default)]
 pub struct Stats {
     /// Client connections accepted since the relay started.
@@ -66,8 +87,10 @@ pub struct Stats {
     active: AtomicU64,
     /// Connections that could not reach the proxy, even after a failover.
     failures: AtomicU64,
-    /// Why the newest of those failed (`Why`, 0 = none since the last `take_why`).
+    /// Why the newest of those failed (`Why`, 0 = none since the last `take_failure`).
     why: AtomicU8,
+    /// What the proxy said about it.
+    said: Mutex<Said>,
     /// Upstream switches: a failover, or one the person asked for.
     rotations: AtomicU64,
     /// Bytes sent towards the proxy.
@@ -113,16 +136,19 @@ impl Stats {
     }
 
     /// A connection could not reach the proxy, for `why`.
-    pub fn failed_for(&self, why: Why) {
+    pub fn failed_for(&self, why: Why, said: Said) {
         self.failed();
         self.why.store(why.code(), Ordering::Relaxed);
+        *self.said.lock().unwrap_or_else(|e| e.into_inner()) = said;
     }
 
-    /// Why the newest failure since the last call happened, and forget it: a
+    /// The newest failure since the last call, forgotten once read: a
     /// connection that starts reads it once, so an older failure never
     /// passes for its own.
-    pub fn take_why(&self) -> Option<Why> {
-        Why::of_code(self.why.swap(0, Ordering::Relaxed))
+    pub fn take_failure(&self) -> Option<Failure> {
+        let why = Why::of_code(self.why.swap(0, Ordering::Relaxed))?;
+        let said = std::mem::take(&mut *self.said.lock().unwrap_or_else(|e| e.into_inner()));
+        Some(Failure { why, said })
     }
 
     /// The source switched upstream.
@@ -143,12 +169,20 @@ impl Drop for Open<'_> {
 /// The proxy side of a connection, with every byte counted.
 pub struct Counted<S> {
     inner: S,
-    stats: Arc<Stats>,
+    stats: Option<Arc<Stats>>,
 }
 
 impl<S> Counted<S> {
     pub fn new(inner: S, stats: Arc<Stats>) -> Self {
-        Self { inner, stats }
+        Self {
+            inner,
+            stats: Some(stats),
+        }
+    }
+
+    /// A connection that went past the proxy: it costs no proxy traffic.
+    pub fn uncounted(inner: S) -> Self {
+        Self { inner, stats: None }
     }
 }
 
@@ -156,9 +190,9 @@ impl<S: AsyncRead + Unpin> AsyncRead for Counted<S> {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
         let before = buf.filled().len();
         let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
-        if let Poll::Ready(Ok(())) = &polled {
+        if let (Poll::Ready(Ok(())), Some(stats)) = (&polled, &self.stats) {
             let n = buf.filled().len() - before;
-            self.stats.bytes_down.fetch_add(n as u64, Ordering::Relaxed);
+            stats.bytes_down.fetch_add(n as u64, Ordering::Relaxed);
         }
         polled
     }
@@ -167,8 +201,8 @@ impl<S: AsyncRead + Unpin> AsyncRead for Counted<S> {
 impl<S: AsyncWrite + Unpin> AsyncWrite for Counted<S> {
     fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, data: &[u8]) -> Poll<std::io::Result<usize>> {
         let polled = Pin::new(&mut self.inner).poll_write(cx, data);
-        if let Poll::Ready(Ok(n)) = &polled {
-            self.stats.bytes_up.fetch_add(*n as u64, Ordering::Relaxed);
+        if let (Poll::Ready(Ok(n)), Some(stats)) = (&polled, &self.stats) {
+            stats.bytes_up.fetch_add(*n as u64, Ordering::Relaxed);
         }
         polled
     }
@@ -232,15 +266,22 @@ mod tests {
     #[test]
     fn the_newest_failure_says_why_once() {
         let stats = Stats::default();
-        assert_eq!(stats.take_why(), None);
-        stats.failed_for(Why::Timeout);
-        stats.failed_for(Why::Login);
+        assert_eq!(stats.take_failure(), None);
+        stats.failed_for(Why::Timeout, Said::Nothing);
+        stats.failed_for(Why::Other, Said::Status(502));
         assert_eq!(stats.snapshot().failures, 2);
-        assert_eq!(stats.take_why(), Some(Why::Login), "the newest one");
-        assert_eq!(stats.take_why(), None, "read once");
+        assert_eq!(
+            stats.take_failure(),
+            Some(Failure {
+                why: Why::Other,
+                said: Said::Status(502)
+            }),
+            "the newest one, with what the proxy said"
+        );
+        assert_eq!(stats.take_failure(), None, "read once");
         for why in Why::ALL {
-            stats.failed_for(why);
-            assert_eq!(stats.take_why(), Some(why));
+            stats.failed_for(why, Said::Nothing);
+            assert_eq!(stats.take_failure().map(|f| f.why), Some(why));
         }
     }
 }

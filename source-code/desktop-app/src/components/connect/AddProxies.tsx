@@ -3,6 +3,7 @@ import { spacedN } from "../../lib/connect";
 import { ADD_FIRST } from "../../lib/connectionView";
 import { PASTE_LIST_HERE } from "../../lib/proxyExamples";
 import { boxWords } from "../../lib/review";
+import { openExternal } from "../../lib/tauri";
 import { Button, DropZone, Icon, TextArea } from "../ui";
 import { useBoxLines } from "./lineReading";
 
@@ -20,6 +21,9 @@ import { useBoxLines } from "./lineReading";
    (PasteReview.tsx). Add and test, or Ctrl+Enter, tests every line before it is kept; each paste
    becomes its own group in the list. Sent here by the switch with none of yours, it says "Add your
    proxies first to start connecting!", popping in again on each press. */
+
+/** Where someone with no proxies yet can get some: the one line about it, on the empty list only. */
+const GET_PROXIES = "https://hproxy.com/pricing";
 
 export function AddProxies({
   asked,
@@ -100,6 +104,14 @@ export function AddProxies({
         </div>
         <DropZone dragging={dragging} onChoose={onUpload} />
       </div>
+      {!onClose && (
+        <p className="ux-add-none">
+          No proxies yet?{" "}
+          <button type="button" className="ux-link" onClick={() => void openExternal(GET_PROXIES)}>
+            Get some on hproxy.com
+          </button>
+        </p>
+      )}
     </section>
   );
 }

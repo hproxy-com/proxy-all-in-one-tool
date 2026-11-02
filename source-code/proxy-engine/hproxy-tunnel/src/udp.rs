@@ -23,8 +23,9 @@ const IDLE: Duration = Duration::from_secs(120);
 /// Packets waiting to go out on one flow; past this, new ones are dropped
 /// (UDP allows it, and a flood must not hold the tunnel).
 const QUEUED: usize = 64;
-/// Flows at once; past this a new one is dropped until old ones end.
-const MAX_FLOWS: usize = 2048;
+/// Flows at once; past this a new one is dropped until old ones end. Fewer on an
+/// iPhone, which ends a tunnel's process at about 50 MB (stack.rs).
+const MAX_FLOWS: usize = if cfg!(target_os = "ios") { 64 } else { 2048 };
 /// How often ended flows are swept away.
 const SWEEP_EVERY: Duration = Duration::from_secs(10);
 /// The largest datagram read back.

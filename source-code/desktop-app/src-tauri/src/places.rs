@@ -603,10 +603,6 @@ pub fn verdict_of_check(r: &CheckResult, at: u64) -> Verdict {
     Verdict::of_check(r, at)
 }
 
-/// "Berlin, Germany", or whichever of the two is known (hproxy-places, which
-/// the phone app reads too).
-pub use hproxy_places::place_words;
-
 /// How many lines one `describe_lines` call reads. The window asks in turns past this.
 const MAX_LINES: usize = 5_000;
 

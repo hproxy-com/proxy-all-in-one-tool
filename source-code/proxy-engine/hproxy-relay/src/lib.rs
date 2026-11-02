@@ -27,6 +27,7 @@
 pub mod cli;
 pub mod pool;
 pub mod relay;
+pub mod routes;
 pub mod source;
 pub mod stats;
 pub mod switchable;
@@ -38,8 +39,9 @@ use std::sync::Arc;
 
 use tokio::net::TcpListener;
 
+pub use routes::{Login, Mode, Routes, Routing};
 pub use source::{Dialed, List, Rotation, Source, SourceKind, REST_FOR};
-pub use stats::{Stats, StatsSnapshot, Why};
+pub use stats::{Failure, Said, Stats, StatsSnapshot, Why};
 pub use switchable::{SwitchableSource, Ticket};
 pub use upstream::{Scheme, Upstream};
 
@@ -94,11 +96,47 @@ where
     S: Future<Output = ()>,
 {
     check_bind(&addr, allow_lan)?;
+    accept(addr, None, verbose, source, stats, on_ready, shutdown).await
+}
+
+/// The same relay for the other devices on this network: on `addr`, with
+/// `login`, and only for addresses of the private network. It shares its source
+/// and its counters with the relay on this computer, so a phone or a TV goes
+/// wherever the computer goes, and a switch takes them along.
+pub async fn serve_network<R, S>(
+    addr: SocketAddr,
+    login: Login,
+    source: Arc<SwitchableSource>,
+    stats: Arc<Stats>,
+    on_ready: R,
+    shutdown: S,
+) -> Result<(), String>
+where
+    R: FnOnce(SocketAddr),
+    S: Future<Output = ()>,
+{
+    accept(addr, Some(login), false, source, stats, on_ready, shutdown).await
+}
+
+async fn accept<R, S>(
+    addr: SocketAddr,
+    login: Option<Login>,
+    verbose: bool,
+    source: Arc<SwitchableSource>,
+    stats: Arc<Stats>,
+    on_ready: R,
+    shutdown: S,
+) -> Result<(), String>
+where
+    R: FnOnce(SocketAddr),
+    S: Future<Output = ()>,
+{
     let listener = TcpListener::bind(addr)
         .await
         .map_err(|e| format!("could not listen on {addr}: {e}"))?;
     let local = listener.local_addr().unwrap_or(addr);
     on_ready(local);
+    let login = login.map(Arc::new);
 
     tokio::pin!(shutdown);
     loop {
@@ -111,7 +149,10 @@ where
                         let _ = sock.set_nodelay(true);
                         let ticket = source.ticket();
                         let stats = Arc::clone(&stats);
-                        tokio::spawn(async move { relay::handle(sock, ticket, verbose, &stats).await });
+                        let login = login.clone();
+                        tokio::spawn(async move {
+                            relay::handle(sock, ticket, verbose, &stats, login.as_deref()).await
+                        });
                     }
                     Err(e) => {
                         // One failed accept (a descriptor limit, a client that

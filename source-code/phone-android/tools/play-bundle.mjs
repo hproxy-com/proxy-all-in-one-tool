@@ -47,7 +47,12 @@ const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "u
 // A Gradle daemon left from an earlier build holds classes.dex on Windows: R8 then fails to write it.
 const gradlew = windows ? `"${join(phone, "gradlew.bat")}"` : join(phone, "gradlew");
 spawnSync(gradlew, ["--stop"], { cwd: phone, stdio: "ignore", shell: windows });
-run(gradlew, [":app:bundleRelease", "-Pabis=all", "-q"], { cwd: phone, shell: windows });
+// No daemon, and the Kotlin compiler inside the build: both end with it. A daemon and its Kotlin
+// compiler stay idle for hours holding some 4 GB, while the release goes on to its biggest build.
+run(gradlew, ["--no-daemon", ":app:bundleRelease", "-Pabis=all", "-Pkotlin.compiler.execution.strategy=in-process", "-q"], {
+  cwd: phone,
+  shell: windows,
+});
 
 const aab = join(phone, "app", "build", "outputs", "bundle", "release", "app-release.aab");
 if (!existsSync(aab)) fail(`no bundle at ${aab}`);

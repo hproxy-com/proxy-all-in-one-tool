@@ -4,6 +4,7 @@
 
      node scripts/popup-states.mjs <output folder>
      node scripts/popup-states.mjs <output folder> --free   (adds a live free exit)
+     node scripts/popup-states.mjs <output folder> --white  (the white look)
 
    Opens the popup of THIS folder's extension in Chrome for Testing (never
    the browser in use: tests/e2e/cdp.mjs) at 2x and captures:
@@ -26,6 +27,7 @@
      8c the same, later
      8  after the switch disconnected
      8d a first-time user: nothing kept yet
+     8e Settings
      9, 10 (with --free) the fastest free proxy connecting, then connected
 
    And it checks, in words on the console: no script error on the page, the
@@ -49,6 +51,7 @@ const EXT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ARGS = process.argv.slice(2);
 const OUT = resolve(ARGS.find((a) => !a.startsWith("--")) || join(EXT, "dist", "states"));
 const FREE = ARGS.includes("--free");
+const WHITE = ARGS.includes("--white");
 mkdirSync(OUT, { recursive: true });
 const ID = extensionIdFromKey(JSON.parse(readFileSync(join(EXT, "manifest.json"), "utf8")).key);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -138,6 +141,7 @@ try {
   const popup = `chrome-extension://${ID}/popup.html`;
   await navigate(cdp, s, popup, 30_000);
   await js(`chrome.storage.local.set({ hproxy_last_surface: "proxies", hproxy_byo: ${JSON.stringify(KEPT)} })`);
+  if (WHITE) await js(`localStorage.setItem("hproxy_look", "white")`);
   await navigate(cdp, s, popup, 30_000);
   await sleep(1800);
   await capture("1-proxies");
@@ -165,7 +169,7 @@ try {
   // Its buttons in the picture too: the editor's foot at the window's foot.
   await js(`document.querySelector(".row-editor").scrollIntoView({ block: "end" })`);
   await capture("2f-editor");
-  await js(`window.scrollTo(0, 0)`);
+  await js(`document.getElementById("scroller").scrollTo(0, 0)`);
   await js(`document.querySelector('.row-editor [data-act="save"]').click()`);
   await sleep(600);
   console.log("saved from the editor:", await js(`${row("203.0.113.24:3128")}.querySelector(".row-name").textContent`));
@@ -259,6 +263,12 @@ try {
   await js(`chrome.storage.local.set({ hproxy_byo: [] })`);
   await sleep(600);
   await capture("8d-first-time");
+
+  await js(`document.getElementById("settingsBtn").click()`);
+  await sleep(700);
+  await capture("8e-settings");
+  await js(`document.getElementById("sheetBack").click()`);
+  await sleep(300);
 
   if (FREE) {
     await js(`document.querySelector('[data-surface="vpn"]').click()`);

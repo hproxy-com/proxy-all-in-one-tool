@@ -31,11 +31,15 @@ enum class Page {
     Details,
     /** Settings' usage counts: the switch and the last report as it went. */
     Usage,
+    /** Settings: which sites use the proxy. */
+    Sites,
+    /** Settings: the proxy your connection goes through first. */
+    FirstHop,
 }
 
 /** The sheets that rise from the bottom (over the nav too). `CheckType`: typing proxies in for
  *  the checker; `Card`: one checked proxy, opened. */
-enum class SheetKind { Add, Proxy, Countries, Sort, Judge, CheckType, Card }
+enum class SheetKind { Welcome, Add, Proxy, Countries, Sort, Judge, CheckType, Card }
 
 /** The Proxies tab's two lists. */
 enum class Shelf { Mine, Free }

@@ -378,6 +378,12 @@ function freeExitIn(cc: string): Exit | null {
   };
 }
 
+/** "Use for the whole computer", at once, as the real one. */
+export function demoConnectSetWhole(on: boolean): ConnectStatus {
+  if (demo) demo.systemProxy = on;
+  return demoConnectStatus();
+}
+
 export function demoConnectStart(place: Place, systemProxy: boolean, probeUrl?: string, member?: number): ConnectStatus {
   const now = Date.now();
   const url = probeUrl?.trim() || DEFAULT_PROBE_URL;

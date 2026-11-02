@@ -85,8 +85,8 @@ semver = "1"
 tauri-plugin-single-instance = "2"
 # Start with the computer, when the person asks for it in Settings.
 tauri-plugin-autostart = "2"
-# The computer's own notifications, used from Rust only (src/reminders.rs): a
-# proxy or a group near the day it expires says so, also from the tray.
+# The computer's own notifications, used from Rust only (src/notify.rs): a proxy
+# that stopped, or one near the day it expires, says so, also from the tray.
 tauri-plugin-notification = "2"
 
 # Counting the other running copies of this program (src/update.rs): the tool
@@ -106,6 +106,9 @@ windows = { version = "0.61", features = ["Foundation", "Foundation_Collections"
 # re-export it.
 windows-collections = "0.2"
 winreg = "0.55"
+# Windows' notifications with our own app id (src/notify.rs): the crate the
+# notification plugin itself builds on.
+tauri-winrt-notification = "0.8"
 
 # NOTE: there is deliberately no bundled geo database. A city+ASN .mmdb is
 # 25-70 MB (this installer is a few MB, which is the whole point against the

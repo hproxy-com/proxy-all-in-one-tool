@@ -85,6 +85,12 @@ export const Icon = {
       <path d="M19 12H7m4.5-4.5L7 12l4.5 4.5" />
     </svg>
   ),
+  /** Advanced: one way in, two ways out. */
+  route: ({ className }: IconProps) => (
+    <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">
+      <path d="M3 12h6l5-6h7M9 12l5 6h7" />
+    </svg>
+  ),
   /** Settings: three sliders with square knobs. */
   settings: ({ className }: IconProps) => (
     <svg viewBox="0 0 24 24" {...stroke} className={className} aria-hidden="true">

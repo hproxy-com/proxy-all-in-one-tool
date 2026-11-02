@@ -68,12 +68,6 @@ import java.util.Date
 import java.util.Locale
 
 /** The three ways people start: an idea, a problem, a country. */
-private val STARTERS = listOf(
-    "I have an idea" to "Idea: ",
-    "Something broke" to "Something broke: ",
-    "I need a country" to "A country I need: ",
-)
-
 private fun hhmm(at: Long): String = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(at))
 
 /**
@@ -157,7 +151,7 @@ fun HelpTab() {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            for ((word, start) in STARTERS) {
+            for ((word, start) in SupportChat.STARTERS) {
                 val shape = cut(12.dp, 4.dp)
                 Box(
                     Modifier
@@ -255,7 +249,7 @@ private fun ChatBar(draft: String, focus: FocusRequester) {
                 )
             }
             Spacer(Modifier.padding(start = 2.dp))
-            IconBtn(I.send, send, description = "Send", tint = if (draft.isNotBlank()) C.blueInk else C.ink3)
+            IconBtn(I.send, send, description = "Send", tint = if (draft.isNotBlank() && !SupportChat.bare(draft)) C.blueInk else C.ink3)
         }
     }
 }

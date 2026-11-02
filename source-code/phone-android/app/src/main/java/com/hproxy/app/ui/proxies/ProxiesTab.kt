@@ -7,6 +7,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,12 +57,15 @@ import com.hproxy.app.state.FraudScores
 import com.hproxy.app.state.FreeList
 import com.hproxy.app.state.JustAdded
 import com.hproxy.app.state.Phase
+import com.hproxy.app.state.Removing
 import com.hproxy.app.state.RowState
 import com.hproxy.app.state.Settings
+import com.hproxy.app.state.SupportChat
 import com.hproxy.app.ui.Nav
 import com.hproxy.app.ui.SheetKind
 import com.hproxy.app.ui.Shelf
 import com.hproxy.app.ui.SortKey
+import com.hproxy.app.ui.Tab
 import com.hproxy.app.ui.kit.Btn
 import com.hproxy.app.ui.kit.Flag
 import com.hproxy.app.ui.kit.I
@@ -97,6 +101,15 @@ fun ProxiesTab(nav: Nav) {
     var query by rememberSaveable { mutableStateOf("") }
     val freeState = rememberLazyListState()
     val mineState = rememberLazyListState()
+    // Select: ticks on the rows of My proxies, Delete at the foot, Restore for a moment after it.
+    var selecting by rememberSaveable { mutableStateOf(false) }
+    var picked by remember { mutableStateOf(emptySet<String>()) }
+    val waiting by Removing.waiting.collectAsState()
+    val stopSelecting = {
+        selecting = false
+        picked = emptySet()
+    }
+    LaunchedEffect(nav.shelf) { if (nav.shelf != Shelf.Mine) stopSelecting() }
 
     Box(Modifier.fillMaxSize().background(C.bg)) {
         Column(Modifier.fillMaxSize()) {
@@ -134,11 +147,30 @@ fun ProxiesTab(nav: Nav) {
                 }
             }
             Box(Modifier.weight(1f).fillMaxWidth().slideWith(nav.shelf, listOf(Shelf.Mine, Shelf.Free))) {
-                if (nav.shelf == Shelf.Free) FreeShelf(nav, query, freeState) else MineShelf(nav, query, mineState)
+                if (nav.shelf == Shelf.Free) {
+                    FreeShelf(nav, query, freeState)
+                } else {
+                    MineShelf(
+                        nav,
+                        query,
+                        mineState,
+                        selecting,
+                        picked,
+                        onSelect = { selecting = true },
+                        onPick = { ids -> picked = if (ids.all { it in picked }) picked - ids else picked + ids },
+                    )
+                }
             }
         }
-        if (!(nav.shelf == Shelf.Mine && library.empty && added.isEmpty())) {
-            AddButton(Modifier.align(Alignment.BottomEnd).padding(16.dp)) { nav.open(SheetKind.Add) }
+        when {
+            selecting -> SelectBar(Modifier.align(Alignment.BottomCenter), picked.size, stopSelecting) {
+                Removing.remove(picked)
+                stopSelecting()
+            }
+            waiting.isNotEmpty() -> RestoreBar(Modifier.align(Alignment.BottomCenter), waiting.size)
+            !(nav.shelf == Shelf.Mine && library.empty && added.isEmpty()) -> {
+                AddButton(Modifier.align(Alignment.BottomEnd).padding(16.dp)) { nav.open(SheetKind.Add) }
+            }
         }
     }
 }
@@ -383,8 +415,20 @@ internal fun savedWords(p: ProxyItem, a: Answer?): SavedWords {
 
 @OptIn(FlowPreview::class)
 @Composable
-private fun MineShelf(nav: Nav, query: String, state: LazyListState) {
+private fun MineShelf(
+    nav: Nav,
+    query: String,
+    state: LazyListState,
+    selecting: Boolean,
+    picked: Set<String>,
+    onSelect: () -> Unit,
+    onPick: (Set<String>) -> Unit,
+) {
     val library by AppState.library.collectAsState()
+    val waiting by Removing.waiting.collectAsState()
+    // The pastes closed, kept while the app lives.
+    var closedList by rememberSaveable { mutableStateOf("") }
+    val closed = closedList.split('|').filter { it.isNotEmpty() }.toSet()
     val added by JustAdded.ids.collectAsState()
     val checking by JustAdded.checking.collectAsState()
     val answers by JustAdded.answers.collectAsState()
@@ -393,12 +437,13 @@ private fun MineShelf(nav: Nav, query: String, state: LazyListState) {
     val conn by AppState.conn.collectAsState()
     val headline = remember(checkers) { FraudScores.headline() }
 
-    val justAdded = added.mapNotNull { id -> library.proxies.find { it.id == id } }
+    val justAdded = added.mapNotNull { id -> library.proxies.find { it.id == id } }.filter { it.id !in waiting }
     val words = remember(library, answers) { library.proxies.associate { it.id to savedWords(it, answers[it.id]) } }
     fun hit(p: ProxyItem): Boolean = words[p.id]?.let { w -> matches(query, w.title, w.sub, p.address, countryName(w.cc), p.note) } ?: true
     val fresh = justAdded.filter(::hit)
     val groups = library.groups.filter { g -> matches(query, g.name, countryName(g.shared.country?.lowercase()), g.shared.city, g.shared.kind?.label, g.note) }
-    val singles = library.proxies.filter { it.id !in added && hit(it) }
+    val singles = library.proxies.filter { it.id !in added && it.id !in waiting && hit(it) }
+    val pastes = remember(singles) { pastesOf(singles) }
     // Plans ending within three days, and ended ones, counted over the list (a group is one plan).
     val days = remember(library) { (library.proxies.map { it.expires } + library.groups.map { it.expires }).mapNotNull { Expiry.daysLeft(it) } }
     val soon = days.count { it in 0..Expiry.SOON }
@@ -434,11 +479,21 @@ private fun MineShelf(nav: Nav, query: String, state: LazyListState) {
                 score = scoreOf(w, headline),
                 checking = p.id in checking,
                 dim = w.dead && st is RowState.Idle,
-                onClick = { nav.openProxy(ref) },
-                onMore = { go(nav, ref, conn) },
+                onClick = { if (selecting) onPick(setOf(p.id)) else nav.openProxy(ref) },
+                onMore = if (selecting) null else ({ go(nav, ref, conn) }),
                 modifier = modifier,
+                lead = if (selecting) ({ Tick(p.id in picked) }) else null,
                 tag = Expiry.of(p.expires),
             )
+        }
+        if (!selecting && (fresh.isNotEmpty() || singles.isNotEmpty())) {
+            item("tools") {
+                Row(Modifier.fillMaxWidth().padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val n = fresh.size + singles.size
+                    Txt(if (n == 1) "1 proxy" else "$n proxies", type(13.sp, FontWeight.Bold, C.ink3, numbers = true), modifier = Modifier.weight(1f), maxLines = 1)
+                    TextBtn("Select", onSelect)
+                }
+            }
         }
         if (soon > 0 || ended > 0) item("h-expiry") { ExpiryLine(soon, ended) }
         if (fresh.isNotEmpty()) {
@@ -449,13 +504,87 @@ private fun MineShelf(nav: Nav, query: String, state: LazyListState) {
             item("h-groups") { ListHead("Groups", modifier = Modifier.padding(top = if (fresh.isNotEmpty()) 14.dp else 0.dp)) }
             items(groups, key = { "g-" + it.id }) { g -> GroupRow(nav, g, conn, Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)) }
         }
-        if (singles.isNotEmpty()) {
-            item("h-singles") {
-                ListHead("Single proxies", modifier = Modifier.padding(top = if (fresh.isNotEmpty() || groups.isNotEmpty()) 14.dp else 0.dp))
+        for (paste in pastes) {
+            val open = paste.key !in closed
+            val ids = paste.proxies.map { it.id }.toSet()
+            item("h-" + paste.key) {
+                PasteHead(pasteTitle(paste), ids.size, open, selecting, ticked = ids.all { it in picked }) {
+                    if (selecting) {
+                        onPick(ids)
+                    } else {
+                        closedList = (if (open) closed + paste.key else closed - paste.key).joinToString("|")
+                    }
+                }
             }
-            items(singles, key = { "p-" + it.id }) { p -> Saved(p, Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)) }
+            if (open) items(paste.proxies, key = { "p-" + it.id }) { p -> Saved(p, Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)) }
         }
         if (fresh.isEmpty() && groups.isEmpty() && singles.isEmpty()) item("none") { Note("Nothing matches. Try another word.") }
+    }
+}
+
+/** A paste's head: when it came or the name its proxies share, how many; a tap folds it, or while
+ *  selecting ticks all of it. */
+@Composable
+private fun PasteHead(title: String, count: Int, open: Boolean, selecting: Boolean, ticked: Boolean, onClick: () -> Unit) {
+    val turn by animateFloatAsState(if (open) 0f else -90f, tween(320, easing = Glide), label = "pasteTurn")
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 46.dp)
+            .pressable(onClick, scale = 0.99f)
+            .padding(start = 12.dp, end = 12.dp, top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (selecting) Tick(ticked) else Ic(I.down, 16.dp, C.ink3, modifier = Modifier.graphicsLayer { rotationZ = turn })
+        Txt(title, type(14.sp, FontWeight.Bold, numbers = true), modifier = Modifier.weight(1f), maxLines = 1)
+        Txt(if (count == 1) "1 proxy" else "$count proxies", type(13.sp, FontWeight.SemiBold, C.ink3, numbers = true), maxLines = 1)
+    }
+}
+
+/** A box to tick: solid blue when ticked, a hairline when not. */
+@Composable
+private fun Tick(on: Boolean) {
+    val shape = cut(8.dp, 3.dp)
+    Box(
+        Modifier
+            .size(22.dp)
+            .clip(shape)
+            .background(if (on) C.blue else C.bg)
+            .border(1.dp, if (on) C.blue else C.ink3, shape),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (on) Ic(I.check, 16.dp, C.white)
+    }
+}
+
+/** While selecting, at the foot: Cancel, and Delete with how many. */
+@Composable
+private fun SelectBar(modifier: Modifier, count: Int, onCancel: () -> Unit, onDelete: () -> Unit) {
+    Row(
+        modifier.fillMaxWidth().background(C.bg).padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        LineBtn("Cancel", onCancel, Modifier.weight(1f), height = 56.dp)
+        Btn(if (count == 0) "Delete" else "Delete $count", onDelete, Modifier.weight(1f), icon = I.trash, enabled = count > 0)
+    }
+}
+
+/** For a moment after a delete: how many went, and the way back. */
+@Composable
+private fun RestoreBar(modifier: Modifier, count: Int) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+            .height(56.dp)
+            .clip(cut(16.dp, 6.dp))
+            .background(C.s2)
+            .padding(start = 16.dp, end = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Txt(if (count == 1) "1 removed" else "$count removed", type(15.sp, FontWeight.SemiBold, numbers = true), modifier = Modifier.weight(1f), maxLines = 1)
+        TextBtn("Restore", { Removing.restore() })
     }
 }
 
@@ -506,6 +635,15 @@ private fun EmptyMine(nav: Nav) {
         // ones stay on their own tab, right above.
         Txt("Paste them, scan a QR code or type one.", type(15.sp, FontWeight.Medium, C.ink2, lineHeight = 22.sp), modifier = Modifier.padding(bottom = 10.dp))
         Btn("Add proxies", { nav.open(SheetKind.Add) }, Modifier.fillMaxWidth(), icon = I.paste)
+        // For someone with none: the chat, where a person says what fits.
+        TextBtn(
+            "Need a proxy in a country? Ask us",
+            {
+                SupportChat.setDraft("A country I need: ")
+                nav.go(Tab.Help)
+            },
+            Modifier.align(Alignment.CenterHorizontally),
+        )
     }
 }
 

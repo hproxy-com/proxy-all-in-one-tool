@@ -320,7 +320,7 @@ export default function CheckerConsole({
       const hits = byRaw && byEndpoint ? Array.from(new Set([...byRaw, ...byEndpoint])) : (byRaw ?? byEndpoint)!;
       for (const i of hits) {
         if (live[i].status === "pending") {
-          live[i] = applyCheck(live[i], o);
+          live[i] = applyCheck(live[i], o, settings.protocols.https || settings.protocols.socks5);
           dirtyRef.current = true;
           if (exitsElsewhere(live[i])) {
             const exit = live[i].exitIp!;
@@ -521,9 +521,11 @@ export default function CheckerConsole({
       else if (!match(r)) continue;
       else if (filters.status === "all" || (filters.status === "working") === (r.status === "working")) kept.push(r);
     }
-    kept.sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status]);
+    // While it runs rows stay where they landed, so nothing jumps under the pointer; done, the
+    // fastest come first.
+    kept.sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || (checking ? 0 : (a.latency ?? Infinity) - (b.latency ?? Infinity)));
     return kept;
-  }, [rows, filters, portRule]);
+  }, [rows, filters, portRule, checking]);
 
   /* Country facet, ordered by how many rows each has: every country on the
      list (the Country button's panel has room for all of them, and a search). */
@@ -881,7 +883,7 @@ export default function CheckerConsole({
           </div>
           <ActiveFilters filters={filters} setFilters={setFilters} shown={visible.length} />
           {onKeep && !checking && filteredWorking.length > 0 && (
-            <KeepLine lines={filteredWorking.map((r) => r.raw)} onKeep={onKeep} onOpenList={onOpenList} />
+            <KeepLine lines={filteredWorking.filter((r) => r.carries !== false).map((r) => r.raw)} onKeep={onKeep} onOpenList={onOpenList} />
           )}
         </div>
 

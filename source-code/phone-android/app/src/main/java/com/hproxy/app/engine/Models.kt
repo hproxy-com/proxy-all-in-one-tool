@@ -183,6 +183,8 @@ data class ProxyItem(
     val expires: String? = null,
     /** What the person wrote about it. */
     val note: String? = null,
+    /** When it was saved: one time for everything saved in one go (Pastes.kt). */
+    val addedAt: Long = 0L,
 )
 
 data class GroupItem(
@@ -226,6 +228,7 @@ data class Library(
                     last = Verdict.of(p.objOrNull("last")),
                     expires = p.str("expires"),
                     note = p.str("note"),
+                    addedAt = p.optLong("addedAt"),
                 )
             },
             groups = (o.optJSONArray("groups") ?: org.json.JSONArray()).map { g ->

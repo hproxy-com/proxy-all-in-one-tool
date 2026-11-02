@@ -1,10 +1,16 @@
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type DragEvent, type ReactNode, type RefObject } from "react";
 import {
+  CALLED_OFF,
   connectBack,
+  connectCancel,
   connectMember,
   connectProbe,
   connectRotate,
+  connectSetKillSwitch,
+  connectSetRouting,
+  connectSetShare,
   connectSetProbe,
+  connectSetWholeComputer,
   connectStart,
   connectStop,
   copyText,
@@ -16,7 +22,7 @@ import {
 } from "../../lib/tauri";
 import type { Settings } from "../../lib/settings";
 import { DEFAULT_ROTATION, listLines, spacedN } from "../../lib/connect";
-import { phaseOf, placeView, type Busy } from "../../lib/connectionView";
+import { phaseOf, placeView, STOPPED_AFTER, type Busy } from "../../lib/connectionView";
 import {
   dayWords,
   daysLeft,
@@ -24,6 +30,7 @@ import {
   firstWorking,
   freeGroupName,
   MAX_PROXIES,
+  nextWorking,
   samePlace,
   tabOf,
   todayHere,
@@ -131,6 +138,9 @@ export type Connection = {
   askQuick: () => void;
   /** Text pasted or dropped: one proxy fills a field, a list opens the review on Proxies. */
   takePasted: (text: string) => void;
+  /** Why the sites or the first hop in Settings were refused, or why the network could not be let in. */
+  routingProblem: string | null;
+  shareProblem: string | null;
   /** The Checker's "Connect through this": save the line, then connect through it on Connect. */
   connectThrough: (raw: string) => void;
   /** The Checker's "Save the working ones as a group". */
@@ -232,10 +242,38 @@ export function ConnectionProvider({
      page (the card on Connect says it too). */
   const [failed, setFailed] = useState<{ place: Place; words: string } | null>(null);
 
-  const [useSystem, setUseSystem] = useState(true);
-  const [advanced, setAdvanced] = useState(false);
-  const [listen, setListen] = useState("");
+  // Both kept (Settings): someone who points one program at a port wants that port again tomorrow.
+  const useSystem = settings.wholeComputer;
+  const listen = settings.listen;
+  const [advanced, setAdvanced] = useState(() => !!settings.listen);
   const { status, setStatus, running, connected, zone, setZone, now } = useRelayStatus();
+  // The app holds both too: the tray connects with the window closed, and a proxy stops with it closed.
+  useEffect(() => {
+    void connectSetWholeComputer(useSystem)
+      .then(setStatus)
+      .catch(() => {});
+  }, [useSystem, setStatus]);
+  useEffect(() => {
+    void connectSetKillSwitch(settings.killSwitch).catch(() => {});
+  }, [settings.killSwitch]);
+  // Advanced (Settings): the app holds these too, for a connection the tray starts.
+  const [routingProblem, setRoutingProblem] = useState<string | null>(null);
+  useEffect(() => {
+    void connectSetRouting(settings.routeMode, settings.routeSites, settings.firstHop).then(
+      () => setRoutingProblem(null),
+      (e: unknown) => setRoutingProblem(String(e)),
+    );
+  }, [settings.routeMode, settings.routeSites, settings.firstHop]);
+  const [shareProblem, setShareProblem] = useState<string | null>(null);
+  useEffect(() => {
+    void connectSetShare(settings.shareOn, settings.sharePort, settings.sharePassword).then(
+      (s) => {
+        setShareProblem(null);
+        if (s) setStatus(s);
+      },
+      (e: unknown) => setShareProblem(String(e)),
+    );
+  }, [settings.shareOn, settings.sharePort, settings.sharePassword, setStatus]);
   /** The place a connect is under way to, while it is. */
   const [goingTo, setGoingTo] = useState<Place | null>(null);
   /** The member of a group being moved to, while that is under way. */
@@ -333,9 +371,12 @@ export function ConnectionProvider({
       setStatus(await connectStart(place, useSystem, listen.trim() || undefined, probeUrl, member));
     } catch (e) {
       const words = String(e);
-      setError(words);
-      setFailed({ place, words });
-      if (!samePlace(place, picked)) void placesStore.pick(place).catch(() => {});
+      // Called off by a press of the switch: nothing went wrong.
+      if (words !== CALLED_OFF) {
+        setError(words);
+        setFailed({ place, words });
+        if (!samePlace(place, picked)) void placesStore.pick(place).catch(() => {});
+      }
     } finally {
       setBusy("");
       setGoingTo(null);
@@ -405,10 +446,11 @@ export function ConnectionProvider({
 
   const connectTo = (place: Place) => void start(place);
 
-  /* The switch: on → disconnect; off → the place chosen (the pick, else the first of yours);
-     none of yours → Proxies, which says "Add your proxies first to start connecting!", and the
-     first of them that works connects once they are in. */
+  /* The switch: testing a place → called off; on → disconnect; off → the place chosen (the pick,
+     else the first of yours); none of yours → Proxies, which says "Add your proxies first to start
+     connecting!", and the first of them that works connects once they are in. */
   const toggle = () => {
+    if (busy === "connecting") return void connectCancel().catch(() => {});
     if (running) return void stop();
     if (chosen) return void start(chosen);
     thenConnect.current = true;
@@ -568,9 +610,24 @@ export function ConnectionProvider({
   const shown: Place | null = goingTo ?? connected ?? chosen;
   const view = placeView(shown, { proxies, groups, status, connected });
 
-  const failing = running && !!status?.health && !status.health.ok;
+  const failing = running && (status?.health?.failures_in_a_row ?? 0) >= STOPPED_AFTER;
   const phase = phaseOf(busy, running);
   const support = status?.support;
+  /* After a failed connect, or with a proxy that stopped: the next of yours that answered, one press away. */
+  const next = nextWorking(listed, failed?.place ?? connected);
+  /* Advanced: a proxy that stops moves on by itself, each of yours once, until one passes its test
+     (the working one is never given up before the next one passed). */
+  const movedTo = useRef(new Set<string>());
+  const nextId = next?.kind === "proxy" ? next.id : "";
+  useEffect(() => {
+    if (!failing) {
+      movedTo.current.clear();
+      return;
+    }
+    if (!settings.moveOn || !next || !nextId || busy !== "" || movedTo.current.has(nextId)) return;
+    movedTo.current.add(nextId);
+    connectTo(next);
+  }, [failing, settings.moveOn, nextId, busy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The address you appear as, while on and the last probe answered.
   const exitIp = phase === "on" && status?.health?.ok ? (status.health.exit_ip ?? null) : null;
@@ -618,6 +675,7 @@ export function ConnectionProvider({
     now,
     busy: busy !== "",
     onToggle: toggle,
+    onNext: next ? () => connectTo(next) : undefined,
     canConnect: !!chosen,
     onChangeTarget: changePlace,
     onRotate: () => void moveWithin(connectRotate),
@@ -628,14 +686,16 @@ export function ConnectionProvider({
     error,
     ended,
     useSystem,
-    setUseSystem,
+    setUseSystem: (wholeComputer) => onSettings({ wholeComputer }),
+    killSwitch: settings.killSwitch,
+    setKillSwitch: (killSwitch) => onSettings({ killSwitch }),
     canAutomate: support?.kind === "automatic",
     manualWhy: support?.kind === "manual" ? support.why : undefined,
     manualSteps: support?.kind === "manual" ? support.steps : undefined,
     advanced,
     setAdvanced,
     listen,
-    setListen,
+    setListen: (v) => onSettings({ listen: v }),
   };
   const destinations: DestinationsProps = {
     tab,
@@ -727,6 +787,8 @@ export function ConnectionProvider({
     quickAsk,
     askQuick,
     takePasted: takeText,
+    routingProblem,
+    shareProblem,
     connectThrough,
     saveAsGroup,
     keepLines,

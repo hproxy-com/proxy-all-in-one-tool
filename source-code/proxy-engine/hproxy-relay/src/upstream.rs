@@ -52,6 +52,8 @@ pub struct Upstream {
     pub port: u16,
     /// Absent for open proxies and for providers using IP authorisation.
     pub auth: Option<(String, String)>,
+    /// A proxy in front of this one (routes.rs): reached through it.
+    pub via: Option<Box<Upstream>>,
 }
 
 /// What each proxy turned out to speak, by address, for the life of this
@@ -95,11 +97,21 @@ impl Upstream {
     }
 
     /// The `Proxy-Authorization` header value, when there is a login.
-    pub fn basic_header(&self) -> Option<String> {
-        self.auth
-            .as_ref()
-            .map(|(u, p)| format!("Basic {}", b64(format!("{u}:{p}").as_bytes())))
+    /// This proxy, reached through `first`.
+    pub fn after(&self, first: Option<&Upstream>) -> Upstream {
+        let mut up = self.clone();
+        up.via = first.map(|f| Box::new(f.clone()));
+        up
     }
+
+    pub fn basic_header(&self) -> Option<String> {
+        self.auth.as_ref().map(|(u, p)| basic(u, p))
+    }
+}
+
+/// The value of a `Proxy-Authorization` header.
+pub fn basic(username: &str, password: &str) -> String {
+    format!("Basic {}", b64(format!("{username}:{password}").as_bytes()))
 }
 
 impl fmt::Display for Upstream {
@@ -135,6 +147,7 @@ pub fn parse(raw: &str) -> Result<Upstream, String> {
         host: line.host,
         port: line.port,
         auth: line.auth,
+        via: None,
     })
 }
 

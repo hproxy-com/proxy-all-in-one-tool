@@ -33,8 +33,13 @@ export function notProxyWords(n: number): string {
 /** What testing one line found. */
 export type LineTest = { ok: boolean; ms?: number; cc?: string; place?: string; why?: string };
 
+/** The engine's verdict decides, the one the saved list shows: a proxy that only fetches plain
+    http:// pages answers, and opens no https site; one that reads HTTPS or hides nothing should not
+    be connected through. "Works" here means what it means on the row it is about to become. */
 export function testOf(r: CheckResult): LineTest {
   if (!r.alive) return { ok: false, why: r.error ?? "the proxy did not answer" };
+  const u = r.usable;
+  if (u && (!u.carries || u.tone === "bad")) return { ok: false, why: u.why ?? u.says };
   return { ok: true, ms: r.latency_ms ?? undefined, cc: r.country_code?.toLowerCase() ?? undefined, place: placeOf(r) || undefined };
 }
 

@@ -25,10 +25,13 @@ import com.hproxy.app.engine.Native
 import com.hproxy.app.firewall.Firewall
 import com.hproxy.app.firewall.Net
 import com.hproxy.app.state.AppState
+import com.hproxy.app.state.ErrorWords
 import com.hproxy.app.state.Settings
 import java.util.concurrent.Executors
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
@@ -42,7 +45,9 @@ object Vpn {
 
     /** Make the VPN match the plan, and wait until it does. False: Android refused it. */
     suspend fun apply(context: Context): Boolean {
-        if (AppState.plan().mode == Firewall.Mode.None && HProxyVpnService.running == null) return true
+        // Away from the screen: the first plan reads every app on the phone (Firewall.installed).
+        val mode = withContext(Dispatchers.Default) { AppState.plan().mode }
+        if (mode == Firewall.Mode.None && HProxyVpnService.running == null) return true
         val done = CompletableDeferred<Boolean>()
         waiting = done
         if (!start(context, HProxyVpnService.ACTION_APPLY)) return false
@@ -51,8 +56,11 @@ object Vpn {
 
     /** The same, nobody waiting. */
     fun applyQuietly(context: Context) {
-        if (AppState.plan().mode == Firewall.Mode.None && HProxyVpnService.running == null) return
-        start(context, HProxyVpnService.ACTION_APPLY)
+        AppState.scope.launch {
+            val mode = withContext(Dispatchers.Default) { AppState.plan().mode }
+            if (mode == Firewall.Mode.None && HProxyVpnService.running == null) return@launch
+            start(context, HProxyVpnService.ACTION_APPLY)
+        }
     }
 
     internal fun applied(ok: Boolean) {
@@ -375,18 +383,26 @@ class HProxyVpnService : VpnService() {
             .setContentIntent(openApp())
             .setOngoing(true)
             .setShowWhen(false)
-            .setColor(0xFF0158FF.toInt())
+            // Red while the proxy does not answer, as the app turns.
+            .setColor((if (troubled()) 0xFFC62828 else 0xFF0158FF).toInt())
         if (AppState.wanted) builder.addAction(action("Disconnect", ACTION_DISCONNECT, 2))
         return builder.build()
+    }
+
+    private fun troubled(): Boolean {
+        val health = AppState.health.value
+        return AppState.fallenBack.value || (AppState.wanted && health != null && !health.ok)
     }
 
     private fun words(): Pair<String, String> {
         val shown = AppState.current()
         val health = AppState.health.value
         val blocked = if (mode != Firewall.Mode.None) AppState.plan().blockedHere else 0
+        // The error by its name, in front of what it means: "Timed out. Apps wait until it is back".
+        val named = health?.error?.let { ErrorWords.of(it).name }?.takeIf { it.isNotEmpty() }?.let { "$it. " }.orEmpty()
         return when {
-            AppState.fallenBack.value -> "Your proxy stopped answering" to "Apps use your own internet until it is back"
-            AppState.wanted && health != null && !health.ok -> "Your proxy is not answering" to "Nothing goes around it: apps wait until it is back"
+            AppState.fallenBack.value -> "Your proxy stopped answering" to "${named}Apps use your own internet until it is back"
+            AppState.wanted && health != null && !health.ok -> "Your proxy is not answering" to "${named}Apps wait until it is back"
             AppState.wanted -> {
                 val where = listOfNotNull(health?.exitIp, health?.city ?: health?.country).joinToString(" · ")
                 "Connected · ${shown?.name ?: "HProxy"}" to where.ifEmpty { "Checking where you appear" }

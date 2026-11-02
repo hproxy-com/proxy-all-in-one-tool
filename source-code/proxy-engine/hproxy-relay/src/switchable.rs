@@ -21,11 +21,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use tokio::sync::watch;
 
+use crate::routes::Routing;
 use crate::source::Source;
 
 /// A source the relay forwards through, replaceable while the relay runs.
 pub struct SwitchableSource {
     turn: Mutex<Turn>,
+    routing: Mutex<Arc<Routing>>,
 }
 
 struct Turn {
@@ -45,6 +47,8 @@ impl Turn {
 /// signal that its turn is over.
 pub struct Ticket {
     pub source: Arc<Source>,
+    /// How it travels (routes.rs), as set when it was accepted.
+    pub routing: Arc<Routing>,
     ended: watch::Receiver<bool>,
 }
 
@@ -62,6 +66,7 @@ impl SwitchableSource {
     pub fn new(source: Source) -> Self {
         Self {
             turn: Mutex::new(Turn::new(Arc::new(source))),
+            routing: Mutex::new(Arc::new(Routing::default())),
         }
     }
 
@@ -78,17 +83,32 @@ impl SwitchableSource {
 
     /// The ticket for a connection that was just accepted.
     pub fn ticket(&self) -> Ticket {
+        let routing = Arc::clone(&self.routing.lock().unwrap_or_else(|e| e.into_inner()));
         let turn = self.lock();
         Ticket {
             source: Arc::clone(&turn.source),
+            routing,
             ended: turn.ended.subscribe(),
         }
+    }
+
+    /// How connections travel from now on. The open ones end, so what a rule
+    /// names follows it at once instead of when a tab happens to reconnect.
+    pub fn set_routing(&self, routing: Routing) {
+        *self.routing.lock().unwrap_or_else(|e| e.into_inner()) = Arc::new(routing);
+        self.end_open_connections();
     }
 
     /// Put `source` behind the relay. Every open connection ends, so the
     /// programs that held one come back through the new source.
     pub fn replace(&self, source: Source) {
         self.start_turn(Some(Arc::new(source)));
+    }
+
+    /// Take over what `other` holds: the source a trial relay just proved, at
+    /// the member it reached. Every open connection ends, as with `replace`.
+    pub fn adopt(&self, other: &SwitchableSource) {
+        self.start_turn(Some(other.current()));
     }
 
     /// End every open connection and carry on with the same source.

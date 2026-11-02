@@ -46,6 +46,7 @@ data class Tone(val base: Color, val mid: Color, val near: Color, val nearest: C
     companion object {
         val Dark = Tone(Color(0xFF1A2132), Color(0xFF1B3B84), Color(0xFF1D55D6), Color(0xFF5D95FF))
         val Blue = Tone(Color(0xFF2A6CFF), Color(0xFF4480FF), Color(0xFF5F95FF), Color(0xFFFFFFFF))
+        val Red = Tone(Color(0xFFD23F3F), Color(0xFFDC5A5A), Color(0xFFE67A7A), Color(0xFFFFFFFF))
     }
 }
 

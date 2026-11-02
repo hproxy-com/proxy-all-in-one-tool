@@ -625,6 +625,14 @@
   flex-direction: column;
   gap: 14px;
 }
+/* The empty list's one line for someone with no proxies yet. */
+.ux-add-none {
+  margin: 0;
+  padding: 0 2px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--ink-mute);
+}
 /* Sent here by the switch with none of yours: the words pop in again on each press. */
 .ux-add-asked {
   display: flex;

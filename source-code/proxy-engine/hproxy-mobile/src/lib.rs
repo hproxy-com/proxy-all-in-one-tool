@@ -23,6 +23,7 @@ pub mod chat;
 pub mod checker;
 pub mod engine;
 pub mod events;
+pub mod ffi;
 pub mod firewall;
 pub mod jni_glue;
 pub mod logcat;

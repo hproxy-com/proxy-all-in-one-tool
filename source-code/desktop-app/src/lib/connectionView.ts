@@ -12,6 +12,10 @@ import type { Phase, TargetView } from "../components/connect/ConnectionCard";
     in one line anyone understands. */
 export const ADD_FIRST = "Add your proxies first to start connecting!";
 
+/** How many probes in a row have to fail before the proxy counts as stopped: one is often one bad
+    exit of a gateway. The same number as src-tauri/src/connect.rs, STOPPED_AFTER. */
+export const STOPPED_AFTER = 2;
+
 /** What is under way. "switching" is a connect while already connected: the
     relay keeps running and only the place behind it changes. */
 export type Busy = "" | "connecting" | "switching" | "stopping" | "rotating" | "probing";
@@ -101,4 +105,12 @@ export function placeView(shown: Place | null, { proxies, groups, status, connec
     };
   }
   return null;
+}
+
+/** An error in the engine's words, "timed out: no answer from hproxy.com": its name, shown large,
+    and what it means. Words without a name stay whole. */
+export function errorParts(words: string): { name: string; detail: string } {
+  const upper = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const at = words.indexOf(": ");
+  return at < 0 ? { name: "", detail: upper(words) } : { name: upper(words.slice(0, at)), detail: upper(words.slice(at + 2)) };
 }

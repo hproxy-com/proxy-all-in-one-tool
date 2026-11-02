@@ -130,9 +130,11 @@ class MainActivity : ComponentActivity() {
 
     /** Upright on a phone, which the screens are drawn for; any way round on a tablet or an open
      *  foldable (its shorter side 600 dp or more), where the app keeps a phone's width in the
-     *  middle (ui/Root.kt). Android 16 turns big screens whatever an app asks. */
+     *  middle (ui/Root.kt). Android 16 turns big screens whatever an app asks. A TV stands as it
+     *  stands, however narrow its dp say it is. */
     private fun followScreen(config: Configuration) {
-        val want = if (config.smallestScreenWidthDp < 600) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        val tv = config.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+        val want = if (config.smallestScreenWidthDp < 600 && !tv) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         if (requestedOrientation != want) requestedOrientation = want
     }
 

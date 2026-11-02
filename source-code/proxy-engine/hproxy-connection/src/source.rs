@@ -9,7 +9,7 @@
 use hproxy_places::{Library, Place, Rule};
 use hproxy_relay::pool::Pool;
 use hproxy_relay::upstream::{self, Scheme, Upstream};
-use hproxy_relay::{List, Rotation, Source};
+use hproxy_relay::{List, Mode, Rotation, Routes, Routing, Source};
 
 /// A source and what to say about it: the pool's description of its exit,
 /// and a notice when lines of a group were left out.
@@ -93,6 +93,26 @@ pub fn source_of(lib: &Library, place: &Place) -> Result<(Source, Option<String>
     }
 }
 
+/// How connections travel, from what a door keeps: which sites use the proxy
+/// ("all", "except", "only", and the sites in the person's own words), and the
+/// saved proxy that goes in front of it. The one place these are read, for every
+/// door.
+pub fn routing_of(lib: &Library, mode: &str, sites: &str, first_hop: Option<&str>) -> Result<Routing, String> {
+    let first_hop = match first_hop.filter(|id| !id.is_empty()) {
+        Some(id) => {
+            let proxy = lib
+                .proxy(id)
+                .ok_or("the proxy to go through first is not saved here any more")?;
+            Some(upstream::parse(&proxy.line)?)
+        }
+        None => None,
+    };
+    Ok(Routing {
+        sites: Routes::new(Mode::of(mode), sites)?,
+        first_hop,
+    })
+}
+
 pub fn scheme_of(socks5: bool) -> Scheme {
     if socks5 {
         Scheme::Socks5
@@ -120,6 +140,7 @@ pub fn free_upstream(addr: &str, scheme: Scheme) -> Result<Upstream, String> {
         host: host.to_string(),
         port,
         auth: None,
+        via: None,
     })
 }
 

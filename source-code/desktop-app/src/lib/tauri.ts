@@ -313,6 +313,9 @@ export type ConnectStatus = {
   listen?: string | null;
   upstream?: string | null;
   system_proxy: boolean;
+  /** The proxy stopped and the kill switch is off: programs are on the person's own address
+      until it answers. */
+  on_own_address?: boolean;
   support: SystemProxySupport;
   notice?: string | null;
   source?: SourceInfo | null;
@@ -321,6 +324,8 @@ export type ConnectStatus = {
   health?: RelayHealth | null;
   /** The place connected through, whoever started it (the window or the tray). */
   place?: Place | null;
+  /** Where other devices on this network connect, while they may. */
+  network?: string | null;
 };
 
 /** What a proxy line's username targets. Mirrors `Targeting` in
@@ -456,6 +461,44 @@ export async function connectStart(place: Place, systemProxy: boolean, listen?: 
   }
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<ConnectStatus>("connect_start", { place, listen: listen ?? null, systemProxy, probeUrl: probeUrl ?? null, member: member ?? null });
+}
+
+/** What a connect answers when it was called off (src/connection.rs in hproxy-connection). */
+export const CALLED_OFF = "called off";
+
+/** Call off a connect that is still testing: it answers CALLED_OFF, and nothing changed. */
+export async function connectCancel(): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("connect_cancel");
+}
+
+/** "Use for the whole computer": while connected it happens at once, and the tray's connects follow it. */
+export async function connectSetWholeComputer(on: boolean): Promise<ConnectStatus> {
+  if (!isTauri()) return (await import("./previewConnect")).demoConnectSetWhole(on);
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<ConnectStatus>("connect_set_whole_computer", { on });
+}
+
+/** Which sites use the proxy, and the saved proxy in front of it. Refused with the words that are no site. */
+export async function connectSetRouting(mode: string, sites: string, firstHop: string): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("connect_set_routing", { mode, sites, firstHop: firstHop || null });
+}
+
+/** Other devices on this network use this connection, with a login. */
+export async function connectSetShare(on: boolean, port: number, password: string): Promise<ConnectStatus | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<ConnectStatus>("connect_set_share", { on, port, password });
+}
+
+/** The kill switch: counts at once, the window closed or not. */
+export async function connectSetKillSwitch(on: boolean): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("connect_set_kill_switch", { on });
 }
 
 /** Point the running probe at another server (Settings, "Connect check").

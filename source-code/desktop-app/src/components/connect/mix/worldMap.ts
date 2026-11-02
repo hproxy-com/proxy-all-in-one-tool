@@ -375,11 +375,13 @@ export class Flight {
     city (near), and the city itself; close up, every country's border and the lit one's edge. */
 export type Tone = { base: string; mid: string; near: string; nearest: string; border: string; edge: string };
 
-export const TONES: Record<"dark" | "light" | "blue", Tone> = {
+export const TONES: Record<"dark" | "light" | "blue" | "red", Tone> = {
   // The phone's two (Tone.Dark, Tone.Blue), and one for the light look of the computer app.
   dark: { base: "#1a2132", mid: "#1b3b84", near: "#1d55d6", nearest: "#5d95ff", border: "#3b5490", edge: "#ffffff" },
   light: { base: "#d9dfea", mid: "#a8c1fb", near: "#5f8ff9", nearest: "#0158ff", border: "#aebbd6", edge: "#0158ff" },
   blue: { base: "#2a6cff", mid: "#4480ff", near: "#5f95ff", nearest: "#ffffff", border: "#86abff", edge: "#ffffff" },
+  // A proxy that stopped answering: the page says it is not fine.
+  red: { base: "#d23f3f", mid: "#dc5a5a", near: "#e67a7a", nearest: "#ffffff", border: "#f0a8a8", edge: "#ffffff" },
 };
 
 export type Scene = {

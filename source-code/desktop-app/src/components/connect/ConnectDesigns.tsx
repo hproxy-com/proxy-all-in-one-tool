@@ -3,6 +3,7 @@ import type { ConnectDesign } from "../../lib/look";
 import { Button, Flag, Icon, Switch } from "../ui";
 import ConnectionCard, {
   ConnMessages,
+  KillSwitchRow,
   ConnStatus,
   LeakCheck,
   ProgramSettings,
@@ -59,6 +60,7 @@ function Details({ p, w, routeShown = true }: ConnPart & { routeShown?: boolean 
       <ConnMessages p={p} />
       {w.on && p.status && !p.status.system_proxy && <ProgramSettings listen={p.status.listen ?? ""} phone={w.phone} steps={p.manualSteps} />}
       <SystemProxyRow p={p} w={w} />
+      {!w.phone && <KillSwitchRow p={p} />}
     </>
   );
 }
