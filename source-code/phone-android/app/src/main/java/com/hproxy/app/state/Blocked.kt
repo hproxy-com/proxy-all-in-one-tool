@@ -29,7 +29,8 @@ object Blocked {
     fun tried(context: Context, e: JSONObject) {
         if (!Settings.prefs.value.tellBlocked) return
         val uid = e.optInt("uid", -1)
-        val app = Firewall.installed(context).firstOrNull { it.uid == uid } ?: return
+        // On the screen's thread: the apps as last read, or no notice this once (one a minute at most).
+        val app = Firewall.installedIfRead()?.firstOrNull { it.uid == uid } ?: return
         val net = AppState.net.value
         val where = if (net == Net.Mobile) "mobile data" else "Wi-Fi"
         show(
@@ -64,7 +65,7 @@ object Blocked {
         val prefs = Settings.prefs.value
         val rules = Settings.rules.value
         val known = Settings.knownApps
-        val apps = Firewall.installed(context)
+        val apps = Firewall.installedIfRead() ?: return
         for (id in shown) {
             val uidPart = if (id >= NEW) id - NEW else id - TRIED
             val app = apps.firstOrNull { it.uid % SPAN == uidPart } ?: continue

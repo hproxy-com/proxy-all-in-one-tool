@@ -23,7 +23,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Kill switch", isOn: $killSwitch).tint(C.blue)
+                    Toggle("Kill switch", isOn: $killSwitch).toggleStyle(CutToggle())
                 } footer: {
                     Text(killSwitch
                         ? "If your proxy stops answering, apps wait for it."

@@ -74,7 +74,7 @@ struct ConnectView: View {
             .mask {
                 Circle()
                     .frame(width: on ? reach : 0, height: on ? reach : 0)
-                    .position(x: geo.size.width / 2 + 74, y: geo.size.height * 0.46)
+                    .position(x: geo.size.width / 2 + 74, y: geo.size.height * 0.42)
             }
             .animation(.timingCurve(0.2, 0.9, 0.1, 1, duration: 0.76), value: on)
         }

@@ -47,12 +47,27 @@ object Firewall {
     )
 
     @Volatile private var cache: List<InstalledApp>? = null
+    private val reading = Any()
 
-    /** The apps on the phone (launcher apps, a TV's too, this one left out), by name. One reading at a time:
-     *  it takes seconds on a slow phone with many apps, so it never runs on the screen's thread. */
-    @Synchronized
+    /** The apps on the phone (launcher apps, a TV's too, this one left out), by name. One reading at a
+     *  time: it takes seconds on a slow phone with many apps, so it never runs on the screen's thread.
+     *  A caller that only needs the list gets the last one at once, also while a new reading runs:
+     *  only the very first reading makes anyone wait. */
     fun installed(context: Context, fresh: Boolean = false): List<InstalledApp> {
-        cache?.takeIf { !fresh }?.let { return it }
+        if (!fresh) cache?.let { return it }
+        synchronized(reading) {
+            if (!fresh) cache?.let { return it }
+            val found = read(context)
+            cache = found
+            return found
+        }
+    }
+
+    /** The list as last read, never waiting: what the screen's thread may use. Null before the first
+     *  reading finished. (Waiting for it there froze the app: Play's "not responding", 0.4.1 and 0.4.5.) */
+    fun installedIfRead(): List<InstalledApp>? = cache
+
+    private fun read(context: Context): List<InstalledApp> {
         val pm = context.packageManager
         val launchers = listOf(Intent.CATEGORY_LAUNCHER, Intent.CATEGORY_LEANBACK_LAUNCHER)
         @Suppress("DEPRECATION")
@@ -75,7 +90,6 @@ object Firewall {
                 }
             }
             .sortedBy { it.label.lowercase() }
-        cache = found
         return found
     }
 
@@ -98,8 +112,8 @@ object Firewall {
         prefs: Prefs,
         rules: Map<String, AppRule>,
         known: Set<String>,
+        apps: List<InstalledApp> = installed(context),
     ): Plan {
-        val apps = installed(context)
         val rule = apps.associate { it.pkg to ruleOf(it.pkg, rules, prefs, known) }
         val blockedSomewhere = apps.filter { rule.getValue(it.pkg).blocksSomewhere }.map { it.pkg }.toSet()
         val viaProxy = apps.filter { throughProxy(rule.getValue(it.pkg), prefs) }.map { it.pkg }.toSet()

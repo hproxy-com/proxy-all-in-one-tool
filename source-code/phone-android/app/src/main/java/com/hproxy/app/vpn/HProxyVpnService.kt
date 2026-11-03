@@ -123,6 +123,8 @@ class HProxyVpnService : VpnService() {
     /** The newest start Android handed over: closing stops the service only when no newer one is on
      *  its way, so a Connect that lands while a Disconnect closes is never cut off. */
     @Volatile private var lastStart = 0
+    /** In front with its notification (startForeground), until close() takes it down. */
+    @Volatile private var inFront = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lastStart = startId
@@ -132,7 +134,10 @@ class HProxyVpnService : VpnService() {
                 // In front at once when it was started that way, even when the plan is off by now (a
                 // Disconnect right after Connect): Android closes the app over a missing notification.
                 // Also when it opens a VPN. One started plainly, only to close it, has nothing to show.
-                if (intent.getBooleanExtra(IN_FRONT, false) || AppState.plan().mode != Firewall.Mode.None) foreground(notification())
+                // Never waiting for the apps here, on the screen's thread: before the first reading,
+                // apply() puts the service in front from its own thread when the plan needs it.
+                val needs = AppState.planIfReady()?.mode?.let { it != Firewall.Mode.None } ?: false
+                if (intent.getBooleanExtra(IN_FRONT, false) || needs) foreground(notification())
                 work.execute { apply() }
             }
             ACTION_DISCONNECT -> AppState.disconnect()
@@ -160,6 +165,7 @@ class HProxyVpnService : VpnService() {
                 Vpn.applied(true)
                 return
             }
+            if (!inFront) foreground(notification())
             Engine.callNow("firewall", plan.table)
             val same = plan.mode == mode && plan.inside == inside && plan.outside == outside && running != null
             if (!same) {
@@ -250,6 +256,7 @@ class HProxyVpnService : VpnService() {
         outside = emptySet()
         unwatch()
         running = null
+        inFront = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelfResult(lastStart)
     }
@@ -348,6 +355,7 @@ class HProxyVpnService : VpnService() {
         try {
             if (Build.VERSION.SDK_INT >= 34) startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED)
             else startForeground(NOTIFICATION_ID, n)
+            inFront = true
         } catch (e: Exception) {
             // The VPN carries traffic either way: Android keeps a VPN's service running.
             Log.w(TAG, "vpn: the notification could not be shown", e)
@@ -397,7 +405,8 @@ class HProxyVpnService : VpnService() {
     private fun words(): Pair<String, String> {
         val shown = AppState.current()
         val health = AppState.health.value
-        val blocked = if (mode != Firewall.Mode.None) AppState.plan().blockedHere else 0
+        // Also on the screen's thread (refresh): the apps as last read, never a wait for them.
+        val blocked = if (mode != Firewall.Mode.None) AppState.planIfReady()?.blockedHere ?: 0 else 0
         // The error by its name, in front of what it means: "Timed out. Apps wait until it is back".
         val named = health?.error?.let { ErrorWords.of(it).name }?.takeIf { it.isNotEmpty() }?.let { "$it. " }.orEmpty()
         return when {

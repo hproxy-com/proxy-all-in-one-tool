@@ -95,6 +95,33 @@ struct HLetter: Shape {
     }
 }
 
+/// A switch in the H's cut, the big one on Connect made small: the system's is a pill.
+struct CutToggle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            configuration.isOn.toggle()
+        } label: {
+            HStack {
+                configuration.label.foregroundColor(C.ink)
+                Spacer()
+                ZStack(alignment: configuration.isOn ? .trailing : .leading) {
+                    Cut(big: 12, small: 4)
+                        .fill(configuration.isOn ? C.blue : C.s3)
+                        .frame(width: 54, height: 32)
+                    Cut(big: 9, small: 3)
+                        .fill(Color.white)
+                        .frame(width: 26, height: 26)
+                        .padding(3)
+                }
+                .animation(.easeOut(duration: 0.18), value: configuration.isOn)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(configuration.isOn ? "On" : "Off")
+    }
+}
+
 /// The solid blue button of the app.
 struct PrimaryButton: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled

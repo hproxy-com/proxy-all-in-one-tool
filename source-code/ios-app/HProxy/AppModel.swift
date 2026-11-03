@@ -24,6 +24,12 @@ final class AppModel: ObservableObject {
     var stopped: Bool { phase == .on && (health?.failures_in_a_row ?? 0) >= 2 }
 
     init() {
+        #if DEBUG
+        if let demo = UserDefaults.standard.string(forKey: "demo") {
+            showDemo(demo)
+            return
+        }
+        #endif
         Task {
             do {
                 try await Engine.start(inTunnel: false)
@@ -37,6 +43,34 @@ final class AppModel: ObservableObject {
             await tunnel.load()
         }
     }
+
+    #if DEBUG
+    /// The store's pictures (`-demo on`, `off` or `stopped`, scripts/pictures.sh): a
+    /// connection on example addresses, since a tunnel cannot run on the Simulator. Never
+    /// in a release build.
+    private func showDemo(_ state: String) {
+        library.proxies = [
+            ProxyItem(id: "a", name: "New York residential", address: "203.0.113.24:8080", scheme: "http"),
+            ProxyItem(id: "b", address: "198.51.100.7:1080", scheme: "socks5"),
+            ProxyItem(id: "c", name: "Berlin mobile", address: "192.0.2.61:8000", scheme: "http"),
+        ]
+        library.groups = [GroupItem(id: "g", name: "Rotating sessions", size: 100)]
+        library.switchTo = .proxy("a")
+        guard state != "off" else { return }
+        phase = .on
+        let stopped = state == "stopped"
+        health = Health(
+            ok: !stopped,
+            latency_ms: 84,
+            exit_ip: "203.0.113.24",
+            country_code: "US",
+            country: "United States",
+            city: "New York",
+            error: stopped ? "timed out: the proxy did not answer in time" : nil,
+            failures_in_a_row: stopped ? 2 : 0
+        )
+    }
+    #endif
 
     /// One call to the engine. What it refuses is said in red.
     private func ask(_ method: String, _ args: [String: Any] = [:]) async -> Any? {

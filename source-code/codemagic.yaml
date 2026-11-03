@@ -41,20 +41,12 @@ workflows:
       - name: Pictures of the screens
         script: |
           cd ios-app
-          mkdir -p pictures
-          APP=$(find build/Build/Products -name 'HProxy.app' -maxdepth 3 | head -1)
-          xcrun simctl terminate "$DEVICE" com.hproxy.app || true
-          xcrun simctl uninstall "$DEVICE" com.hproxy.app || true
-          xcrun simctl install "$DEVICE" "$APP"
-          xcrun simctl launch "$DEVICE" com.hproxy.app
-          sleep 6
-          xcrun simctl io "$DEVICE" screenshot pictures/welcome.png
-          for tab in 0 1 2; do
-            xcrun simctl terminate "$DEVICE" com.hproxy.app
-            xcrun simctl launch "$DEVICE" com.hproxy.app -welcomed YES -tab "$tab"
-            sleep 4
-            xcrun simctl io "$DEVICE" screenshot "pictures/tab-$tab.png"
-          done
+          xcrun simctl shutdown all || true
+          APP=$(find "$PWD/build/Build/Products" -name 'HProxy.app' -maxdepth 3 | head -1)
+          PHONE=$(xcrun simctl list devices available | grep -m1 'Pro Max' | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
+          sh scripts/pictures.sh "$APP" "$PHONE" iphone
+          PAD=$(xcrun simctl list devices available | grep -m1 'iPad Pro 13' | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
+          sh scripts/pictures.sh "$APP" "$PAD" ipad
     artifacts:
       - ios-app/pictures/*.png
       - ios-app/build/Logs/**/*.xcresult

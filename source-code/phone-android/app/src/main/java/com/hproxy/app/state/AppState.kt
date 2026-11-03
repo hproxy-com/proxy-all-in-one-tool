@@ -457,14 +457,21 @@ object AppState {
         Blocked.forgetAllowed(app)
     }
 
-    /** The plan for the VPN as things stand. */
-    fun plan(): Firewall.Plan = Firewall.plan(
+    /** The plan for the VPN as things stand. The first one reads every app on the phone: never on
+     *  the screen's thread, which has [planIfReady]. */
+    fun plan(): Firewall.Plan = planWith(Firewall.installed(app))
+
+    /** The same from the apps as last read, never waiting; null before the first reading. */
+    fun planIfReady(): Firewall.Plan? = Firewall.installedIfRead()?.let { planWith(it) }
+
+    private fun planWith(apps: List<com.hproxy.app.firewall.InstalledApp>): Firewall.Plan = Firewall.plan(
         app,
         connected = throughProxy(),
         net = netFlow.value,
         prefs = Settings.prefs.value,
         rules = Settings.rules.value,
         known = Settings.knownApps,
+        apps = apps,
     )
 
     /** The VPN ended without being asked (another VPN app took over, or the phone's settings). */
