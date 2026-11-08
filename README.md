@@ -79,6 +79,13 @@ hproxy mcp                                                      # the same tools
 - **Private by design**: checks run on your own device by default, and your list and its logins
   stay there. What goes out, and where to, is in [PRIVACY.md](source-code/PRIVACY.md).
 
+## Where to get proxies
+
+The app comes with HProxy's free list, so you can start without buying anything. Free proxies are shared with
+everyone who found the same list, though, and fewer than half answer at any moment. When a job needs proxies that stay
+up and keep a session, HProxy sells [residential proxies](https://hproxy.com/residential-proxies?utm_source=github&utm_medium=readme&utm_campaign=proxy-all-in-one-tool)
+by the gigabyte, and the app checks and connects them like any other list.
+
 ## Build it yourself
 
 Everything HProxy is made of is in [source-code](source-code/): the app for Windows, macOS and
