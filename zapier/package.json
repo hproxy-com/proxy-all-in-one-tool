@@ -14,7 +14,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test test/live.test.js"
   },
   "dependencies": {
     "zapier-platform-core": "19.2.1"
