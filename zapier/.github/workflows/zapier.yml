@@ -32,7 +32,7 @@ jobs:
       - name: Validate (Zapier's schema and style checks)
         env:
           ZAPIER_DEPLOY_KEY: ${{ secrets.ZAPIER_DEPLOY_KEY }}
-        run: npx --no-install zapier validate
+        run: npx --no-install zapier-platform validate
 
       - name: Test against hproxy.com
         env:
@@ -43,4 +43,4 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.push
         env:
           ZAPIER_DEPLOY_KEY: ${{ secrets.ZAPIER_DEPLOY_KEY }}
-        run: npx --no-install zapier push
+        run: npx --no-install zapier-platform push
