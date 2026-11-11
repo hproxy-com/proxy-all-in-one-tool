@@ -1,0 +1,46 @@
+# Validates the integration against Zapier's schema and style checks and runs its steps against hproxy.com on every
+# push; run by hand with "push" ticked, it uploads this version to Zapier (app 249602) with the deploy key.
+name: Zapier
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      push:
+        description: "Push this version to Zapier"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Validate (Zapier's schema and style checks)
+        env:
+          ZAPIER_DEPLOY_KEY: ${{ secrets.ZAPIER_DEPLOY_KEY }}
+        run: npx --no-install zapier validate
+
+      - name: Test against hproxy.com
+        env:
+          HPROXY_API_KEY: ${{ secrets.HPROXY_DEMO_API_KEY }}
+        run: npm test
+
+      - name: Push to Zapier
+        if: github.event_name == 'workflow_dispatch' && inputs.push
+        env:
+          ZAPIER_DEPLOY_KEY: ${{ secrets.ZAPIER_DEPLOY_KEY }}
+        run: npx --no-install zapier push

@@ -1,0 +1,25 @@
+{
+  "name": "hproxy-zapier",
+  "version": "1.0.0",
+  "description": "HProxy for Zapier: residential proxy lines from your plans, plan traffic, and HProxy's free proxy list, proxy checker and IP lookup.",
+  "homepage": "https://hproxy.com/residential-proxies",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hproxy-com/zapier-hproxy.git"
+  },
+  "license": "MIT",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "zapier-platform-core": "19.2.1"
+  },
+  "devDependencies": {
+    "zapier-platform-cli": "19.2.1"
+  }
+}
