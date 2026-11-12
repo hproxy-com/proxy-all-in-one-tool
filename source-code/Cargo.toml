@@ -1,5 +1,5 @@
-# One workspace, one lock file, one engine. The Rust half of
-# Hproxy-Software-Bundle-Core (the folder layout is in README.md).
+# One workspace, one lock file, one engine. The Rust half of this
+# repository (the folder layout is in README.md).
 #
 #   proxy-engine/hproxy-probe   THE ENGINE. Parses a proxy line, dials it, climbs the
 #                               judge ladder on every transport, grades anonymity,

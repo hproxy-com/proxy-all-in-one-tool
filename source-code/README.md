@@ -18,7 +18,7 @@ scripts and as an MCP server for AI assistants.
 
 ## What is in this repository
 
-All of HProxy's software, in one place (Hproxy-Software-Bundle-Core):
+All of HProxy's software, in one place:
 
 | Folder | What it is |
 | --- | --- |
