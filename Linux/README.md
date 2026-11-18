@@ -22,7 +22,12 @@ curl -fsSL https://hproxy.com/install.sh | sh
 ```
 
 It picks the file for the processor and lands in `~/.local/bin` (or `$HPROXY_INSTALL_DIR`) after a
-check against its SHA-256, without sudo. The files themselves (`hproxy-cli-linux-x86_64`,
-`hproxy-cli-linux-arm64`, `hproxy-cli-linux-armv6`) are on
-[the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.3.8). The
-commands are in [source-code/README.md](../source-code/README.md#command-line).
+check against its SHA-256, without sudo. Or with [Homebrew](https://brew.sh):
+`brew install hproxy-com/tap/hproxy`. The files themselves (`hproxy-cli-linux-x86_64`,
+`hproxy-cli-linux-arm64`, `hproxy-cli-linux-armv6`) are attached to every
+[command-line release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases) (`cli-v` and
+its version). The commands are in [source-code/README.md](../source-code/README.md#command-line).
+
+In a container, for Docker, Podman, Kubernetes and the clouds' container services (Amazon ECS,
+Fargate and EKS on Intel and Graviton), on x86_64 and ARM:
+[ghcr.io/hproxy-com/hproxy](../Docker/), with the rotating proxy beside your app.

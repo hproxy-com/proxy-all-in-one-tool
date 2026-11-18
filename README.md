@@ -32,6 +32,7 @@
 | **Linux** x86_64 | **[AppImage](https://hproxy.com/downloads/desktop/hproxy-linux-x86_64.AppImage)** or **[.deb](https://hproxy.com/downloads/desktop/hproxy-linux-x86_64.deb)** | [how to install](Linux/) |
 | **Android** 7 and later | **[Get it on Google Play](https://play.google.com/store/apps/details?id=com.hproxy.app)** | [Android](Android/) |
 | **Command line and AI assistants** on macOS, Linux and Windows, x64 and ARM | **[Install in one line](#command-line)** | [all the commands](source-code/README.md#command-line) |
+| **Containers**: Docker, Kubernetes, Amazon ECS and EKS, NAS, x64 and ARM | **[ghcr.io/hproxy-com/hproxy](Docker/)** | [how to run it](Docker/) |
 
 ## Command line
 
@@ -51,8 +52,14 @@ irm https://hproxy.com/install.ps1 | iex
 The installer picks the file for your system and processor. It lands in `~/.local/bin` (Windows:
 `%LOCALAPPDATA%\hproxy`, added to your PATH) after a check against its SHA-256, with no
 administrator rights, and nothing has to be installed beside it. Every file, its sum and its build
-record are on [the release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v0.3.8),
-built by this repository's own workflow from [source-code](source-code/). Then:
+record are attached to every
+[command-line release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases) (`cli-v` and
+its version), built by this repository's own workflow from [source-code](source-code/).
+
+The same tool with Homebrew (`brew install hproxy-com/tap/hproxy`), with Scoop
+(`scoop bucket add hproxy https://github.com/hproxy-com/scoop-bucket`, then
+`scoop install hproxy/hproxy`), and as a container for Docker, Kubernetes and the clouds
+(`docker run --rm ghcr.io/hproxy-com/hproxy list`, [more](Docker/)). Then:
 
 ```sh
 hproxy list --protocol socks5 | hproxy check --first 5 --alive   # 5 free SOCKS5 that work here

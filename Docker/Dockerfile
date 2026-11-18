@@ -37,7 +37,7 @@ ENV PATH=/usr/local/bin \
     HPROXY_NO_UPDATE_CHECK=1 \
     HPROXY_NO_USAGE=1
 
-# Not root: the relay needs no privilege, and neither does port 8080.
+# An unprivileged user: the relay needs no privilege, and neither does port 8080.
 USER 65532:65532
 WORKDIR /home/hproxy
 
