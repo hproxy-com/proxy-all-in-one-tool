@@ -41,7 +41,6 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/hproxy-com/hproxy
-  PLATFORMS: linux/amd64 linux/arm64 linux/arm/v6 linux/arm/v7
   DESCRIPTION: HProxy command-line tool. Rotate your own proxies or the free pool through one local HTTP and SOCKS5 port. Check proxies and list free ones. Look up IPs. Give AI assistants the same tools (MCP).
 
 jobs:
@@ -83,28 +82,47 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "NEWEST=$newest" >> "$GITHUB_ENV"
 
-      - name: The released Linux files, each checked against its sum and its build record
+      - name: The release's Linux files, each checked against its sum and its build record, laid out by platform
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir dl
           gh release download "cli-v$VERSION" --dir dl --pattern SHA256SUMS --pattern 'hproxy-cli-linux-*'
           cd dl
-          for f in hproxy-cli-linux-x86_64 hproxy-cli-linux-arm64 hproxy-cli-linux-armv6; do
+          # The platform each Linux file serves. The image gets a platform for every file the release
+          # has, so a release with a new processor reaches Docker by itself; x86_64 and 64-bit ARM are
+          # in every image. An ARMv6 program runs on every 32-bit ARM, so it serves v6 and v7.
+          platforms=""
+          for pair in x86_64=linux/amd64 arm64=linux/arm64 armv6=linux/arm/v6,linux/arm/v7 i686=linux/386 riscv64=linux/riscv64; do
+            f="hproxy-cli-linux-${pair%%=*}"
+            if [ ! -f "$f" ]; then
+              case "$f" in
+                *-x86_64 | *-arm64) echo "::error::cli-v$VERSION has no $f"; exit 1 ;;
+              esac
+              continue
+            fi
             grep -E "^[0-9a-f]{64}  $f\$" SHA256SUMS | sha256sum --check --strict - || {
               echo "::error::$f does not match the SHA256SUMS of cli-v$VERSION"
               exit 1
             }
             gh attestation verify "$f" --repo "$GITHUB_REPOSITORY" > /dev/null
-            echo "$f: built by this repository's workflow"
+            echo "$f: built by this repository's workflow, for ${pair#*=}"
+            for p in $(printf '%s' "${pair#*=}" | tr ',' ' '); do
+              install -D -m 0755 "$f" "../Docker/$p/hproxy"
+              platforms="$platforms $p"
+            done
           done
+          for f in hproxy-cli-linux-*; do
+            case "${f#hproxy-cli-linux-}" in
+              x86_64 | arm64 | armv6 | i686 | riscv64) ;;
+              *) echo "::warning::$f is in the release, and no platform of the image takes it yet" ;;
+            esac
+          done
+          echo "PLATFORMS=${platforms# }" >> "$GITHUB_ENV"
+          echo "the image's platforms: ${platforms# }"
 
-      - name: Laid out by platform, beside the Dockerfile
+      - name: A home for the image's user
         run: |
-          install -D -m 0755 dl/hproxy-cli-linux-x86_64 Docker/linux/amd64/hproxy
-          install -D -m 0755 dl/hproxy-cli-linux-arm64 Docker/linux/arm64/hproxy
-          install -D -m 0755 dl/hproxy-cli-linux-armv6 Docker/linux/arm/v6/hproxy
-          install -D -m 0755 dl/hproxy-cli-linux-armv6 Docker/linux/arm/v7/hproxy
           mkdir -p Docker/home
           find Docker/linux -type f -exec sha256sum {} +
 
