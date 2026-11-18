@@ -49,7 +49,11 @@ jobs:
       - name: An ARM machine to run on (QEMU, from Ubuntu)
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-user-static
+          # Ubuntu 26.04 (ubuntu-latest since late 2026) dropped the package qemu-user-static for
+          # qemu-user-binfmt, which registers the same ARM emulation for containers; older images
+          # still carry the first.
+          sudo apt-get install -y qemu-user-binfmt || sudo apt-get install -y qemu-user-static
+          ls /proc/sys/fs/binfmt_misc/ | grep -i arm
 
       - name: Install, as the README says, on Debian for 32-bit ARM (what Raspberry Pi OS is built on)
         run: |
