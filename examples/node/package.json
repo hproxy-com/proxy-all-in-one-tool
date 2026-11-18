@@ -1,0 +1,12 @@
+{
+  "name": "hproxy-example-node",
+  "private": true,
+  "type": "module",
+  "description": "Requests through the hproxy rotating proxy with Node's fetch (undici)",
+  "engines": {
+    "node": ">=20.18.1"
+  },
+  "dependencies": {
+    "undici": "^7.0.0"
+  }
+}

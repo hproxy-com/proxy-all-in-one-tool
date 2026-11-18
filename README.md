@@ -67,6 +67,11 @@ hproxy ip 8.8.8.8                                               # where an addre
 hproxy mcp                                                      # the same tools for an AI assistant
 ```
 
+From your own code: `hproxy connect --file proxies.txt --background` gives every language one
+proxy with no login at `127.0.0.1:8080`, the next of your proxies for every connection. Tested
+[examples](examples/) for Python, Node.js, Go, Rust, Java, C#, PHP, Ruby, PowerShell and curl, and
+for Playwright, Puppeteer and Selenium.
+
 ## What it does
 
 - **Checks any proxy list** in the format your provider prints it: HTTP, HTTPS, SOCKS4 and

@@ -1,0 +1,9 @@
+[package]
+name = "hproxy-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Requests through the hproxy rotating proxy with reqwest"
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }

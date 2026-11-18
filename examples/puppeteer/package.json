@@ -1,0 +1,12 @@
+{
+  "name": "hproxy-example-puppeteer",
+  "private": true,
+  "type": "module",
+  "description": "Chrome through the hproxy rotating proxy with Puppeteer",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "puppeteer": "^24.0.0"
+  }
+}

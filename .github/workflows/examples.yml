@@ -1,0 +1,130 @@
+name: Examples
+
+# Every example in examples/ against the released hproxy, installed the way the README says. Two
+# test proxies run on the machine (tinyproxy, from Ubuntu) and the rotating proxy goes over both:
+# each example's three requests have to come out through both of them, which only happens when
+# the example opens a new connection per request, as it says it does.
+
+on:
+  push:
+    branches: [main]
+    paths: [examples/**, .github/workflows/examples.yml]
+  pull_request:
+    paths: [examples/**, .github/workflows/examples.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  example:
+    name: ${{ matrix.name }}
+    # Ubuntu 24.04: on 26.04 an AppArmor profile keeps tinyproxy to configs in /etc/tinyproxy.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Shell (curl)
+            dir: examples
+            run: sh curl.sh
+          - name: Python (requests)
+            dir: examples/python
+            setup: python3 -m pip install --quiet requests
+            run: python3 requests_example.py
+          - name: Python (urllib)
+            dir: examples/python
+            run: python3 urllib_example.py
+          - name: Node.js (fetch)
+            dir: examples/node
+            setup: npm install --no-audit --no-fund
+            run: node fetch.mjs
+          - name: Go
+            dir: examples/go
+            run: go run main.go
+          - name: Rust
+            dir: examples/rust
+            run: cargo run --quiet
+          - name: Java
+            dir: examples/java
+            run: java Example.java
+          - name: C#
+            dir: examples/csharp
+            run: dotnet run
+          - name: PHP
+            dir: examples/php
+            run: php example.php
+          - name: Ruby
+            dir: examples/ruby
+            run: ruby example.rb
+          - name: PowerShell
+            dir: examples/powershell
+            run: pwsh -NoProfile -File example.ps1
+          - name: Playwright
+            dir: examples/playwright
+            setup: npm install --no-audit --no-fund && npx playwright install --with-deps chromium
+            run: node playwright.mjs
+          - name: Puppeteer
+            dir: examples/puppeteer
+            # Ubuntu 24.04 keeps unprivileged programs from the sandbox Chrome for Testing uses.
+            setup: npm install --no-audit --no-fund && sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            run: node puppeteer.mjs
+          - name: Selenium
+            dir: examples/selenium
+            setup: python3 -m pip install --quiet selenium
+            run: python3 selenium_example.py
+    defaults:
+      run:
+        shell: bash
+    env:
+      DOTNET_NOLOGO: "1"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: hproxy, installed the way the README says
+        env:
+          HPROXY_NO_UPDATE_CHECK: "1"
+          HPROXY_NO_USAGE: "1"
+        run: |
+          curl -fsSL https://hproxy.com/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/hproxy" --version
+
+      - name: Two test proxies, and the rotating proxy over both
+        env:
+          HPROXY_NO_UPDATE_CHECK: "1"
+          HPROXY_NO_USAGE: "1"
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tinyproxy > /dev/null
+          sudo systemctl stop tinyproxy 2> /dev/null || true
+          for port in 3128 3129; do
+          printf 'Port %s\nListen 127.0.0.1\nTimeout 60\nAllow 127.0.0.1\nConnectPort 443\nLogFile "%s/tinyproxy-%s.log"\nLogLevel Connect\n' "$port" "$RUNNER_TEMP" "$port" > "$RUNNER_TEMP/tinyproxy-$port.conf"
+          tinyproxy -c "$RUNNER_TEMP/tinyproxy-$port.conf"
+          done
+          printf '127.0.0.1:3128\n127.0.0.1:3129\n' > "$RUNNER_TEMP/proxies.txt"
+          hproxy connect --file "$RUNNER_TEMP/proxies.txt" --background
+          hproxy status
+
+      - name: What the example needs
+        if: matrix.setup
+        working-directory: ${{ matrix.dir }}
+        run: ${{ matrix.setup }}
+
+      - name: Three requests, out through both test proxies
+        working-directory: ${{ matrix.dir }}
+        run: |
+          ${{ matrix.run }} | tee "$RUNNER_TEMP/out.txt"
+          lines=$(grep -c 'ip=' "$RUNNER_TEMP/out.txt" || true)
+          first=$(grep -c 'Request (file descriptor' "$RUNNER_TEMP/tinyproxy-3128.log" || true)
+          second=$(grep -c 'Request (file descriptor' "$RUNNER_TEMP/tinyproxy-3129.log" || true)
+          echo "answers: $lines, through the first test proxy: $first, through the second: $second"
+          test "$lines" -eq 3
+          if grep -q 'ip= \|ip=?\|ip=undefined\|ip=None' "$RUNNER_TEMP/out.txt"; then
+            echo "::error::an answer without an address"
+            exit 1
+          fi
+          test "$first" -ge 1
+          test "$second" -ge 1
