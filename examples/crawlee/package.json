@@ -1,0 +1,12 @@
+{
+  "name": "hproxy-example-crawlee",
+  "private": true,
+  "type": "module",
+  "description": "A Crawlee crawler through the hproxy rotating proxy",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "crawlee": "^3.11.0"
+  }
+}

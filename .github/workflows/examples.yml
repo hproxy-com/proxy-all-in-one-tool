@@ -20,7 +20,7 @@ jobs:
   example:
     name: ${{ matrix.name }}
     # Ubuntu 24.04: on 26.04 an AppArmor profile keeps tinyproxy to configs in /etc/tinyproxy.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os || 'ubuntu-24.04' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -74,6 +74,75 @@ jobs:
             dir: examples/selenium
             setup: python3 -m pip install --quiet selenium
             run: python3 selenium_example.py
+          - name: Python (httpx)
+            dir: examples/python
+            setup: python3 -m pip install --quiet httpx
+            run: python3 httpx_example.py
+          - name: Python (aiohttp)
+            dir: examples/python
+            setup: python3 -m pip install --quiet aiohttp
+            run: python3 aiohttp_example.py
+          - name: Scrapy
+            dir: examples/python
+            setup: python3 -m pip install --quiet "scrapy>=2.13"
+            run: python3 scrapy_example.py
+          - name: Playwright (Python)
+            dir: examples/playwright
+            setup: python3 -m pip install --quiet playwright && python3 -m playwright install --with-deps chromium
+            run: python3 playwright_example.py
+          - name: Node.js (axios)
+            dir: examples/node
+            setup: npm install --no-audit --no-fund
+            run: node axios.mjs
+          - name: Node.js (got)
+            dir: examples/node
+            setup: npm install --no-audit --no-fund
+            run: node got.mjs
+          - name: Crawlee
+            dir: examples/crawlee
+            setup: npm install --no-audit --no-fund
+            run: node crawlee.mjs
+          - name: Deno
+            dir: examples/deno
+            # Deno's own release file, from its GitHub releases.
+            setup: >-
+              curl -fsSL -o "$RUNNER_TEMP/deno.zip" https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip &&
+              unzip -q -o "$RUNNER_TEMP/deno.zip" -d "$HOME/.deno-bin" && echo "$HOME/.deno-bin" >> "$GITHUB_PATH"
+            run: deno run --allow-net example.ts
+          - name: Bun
+            dir: examples/bun
+            # Bun's own release file, from its GitHub releases.
+            setup: >-
+              curl -fsSL -o "$RUNNER_TEMP/bun.zip" https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip &&
+              unzip -q -o "$RUNNER_TEMP/bun.zip" -d "$RUNNER_TEMP" && echo "$RUNNER_TEMP/bun-linux-x64" >> "$GITHUB_PATH"
+            run: bun example.ts
+          - name: Kotlin (OkHttp)
+            dir: examples/kotlin
+            # The Kotlin compiler's own release file, when this machine has no Kotlin.
+            setup: >-
+              command -v kotlin || { curl -fsSL -o "$RUNNER_TEMP/kotlin.zip" https://github.com/JetBrains/kotlin/releases/download/v2.1.0/kotlin-compiler-2.1.0.zip &&
+              unzip -q -o "$RUNNER_TEMP/kotlin.zip" -d "$RUNNER_TEMP" && echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"; }
+            run: kotlin example.main.kts
+          - name: Swift (macOS)
+            os: macos-latest
+            dir: examples/swift
+            run: swift example.swift
+          - name: C (libcurl)
+            dir: examples/c
+            setup: sudo apt-get install -y -qq libcurl4-openssl-dev > /dev/null
+            run: cc example.c -lcurl -o "$RUNNER_TEMP/example" && "$RUNNER_TEMP/example"
+          - name: Perl (LWP)
+            dir: examples/perl
+            setup: sudo apt-get install -y -qq libwww-perl liblwp-protocol-https-perl > /dev/null
+            run: perl example.pl
+          - name: R (httr)
+            dir: examples/r
+            setup: sudo apt-get install -y -qq r-base-core r-cran-httr > /dev/null
+            run: Rscript example.R
+          - name: Command-line tools
+            dir: examples/tools
+            setup: sudo apt-get install -y -qq aria2 httpie > /dev/null
+            run: sh tools.sh
     defaults:
       run:
         shell: bash
@@ -97,9 +166,13 @@ jobs:
           HPROXY_NO_UPDATE_CHECK: "1"
           HPROXY_NO_USAGE: "1"
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq tinyproxy > /dev/null
-          sudo systemctl stop tinyproxy 2> /dev/null || true
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install tinyproxy > /dev/null
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq tinyproxy > /dev/null
+            sudo systemctl stop tinyproxy 2> /dev/null || true
+          fi
           for port in 3128 3129; do
           printf 'Port %s\nListen 127.0.0.1\nTimeout 60\nAllow 127.0.0.1\nConnectPort 443\nLogFile "%s/tinyproxy-%s.log"\nLogLevel Connect\n' "$port" "$RUNNER_TEMP" "$port" > "$RUNNER_TEMP/tinyproxy-$port.conf"
           tinyproxy -c "$RUNNER_TEMP/tinyproxy-$port.conf"

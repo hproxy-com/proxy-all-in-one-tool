@@ -47,9 +47,27 @@ the address and the country the site saw, one line per request.
 | Playwright | [playwright/playwright.mjs](playwright/playwright.mjs) | `npm install`, `npx playwright install chromium`, `node playwright.mjs` |
 | Puppeteer | [puppeteer/puppeteer.mjs](puppeteer/puppeteer.mjs) | `npm install`, then `node puppeteer.mjs` |
 | Selenium | [selenium/selenium_example.py](selenium/selenium_example.py) | `pip install selenium`, then `python selenium_example.py` |
+| Python, httpx | [python/httpx_example.py](python/httpx_example.py) | `pip install httpx`, then `python httpx_example.py` |
+| Python, aiohttp | [python/aiohttp_example.py](python/aiohttp_example.py) | `pip install aiohttp`, then `python aiohttp_example.py` |
+| Scrapy | [python/scrapy_example.py](python/scrapy_example.py) | `pip install "scrapy>=2.13"`, then `python scrapy_example.py` |
+| Playwright for Python | [playwright/playwright_example.py](playwright/playwright_example.py) | `pip install playwright`, `playwright install chromium`, `python playwright_example.py` |
+| Node.js, axios | [node/axios.mjs](node/axios.mjs) | `npm install`, then `node axios.mjs` |
+| Node.js, got | [node/got.mjs](node/got.mjs) | `npm install`, then `node got.mjs` |
+| Crawlee | [crawlee/crawlee.mjs](crawlee/crawlee.mjs) | `npm install`, then `node crawlee.mjs` |
+| Deno | [deno/example.ts](deno/example.ts) | `deno run --allow-net example.ts` |
+| Bun | [bun/example.ts](bun/example.ts) | `bun example.ts` |
+| Kotlin and Java, OkHttp | [kotlin/example.main.kts](kotlin/example.main.kts) | `kotlin example.main.kts` |
+| Swift, macOS | [swift/example.swift](swift/example.swift) | `swift example.swift` |
+| C and C++, libcurl | [c/example.c](c/example.c) | `cc example.c -lcurl -o example && ./example` |
+| Perl | [perl/example.pl](perl/example.pl) | `perl example.pl` |
+| R | [r/example.R](r/example.R) | `Rscript example.R` |
+| wget, aria2, HTTPie, git, pip, npm | [tools/tools.sh](tools/tools.sh) | `sh tools.sh` |
+
+Browsers, the whole computer, phones and apps with a proxy field of their own:
+[tools/README.md](tools/README.md).
 
 This repository's tests run every example on each change, through two test proxies: the three
-requests of each one have to come out through both of them.
+requests of each one have to come out through both of them (Swift on a Mac, the rest on Linux).
 
 ## Every program at once
 

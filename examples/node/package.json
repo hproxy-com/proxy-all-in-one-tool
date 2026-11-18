@@ -2,11 +2,15 @@
   "name": "hproxy-example-node",
   "private": true,
   "type": "module",
-  "description": "Requests through the hproxy rotating proxy with Node's fetch (undici)",
+  "description": "Requests through the hproxy rotating proxy from Node.js: fetch (undici), axios, got",
   "engines": {
     "node": ">=20.18.1"
   },
   "dependencies": {
+    "axios": "^1.7.0",
+    "got": "^14.0.0",
+    "hpagent": "^1.2.0",
+    "https-proxy-agent": "^7.0.0",
     "undici": "^7.0.0"
   }
 }

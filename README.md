@@ -69,8 +69,9 @@ hproxy mcp                                                      # the same tools
 
 From your own code: `hproxy connect --file proxies.txt --background` gives every language one
 proxy with no login at `127.0.0.1:8080`, the next of your proxies for every connection. Tested
-[examples](examples/) for Python, Node.js, Go, Rust, Java, C#, PHP, Ruby, PowerShell and curl, and
-for Playwright, Puppeteer and Selenium.
+[examples](examples/): Python (requests, httpx, aiohttp, Scrapy), Node.js (fetch, axios, got,
+Crawlee), Deno, Bun, Go, Rust, Java, Kotlin, C#, Swift, C, PHP, Ruby, Perl, R, PowerShell, the
+browsers through Playwright, Puppeteer and Selenium, and curl, wget and other tools.
 
 ## What it does
 
