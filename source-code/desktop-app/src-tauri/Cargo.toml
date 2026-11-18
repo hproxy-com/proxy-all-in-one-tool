@@ -75,12 +75,12 @@ futures = "0.3"
 # take a second snapshot of the system proxy, and the two would fight over a
 # setting only one of them can put back. A second launch raises the first.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-updater = "~2.10"
+tauri-plugin-updater = "~2.14"
 # Reading when an update was signed (src/update.rs, the rule that refuses an
 # old build announced as new). The plugin already builds all three; these are
 # its own versions, named here so our code can use them.
 base64 = "0.22"
-minisign-verify = "0.2"
+minisign-verify = "0.3"
 semver = "1"
 tauri-plugin-single-instance = "2"
 # Start with the computer, when the person asks for it in Settings.

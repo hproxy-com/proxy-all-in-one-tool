@@ -51,6 +51,59 @@ workflows:
       - ios-app/pictures/*.png
       - ios-app/build/Logs/**/*.xcresult
 
+  # The iPhone app, signed for the App Store and sent to TestFlight. Needs the Apple Developer
+  # membership: an App Store Connect API key added in Codemagic (Settings > Integrations >
+  # Developer Portal) under the name below, the App Group group.com.hproxy.app made once in the
+  # developer portal, and the two App IDs with Network Extensions and App Groups switched on.
+  ios-testflight:
+    name: iPhone app to TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: HProxy App Store Connect
+    environment:
+      xcode: latest
+    cache:
+      cache_paths:
+        - $HOME/.cargo/registry
+        - $CM_BUILD_DIR/target
+    scripts:
+      - name: Rust
+        script: |
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          . "$HOME/.cargo/env"
+          rustup target add aarch64-apple-ios
+      - name: The engine for iPhones
+        script: |
+          . "$HOME/.cargo/env"
+          sh ios-app/scripts/build-engine.sh device
+      - name: The Xcode project
+        script: |
+          brew install xcodegen
+          cd ios-app
+          xcodegen generate
+      - name: Signing
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files com.hproxy.app --type IOS_APP_STORE --create
+          app-store-connect fetch-signing-files com.hproxy.app.tunnel --type IOS_APP_STORE --create
+          keychain add-certificates
+          cd ios-app
+          xcode-project use-profiles
+      - name: The archive
+        script: |
+          cd ios-app
+          xcode-project build-ipa \
+            --project HProxy.xcodeproj \
+            --scheme HProxy \
+            --archive-xcargs "CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
+    artifacts:
+      - ios-app/build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+
   # The computer app for Macs, Apple silicon and Intel in one file: the same build as
   # .github/workflows/release.yml's macOS job, for while GitHub's machines cannot run.
   # release.mjs signs the update file on our own PC (`builds desktop <version> --from=<folder>`).
