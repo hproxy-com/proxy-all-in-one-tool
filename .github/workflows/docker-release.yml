@@ -1,0 +1,272 @@
+name: Command-line tool, Docker image
+
+# Puts a released version of the command-line tool into one container image for every Linux
+# processor it is built for, ghcr.io/hproxy-com/hproxy, so it runs wherever containers run: Docker
+# and Podman on any computer or NAS, Kubernetes, and the clouds' container services (Amazon ECS,
+# Fargate and EKS, on Intel and on Graviton, and the others).
+#
+# The image holds the released files of cli-v<version> and nothing else (Docker/Dockerfile). Each
+# file is downloaded from that release and checked against its SHA256SUMS and its build record
+# before it goes in, so the image carries exactly the program the release published.
+#
+# Every processor's image is proved before anything is pushed: it says its version, reaches
+# hproxy.com over HTTPS, its rotator relays HTTP and SOCKS5 through two test proxies in turn, and
+# docker stop ends it at once and cleanly. On x86_64 a background connection started with
+# docker exec proves that its home is writable.
+#
+# Started by hand (Actions, "Command-line tool, Docker image", Run workflow) with a released
+# version, or by package-managers.mjs after a release. Unticked, "publish" only builds and proves.
+# Ticked, it also pushes <version> (and latest, when it is the newest release), records how the
+# image was built, pulls it back on every processor, and pulls it again with no login on x86_64 and
+# on ARM. A version is pushed once. It uses no secret: only this repository's own token, and only
+# GitHub's own actions, each pinned to a commit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "A released version of the command-line tool, e.g. 0.4.8"
+        required: true
+        type: string
+      publish:
+        description: "Push the image (unticked: build and prove it only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-image-${{ inputs.version }}
+
+env:
+  IMAGE: ghcr.io/hproxy-com/hproxy
+  PLATFORMS: linux/amd64 linux/arm64 linux/arm/v6 linux/arm/v7
+  DESCRIPTION: HProxy command-line tool. Rotate your own proxies or the free pool through one local HTTP and SOCKS5 port. Check proxies and list free ones. Look up IPs. Give AI assistants the same tools (MCP).
+
+jobs:
+  image:
+    name: Build and prove ${{ inputs.version }}${{ inputs.publish && ', then push' || '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: A released version
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::'$VERSION' is not a version like 0.4.8"
+            exit 1
+          fi
+          draft=$(gh release view "cli-v$VERSION" --json isDraft --jq .isDraft) || {
+            echo "::error::there is no release cli-v$VERSION"
+            exit 1
+          }
+          if [ "$draft" != false ]; then
+            echo "::error::cli-v$VERSION is still a draft"
+            exit 1
+          fi
+          # latest follows the newest release only: pushing an older version never moves it back.
+          newest=$(gh release list --limit 200 --json tagName --jq '[.[].tagName | select(startswith("cli-v")) | ltrimstr("cli-v") | split(".") | map(tonumber)] | max | map(tostring) | join(".")')
+          echo "the newest command-line release: $newest"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "NEWEST=$newest" >> "$GITHUB_ENV"
+
+      - name: The released Linux files, each checked against its sum and its build record
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir dl
+          gh release download "cli-v$VERSION" --dir dl --pattern SHA256SUMS --pattern 'hproxy-cli-linux-*'
+          cd dl
+          for f in hproxy-cli-linux-x86_64 hproxy-cli-linux-arm64 hproxy-cli-linux-armv6; do
+            grep -E "^[0-9a-f]{64}  $f\$" SHA256SUMS | sha256sum --check --strict - || {
+              echo "::error::$f does not match the SHA256SUMS of cli-v$VERSION"
+              exit 1
+            }
+            gh attestation verify "$f" --repo "$GITHUB_REPOSITORY" > /dev/null
+            echo "$f: built by this repository's workflow"
+          done
+
+      - name: Laid out by platform, beside the Dockerfile
+        run: |
+          install -D -m 0755 dl/hproxy-cli-linux-x86_64 Docker/linux/amd64/hproxy
+          install -D -m 0755 dl/hproxy-cli-linux-arm64 Docker/linux/arm64/hproxy
+          install -D -m 0755 dl/hproxy-cli-linux-armv6 Docker/linux/arm/v6/hproxy
+          install -D -m 0755 dl/hproxy-cli-linux-armv6 Docker/linux/arm/v7/hproxy
+          mkdir -p Docker/home
+          find Docker/linux -type f -exec sha256sum {} +
+
+      - name: ARM machines to prove the ARM images on (QEMU) and two test proxies (tinyproxy), from Ubuntu
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tinyproxy > /dev/null
+          # The static emulators, which work inside containers. Ubuntu 26.04 renamed the package
+          # qemu-user-binfmt, built static there too.
+          sudo apt-get install -y -qq qemu-user-static > /dev/null 2>&1 || sudo apt-get install -y -qq qemu-user-binfmt > /dev/null
+          ls /proc/sys/fs/binfmt_misc/ | grep -E '^qemu-(arm|aarch64)$'
+          sudo systemctl stop tinyproxy 2> /dev/null || true
+          for port in 3128 3129; do
+          cat > "tinyproxy-$port.conf" <<EOF
+          Port $port
+          Listen 0.0.0.0
+          Timeout 60
+          MaxClients 50
+          Allow 127.0.0.1
+          Allow 172.16.0.0/12
+          ConnectPort 443
+          LogFile "$PWD/tinyproxy-$port.log"
+          LogLevel Connect
+          EOF
+          tinyproxy -c "tinyproxy-$port.conf"
+          done
+          sleep 1
+          ss -ltn | grep -E ':(3128|3129) '
+
+      - name: A builder for several processors at once (BuildKit)
+        run: |
+          docker version --format 'Docker {{.Server.Version}}'
+          docker buildx version
+          docker buildx create --name multi --driver docker-container --use > /dev/null
+          docker buildx inspect --bootstrap
+
+      - name: Every processor's image, built and proved
+        run: |
+          printf '%s\n' http://host.docker.internal:3128 http://host.docker.internal:3129 > proxies.txt
+          # Requests a test proxy took (tinyproxy logs each one at its level CONNECT).
+          took() { grep -c 'Request (file descriptor' "tinyproxy-$1.log" || true; }
+          for p in $PLATFORMS; do
+            tag="hproxy:test-$(printf '%s' "$p" | tr / -)"
+            echo "::group::$p"
+            docker buildx build Docker --platform "$p" --build-arg "VERSION=$VERSION" --provenance=false --load --tag "$tag"
+
+            # 1. The program, at this version.
+            docker run --rm --platform "$p" "$tag" --version | tee said.txt
+            grep -qx "hproxy $VERSION" said.txt
+
+            # 2. hproxy.com over HTTPS, from an image with no operating system in it.
+            docker run --rm --platform "$p" "$tag" list --limit 2
+
+            # 3. The rotator, published on this machine's loopback only, through the two test
+            #    proxies in turn, as HTTP and as SOCKS5 on its one port.
+            a=$(took 3128)
+            b=$(took 3129)
+            docker run --detach --name rotator --platform "$p" --add-host host.docker.internal:host-gateway \
+              --publish 127.0.0.1:18080:8080 --volume "$PWD/proxies.txt:/proxies.txt:ro" \
+              "$tag" connect --file /proxies.txt --rotate every --listen 0.0.0.0:8080 --allow-lan --json
+            for i in $(seq 60); do
+              if docker logs rotator 2>&1 | grep -q '"listening"'; then break; fi
+              sleep 1
+            done
+            docker logs rotator 2>&1
+            docker logs rotator 2>&1 | grep -q '"listening":"0.0.0.0:8080"'
+            for i in 1 2; do
+              curl -fsS -o /dev/null -x http://127.0.0.1:18080 https://hproxy.com/install.sh
+              curl -fsS -o /dev/null --socks5-hostname 127.0.0.1:18080 https://hproxy.com/install.sh
+            done
+            first=$(( $(took 3128) - a ))
+            second=$(( $(took 3129) - b ))
+            echo "requests through the first test proxy: $first, through the second: $second"
+            if [ "$first" -lt 1 ] || [ "$second" -lt 1 ]; then
+              echo "::error::$p: the rotator did not take the two proxies in turn"
+              exit 1
+            fi
+
+            # 4. A background connection started with docker exec: the image's user can write its home.
+            if [ "$p" = linux/amd64 ]; then
+              docker exec rotator hproxy connect --background http://host.docker.internal:3128 --listen 127.0.0.1:0 --json
+              docker exec rotator hproxy status --json | tee status.txt
+              grep -q '"connected":true' status.txt
+              docker exec rotator hproxy stop
+            fi
+
+            # 5. docker stop ends it at once and cleanly: the image's stop signal is the relay's Ctrl+C.
+            start=$(date +%s)
+            docker stop rotator > /dev/null
+            seconds=$(( $(date +%s) - start ))
+            code=$(docker inspect rotator --format '{{.State.ExitCode}}')
+            docker rm rotator > /dev/null
+            echo "docker stop: ${seconds} s, exit code ${code}"
+            if [ "$seconds" -gt 5 ] || [ "$code" != 0 ]; then
+              echo "::error::$p: docker stop took ${seconds} s and ended with ${code}"
+              exit 1
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: Pushed as ${{ inputs.version }}
+        id: push
+        if: inputs.publish
+        env:
+          TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          printf '%s' "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+          # A version is pushed once, like a release: what was proved and pushed stays what it is.
+          if docker buildx imagetools inspect "$IMAGE:$VERSION" > /dev/null 2>&1; then
+            echo "::error::$IMAGE:$VERSION is pushed already, and a version is pushed once. Release a new version to change it."
+            exit 1
+          fi
+          tags=(--tag "$IMAGE:$VERSION")
+          if [ "$VERSION" = "$NEWEST" ]; then
+            tags+=(--tag "$IMAGE:latest")
+          fi
+          docker buildx build Docker \
+            --platform "$(printf '%s' "$PLATFORMS" | tr ' ' ',')" \
+            --build-arg "VERSION=$VERSION" \
+            --provenance=false --sbom=false \
+            --annotation "index:org.opencontainers.image.description=$DESCRIPTION" \
+            --annotation "index:org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --annotation "index:org.opencontainers.image.licenses=MIT" \
+            --annotation "index:org.opencontainers.image.version=$VERSION" \
+            "${tags[@]}" --metadata-file meta.json --push
+          digest=$(jq -r '."containerimage.digest"' meta.json)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
+
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        if: inputs.publish
+        with:
+          subject-name: ghcr.io/hproxy-com/hproxy
+          subject-digest: ${{ steps.push.outputs.digest }}
+
+      - name: Pulled back from ghcr.io, every processor
+        if: inputs.publish
+        run: |
+          for p in $PLATFORMS; do
+            docker run --rm --pull always --platform "$p" "$IMAGE:$VERSION" --version
+          done
+
+  anyone:
+    name: Anyone can pull it with no login (${{ matrix.os }})
+    needs: image
+    if: inputs.publish
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - name: Pulled with no login, and where it came from
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          docker logout ghcr.io > /dev/null 2>&1 || true
+          docker run --rm --pull always "$IMAGE:$VERSION" --version
+          docker run --rm "$IMAGE:$VERSION" list --limit 2
+          gh attestation verify "oci://$IMAGE:$VERSION" --owner hproxy-com
