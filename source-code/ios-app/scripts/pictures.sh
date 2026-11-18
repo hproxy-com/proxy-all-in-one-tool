@@ -34,7 +34,10 @@ shot connected -welcomed YES -demo on -tab 0
 shot off -welcomed YES -demo off -tab 0
 shot stopped -welcomed YES -demo stopped -tab 0
 shot proxies -welcomed YES -demo on -tab 1
-shot settings -welcomed YES -demo on -tab 2
+# The tabs in RootView.Tab's order: connect 0, proxies 1, checker 2, help 3, settings 4.
+shot checker -welcomed YES -demo on -tab 2
+shot help -welcomed YES -demo on -tab 3
+shot settings -welcomed YES -demo on -tab 4
 # Last: right after a boot, iOS shows its own banners over the top of the screen.
 shot welcome
 

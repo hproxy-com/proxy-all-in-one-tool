@@ -52,6 +52,21 @@ pub const COMMANDS: &[(&str, &str, &[&str])] = &[
         &["disconnect", "kill", "quit", "exit", "end", "down", "off", "close"],
     ),
     (
+        "new-ip",
+        "switch a running connection to its next proxy (scripts: POST /hproxy/new-ip)",
+        &[
+            "next",
+            "next-ip",
+            "newip",
+            "new",
+            "rotate",
+            "switch",
+            "change-ip",
+            "changeip",
+            "renew",
+        ],
+    ),
+    (
         "list",
         "live free proxies from hproxy.com, one ip:port per line",
         &["proxies", "free-list", "get", "fetch", "pool"],
@@ -209,6 +224,7 @@ pub const CONNECT_OPTIONS: &[&str] = &[
 pub const STATUS_OPTIONS: &[&str] = &["--probe", "--json", "--help"];
 pub const PLACES_OPTIONS: &[&str] = &["--json", "--limit", "--help"];
 pub const STOP_OPTIONS: &[&str] = &["--help"];
+pub const NEW_IP_OPTIONS: &[&str] = &["--member", "--probe", "--json", "--help"];
 pub const LIST_OPTIONS: &[&str] = &["--country", "--protocol", "--anonymity", "--limit", "--json", "--help"];
 pub const IP_OPTIONS: &[&str] = &["--help"];
 pub const APP_OPTIONS: &[&str] = &["--background", "--help"];
@@ -237,6 +253,10 @@ mod tests {
         // Waking the desktop app: the assistant's wake-up command.
         assert_eq!(suggest_command("open"), Some("app"));
         assert_eq!(suggest_command("wake"), Some("app"));
+        // A new IP, in the words people use for it.
+        for word in ["rotate", "next", "newip", "new-iP", "change-ip", "switch"] {
+            assert_eq!(suggest_command(word), Some("new-ip"), "{word}");
+        }
     }
 
     /// Every command the program takes is in the table the hints come from,
@@ -250,7 +270,7 @@ mod tests {
             );
         }
         for word in [
-            "check", "connect", "free", "status", "stop", "list", "ip", "app", "mcp", "help", "version",
+            "check", "connect", "free", "status", "stop", "new-ip", "list", "ip", "app", "mcp", "help", "version",
         ] {
             assert!(
                 COMMANDS.iter().any(|(n, _, _)| *n == word),

@@ -50,6 +50,9 @@ struct ProxyItem: Decodable, Identifiable, Equatable {
     var scheme: String?
     var about: About?
     var last: Verdict?
+    /// The plan's last day, `YYYY-MM-DD`, when the person wrote one (reminders count from it).
+    var expires: String?
+    var note: String?
 
     /// As on every other screen of ours (hproxy-places, `ProxyView::title`): its
     /// name, else its session, since a hundred of them share one address.
@@ -64,6 +67,9 @@ struct GroupItem: Decodable, Identifiable, Equatable {
     let id: String
     var name: String
     var size: Int?
+    /// The plan's last day, `YYYY-MM-DD`, when the person wrote one.
+    var expires: String?
+    var note: String?
 }
 
 struct Library: Decodable, Equatable {

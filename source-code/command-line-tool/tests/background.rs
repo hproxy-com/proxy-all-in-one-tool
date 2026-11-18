@@ -124,6 +124,72 @@ fn a_background_connection_starts_serves_and_stops() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A background connection keeps the sites it was told to skip: until
+/// 2026-11-18 the background copy dropped --skip, --only and --via.
+#[test]
+fn a_background_connection_keeps_its_site_rules() {
+    let dir = std::env::temp_dir().join(format!("hproxy-bg-skip-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let origin = spawn_origin();
+    // A proxy nobody answers at: a request that went to it would fail.
+    let dead = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let line = format!("127.0.0.1:{dead}");
+
+    let out = hproxy(
+        &dir,
+        &[
+            "connect",
+            &line,
+            "--skip",
+            "127.0.0.1",
+            "--listen",
+            "127.0.0.1:0",
+            "--background",
+        ],
+    );
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let ready: Value = serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).expect("one JSON line");
+    let local = ready["listening"].as_str().unwrap().to_string();
+
+    let mut c = TcpStream::connect(&local).unwrap();
+    c.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    write!(
+        c,
+        "GET http://127.0.0.1:{origin}/straight-out HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut resp = String::new();
+    let _ = c.read_to_string(&mut resp);
+    assert!(
+        resp.contains("ORIGIN-OK /straight-out"),
+        "the skipped site went to the proxy: {resp}"
+    );
+
+    // Sites that are no sites are said at once, by the command that starts it.
+    let bad = hproxy(
+        &dir,
+        &[
+            "connect",
+            &line,
+            "--skip",
+            "site!",
+            "--listen",
+            "127.0.0.1:0",
+            "--background",
+        ],
+    );
+    assert!(!bad.status.success());
+    assert!(
+        String::from_utf8_lossy(&bad.stderr).contains("not a site"),
+        "{}",
+        String::from_utf8_lossy(&bad.stderr)
+    );
+
+    let stop = hproxy(&dir, &["stop"]);
+    assert!(stop.status.success(), "{}", String::from_utf8_lossy(&stop.stderr));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn stopping_nothing_is_not_an_error() {
     let dir = std::env::temp_dir().join(format!("hproxy-bg-none-{}", std::process::id()));

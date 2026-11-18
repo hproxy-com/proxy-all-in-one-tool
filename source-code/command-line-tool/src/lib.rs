@@ -17,6 +17,7 @@
 mod app;
 mod check;
 mod connect;
+mod control;
 mod hint;
 mod mcp;
 mod newer;
@@ -50,6 +51,7 @@ USAGE
   hproxy connect --place <NAME> [--member N]
   hproxy places [SEARCH] [--json]
   hproxy status [--probe] [--json] | hproxy stop [ADDRESS]
+  hproxy new-ip [ADDRESS] [--member N] [--probe] [--json]
   hproxy list [--country CC] [--protocol P] [--anonymity A] [--limit N] [--json]
   hproxy ip <address>...
   hproxy app [--background]
@@ -129,6 +131,29 @@ EXAMPLES
   hproxy stop 8080
 
 ";
+const NEW_IP: &str = "\
+NEW-IP switches a running connection to its next proxy: the next one of your
+list, or a fresh exit from the free pool. The connections open through it end
+with the switch, so every program's next request goes out the new way. With no
+address it takes the connection running here (in the background, or else the
+one on 127.0.0.1:8080: a terminal, a container, a service).
+  --member <N>           proxy N of your list instead of the next one
+  --probe                then ask the world which address it sees
+  --json                 the connection's answer, as one JSON object
+
+A script in any language does the same with one HTTP request to the
+connection's own port. Every answer is JSON with \"ok\", and \"error\" when ok
+is false:
+  curl -X POST http://127.0.0.1:8080/hproxy/new-ip
+  curl -X POST \"http://127.0.0.1:8080/hproxy/new-ip?member=3\"
+  curl http://127.0.0.1:8080/hproxy/status
+
+EXAMPLES
+  hproxy connect --file proxies.txt --rotate on-failure --background
+  hproxy new-ip --probe
+  hproxy new-ip 8080 --member 3
+
+";
 const LIST: &str = "\
 LIST prints live free proxies from hproxy.com, one ip:port per line, ready to
 pipe into check. IP prints what hproxy.com knows about addresses, as JSON.
@@ -177,6 +202,7 @@ fn usage() -> String {
         CONNECT,
         PLACES,
         STATUS,
+        NEW_IP,
         LIST,
         app::USAGE,
         MCP,
@@ -193,6 +219,7 @@ fn help_for(cmd: &str) -> Option<String> {
         "connect" | "free" => [hproxy_relay::cli::USAGE, connect::EXTRA_USAGE].concat(),
         "places" => [PLACES, EXIT].concat(),
         "status" | "stop" => [STATUS, EXIT].concat(),
+        "new-ip" => [NEW_IP, EXIT].concat(),
         "list" | "ip" => [LIST, EXIT].concat(),
         "app" => [app::USAGE, EXIT].concat(),
         "mcp" => MCP.to_string(),
@@ -233,6 +260,7 @@ pub fn is_command(word: &str) -> bool {
             | "places"
             | "status"
             | "stop"
+            | "new-ip"
             | "list"
             | "ip"
             | "app"
@@ -299,6 +327,23 @@ pub fn run(args: Vec<String>) -> u8 {
             return 2;
         }
     };
+    // In a container the tool is process 1, and the kernel drops every signal
+    // process 1 has no handler for: Ctrl+C and `docker stop` would do nothing to
+    // a running check or the MCP server. Here they end every command the way
+    // they do anywhere else. The relay (connect, free) stops itself, more
+    // gently: it closes its connections first (hproxy-relay, `stop_signal`).
+    #[cfg(unix)]
+    if std::process::id() == 1 && cmd != "connect" && cmd != "free" {
+        // The handlers are made here, inside the runtime, before the command starts.
+        let stop = {
+            let _inside = rt.enter();
+            hproxy_relay::stop_signal()
+        };
+        rt.spawn(async move {
+            let code = stop.await;
+            std::process::exit(i32::from(code));
+        });
+    }
     // A newer `hproxy`, once a day, beside a command a person runs (newer.rs).
     let look = newer::start(&rt, cmd, rest);
     // Usage counts, only after a yes (usage.rs): this run's opening and what the command uses.
@@ -317,6 +362,7 @@ pub fn run(args: Vec<String>) -> u8 {
         "usage" => usage::command(rest),
         "status" => rt.block_on(connect::status(rest)),
         "stop" => rt.block_on(connect::stop(rest)),
+        "new-ip" => rt.block_on(control::new_ip(rest)),
         "connect" | "free" => {
             let mut argv: Vec<String> = rest.to_vec();
             if cmd == "free" {
@@ -388,10 +434,14 @@ mod tests {
     #[test]
     fn a_program_named_hproxy_is_always_the_tool() {
         for line in ["", "app", "mcp", "wake", "--background", "chek"] {
-            assert!(
-                runs_as_tool(Path::new(r"C:\data\tool\hproxy.exe"), &words(line)),
-                "{line:?}"
-            );
+            // A Windows path is a path only on Windows: on Linux and macOS a
+            // backslash is part of the file name, so the whole string is one name.
+            if cfg!(windows) {
+                assert!(
+                    runs_as_tool(Path::new(r"C:\data\tool\hproxy.exe"), &words(line)),
+                    "{line:?}"
+                );
+            }
             assert!(
                 runs_as_tool(Path::new("/usr/local/bin/hproxy"), &words(line)),
                 "{line:?}"

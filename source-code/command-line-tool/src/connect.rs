@@ -33,7 +33,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use hproxy_relay::cli::{listen_addr, source_from, Args};
+use hproxy_relay::cli::{listen_addr, routing_from, source_from, Args};
 use hproxy_relay::{Source, Stats, SwitchableSource};
 use serde::{Deserialize, Serialize};
 
@@ -220,8 +220,13 @@ pub fn running_now() -> Vec<Running> {
 
 /// Does something answer on that address? The honest liveness check for a
 /// relay: a process that exists but cannot accept is no use to anyone.
+///
+/// A relay on every address (0.0.0.0, ::) is asked through loopback. Windows
+/// refuses a connection to 0.0.0.0 where Linux takes it for this machine:
+/// before 2026-11-18 a background relay started with `--listen 0.0.0.0:8080
+/// --allow-lan` looked dead on Windows, and its entry was deleted while it ran.
 pub fn answers(listening: &str) -> bool {
-    listening
+    crate::control::reachable(listening)
         .parse()
         .ok()
         .is_some_and(|addr| std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(600)).is_ok())
@@ -367,6 +372,11 @@ pub async fn command(mut argv: Vec<String>) -> Outcome {
                 return Outcome::Error(e);
             }
         }
+        // The same for sites or a first hop (--skip, --only, --via) that
+        // cannot be read.
+        if let Err(e) = routing_from(&args) {
+            return Outcome::Error(e);
+        }
         // Several connections are fine; two on one address are not. Catching
         // it here says which one is in the way, where a bind error would only
         // say the address is taken.
@@ -425,6 +435,13 @@ async fn serve_in_background(args: Args) -> Outcome {
         Ok(a) => a,
         Err(e) => return Outcome::Error(e),
     };
+    // The sites and the first hop, as in the foreground. Found 2026-11-18 by
+    // the GitHub Action's test: the background copy left them out, so --skip,
+    // --only and --via did nothing with --background.
+    let routing = match routing_from(&args) {
+        Ok(r) => r,
+        Err(e) => return Outcome::Error(e),
+    };
     let (src, first_exit, place) = match source_for(&args).await {
         Ok(v) => v,
         Err(e) => return Outcome::Error(e),
@@ -434,12 +451,14 @@ async fn serve_in_background(args: Args) -> Outcome {
     let pid = std::process::id();
     let published = not_published_yet();
     let mark = published.clone();
+    let source = SwitchableSource::new(src);
+    source.set_routing(routing);
 
     let outcome = hproxy_relay::serve(
         addr,
         args.allow_lan,
         false,
-        Arc::new(SwitchableSource::new(src)),
+        Arc::new(source),
         Arc::new(Stats::default()),
         move |local| {
             let running = Running {
@@ -493,6 +512,9 @@ pub async fn status(argv: &[String]) -> Outcome {
         } else {
             None
         };
+        // What it says itself, now: a list's member and a free exit change
+        // while it runs (`hproxy new-ip`), the entry was written at its start.
+        let live = crate::control::live(&r.listening).await;
         if json {
             let mut o = Obj::new()
                 .put("connected", true)
@@ -503,7 +525,11 @@ pub async fn status(argv: &[String]) -> Outcome {
                 .put("source", &r.source)
                 .put("place", &r.place)
                 .put("uptime_seconds", now_secs().saturating_sub(r.started_at))
-                .put("pid", r.pid);
+                .put("pid", r.pid)
+                .put("now_on", live.as_ref().map(|l| &l["upstream"]))
+                .put("member", live.as_ref().map(|l| &l["member"]))
+                .put("members", live.as_ref().map(|l| &l["members"]))
+                .put("stats", live.as_ref().map(|l| &l["stats"]));
             if let Some(e) = &exit {
                 o = o
                     .put("exit_ip", &e.exit_ip)
@@ -520,6 +546,18 @@ pub async fn status(argv: &[String]) -> Outcome {
             match &r.place {
                 Some(place) => println!("  source     : {} \"{place}\", saved in the HProxy app", r.source),
                 None => println!("  source     : {}", r.source),
+            }
+            if let Some(l) = &live {
+                let now = l["upstream"].as_str().unwrap_or("?");
+                match (l["member"].as_u64(), l["members"].as_u64()) {
+                    (Some(m), Some(n)) => println!("  now on     : proxy {m} of {n}, {now}"),
+                    _ if l["source"] == "pool" => println!("  now on     : {now}"),
+                    _ => {}
+                }
+                let st = &l["stats"];
+                if let (Some(c), Some(a)) = (st["connections"].as_u64(), st["active"].as_u64()) {
+                    println!("  served     : {c} connections, {a} open now");
+                }
             }
             println!(
                 "  running    : {} s, process {}",
@@ -541,7 +579,7 @@ pub async fn status(argv: &[String]) -> Outcome {
 
 /// Does this connection's address match what the person typed? Either the
 /// whole address or just the port, because the port is what they remember.
-fn is_the_one(listening: &str, want: &str) -> bool {
+pub(crate) fn is_the_one(listening: &str, want: &str) -> bool {
     listening == want || listening.rsplit(':').next().is_some_and(|port| port == want)
 }
 
@@ -648,6 +686,17 @@ mod tests {
         let older = r#"{"pid":1,"listening":"127.0.0.1:1","http_proxy":"","socks5_proxy":"","upstream":"","source":"fixed","started_at":0}"#;
         let read: Running = serde_json::from_str(older).expect("an entry without a place reads");
         assert_eq!(read.place, None);
+    }
+
+    /// A relay on every address answers on every system, Windows included,
+    /// where a connection to 0.0.0.0 itself is refused.
+    #[test]
+    fn a_relay_on_every_address_answers() {
+        let listener = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(answers(&format!("0.0.0.0:{port}")));
+        drop(listener);
+        assert!(!answers(&format!("0.0.0.0:{port}")), "nothing listens there any more");
     }
 
     #[test]

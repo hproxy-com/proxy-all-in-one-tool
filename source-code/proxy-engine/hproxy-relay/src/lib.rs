@@ -25,6 +25,7 @@
 //! port ever closing.
 
 pub mod cli;
+pub mod control;
 pub mod pool;
 pub mod relay;
 pub mod routes;
@@ -47,6 +48,60 @@ pub use upstream::{Scheme, Upstream};
 
 /// The default listen address. Loopback, so only this machine can use it.
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:8080";
+
+/// Wait for what ends a program run at a terminal or as a service: Ctrl+C
+/// (SIGINT) everywhere, and on Unix also SIGTERM, which `docker stop`,
+/// Kubernetes, Amazon ECS and systemd send. Returns the exit code a shell gives
+/// a program ended by that signal: 130 for Ctrl+C, 143 for SIGTERM.
+///
+/// In a container the program is process 1, and the kernel drops every signal
+/// process 1 has no handler for. Without this, `docker stop` would wait out
+/// its grace period and kill the relay instead of stopping it.
+///
+/// The handlers are in place when this returns, before the future is first
+/// awaited. Call it before saying "ready": found 2026-11-18, a SIGTERM that
+/// came right after the ready line, before a lazily made handler existed,
+/// still killed the relay the default way. Call it inside the runtime.
+pub fn stop_signal() -> impl Future<Output = u8> + Send {
+    #[cfg(unix)]
+    let wait = {
+        use tokio::signal::unix::{signal, SignalKind};
+        let interrupt = signal(SignalKind::interrupt());
+        let terminate = signal(SignalKind::terminate());
+        async move {
+            match (interrupt, terminate) {
+                (Ok(mut int), Ok(mut term)) => tokio::select! {
+                    _ = int.recv() => 130,
+                    _ = term.recv() => 143,
+                },
+                (Ok(mut int), Err(_)) => {
+                    int.recv().await;
+                    130
+                }
+                (Err(_), Ok(mut term)) => {
+                    term.recv().await;
+                    143
+                }
+                // No handler at all: nothing can stop it the gentle way, so wait for good.
+                (Err(_), Err(_)) => std::future::pending().await,
+            }
+        }
+    };
+    #[cfg(windows)]
+    let wait = {
+        let ctrl_c = tokio::signal::windows::ctrl_c();
+        async move {
+            match ctrl_c {
+                Ok(mut c) => {
+                    c.recv().await;
+                    130
+                }
+                Err(_) => std::future::pending().await,
+            }
+        }
+    };
+    wait
+}
 
 /// Refuse to become an open proxy by accident.
 ///
@@ -137,6 +192,8 @@ where
     let local = listener.local_addr().unwrap_or(addr);
     on_ready(local);
     let login = login.map(Arc::new);
+    // The relay's own pages switch this source and read these counts.
+    let control = Arc::new(control::Control::new(Arc::clone(&source)));
 
     tokio::pin!(shutdown);
     loop {
@@ -150,8 +207,9 @@ where
                         let ticket = source.ticket();
                         let stats = Arc::clone(&stats);
                         let login = login.clone();
+                        let control = Arc::clone(&control);
                         tokio::spawn(async move {
-                            relay::handle(sock, ticket, verbose, &stats, login.as_deref()).await
+                            relay::handle(sock, ticket, verbose, &stats, login.as_deref(), &control).await
                         });
                     }
                     Err(e) => {

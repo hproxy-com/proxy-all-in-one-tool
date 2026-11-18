@@ -7,6 +7,23 @@ struct TunnelChoices {
     var routeMode: String
     var routeSites: String
     var firstHop: String
+    /// Settings' "Stay connected": iOS starts the connection again by itself whenever there
+    /// is internet, also after the iPhone restarts (the phone app's "Connect when the phone
+    /// starts").
+    var stayConnected: Bool = UserDefaults.standard.bool(forKey: "stayConnected")
+
+    /// The choices as Settings saved them, for a connection started away from the
+    /// Connect page (the Checker's "Use on this phone"). The defaults are ConnectView's
+    /// @AppStorage ones: the kill switch is on until someone turns it off.
+    static var current: TunnelChoices {
+        let saved = UserDefaults.standard
+        return TunnelChoices(
+            killSwitch: saved.object(forKey: "killSwitch") as? Bool ?? true,
+            routeMode: saved.string(forKey: "routeMode") ?? "all",
+            routeSites: saved.string(forKey: "routeSites") ?? "",
+            firstHop: saved.string(forKey: "firstHop") ?? ""
+        )
+    }
 }
 
 /// The app's side of the tunnel: iOS's VPN configuration, starting and stopping it,
@@ -56,14 +73,31 @@ final class TunnelControl {
         manager.protocolConfiguration = tunnel
         manager.localizedDescription = "HProxy"
         manager.isEnabled = true
+        // "Stay connected": whenever any network is there, iOS connects (the place and the
+        // choices above are what it starts with).
+        let anyNetwork = NEOnDemandRuleConnect()
+        anyNetwork.interfaceTypeMatch = .any
+        manager.onDemandRules = [anyNetwork]
+        manager.isOnDemandEnabled = choices.stayConnected
         try await manager.saveToPreferences()
         try await manager.loadFromPreferences()
         self.manager = manager
         try manager.connection.startVPNTunnel()
     }
 
+    /// Stop the connection. "Stay connected" is switched off first and saved: iOS would
+    /// start it again at once otherwise. The next connect switches it back on.
     func stop() {
-        manager?.connection.stopVPNTunnel()
+        guard let manager else { return }
+        guard manager.isOnDemandEnabled else {
+            manager.connection.stopVPNTunnel()
+            return
+        }
+        manager.isOnDemandEnabled = false
+        Task {
+            try? await manager.saveToPreferences()
+            manager.connection.stopVPNTunnel()
+        }
     }
 
     /// One question to the process that holds the connection.

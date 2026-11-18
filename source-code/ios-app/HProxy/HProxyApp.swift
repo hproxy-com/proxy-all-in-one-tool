@@ -2,6 +2,8 @@ import SwiftUI
 
 @main
 struct HProxyApp: App {
+    /// Reminders pressed open My proxies (Reminders.swift).
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel()
     @AppStorage("welcomed") private var welcomed = false
 
@@ -26,21 +28,25 @@ struct HProxyApp: App {
                 }
             }
             .environmentObject(model)
+            .environmentObject(model.checker)
+            .environmentObject(model.chat)
             .preferredColorScheme(.dark)
         }
     }
 }
 
-/// The three pages under a bar of our own: the system's tab bar is see-through, and
-/// floats as a pill from iOS 26.
+/// The pages under a bar of our own: the system's tab bar is see-through, and floats as
+/// a pill from iOS 26. The order is the phone app's (NavBar.kt), with Settings last.
 struct RootView: View {
     enum Tab: Int, CaseIterable {
-        case connect, proxies, settings
+        case connect, proxies, checker, help, settings
 
         var title: String {
             switch self {
             case .connect: return "Connect"
             case .proxies: return "Proxies"
+            case .checker: return "Checker"
+            case .help: return "Help"
             case .settings: return "Settings"
             }
         }
@@ -49,6 +55,8 @@ struct RootView: View {
             switch self {
             case .connect: return "power"
             case .proxies: return "list.bullet"
+            case .checker: return "checkmark.shield"
+            case .help: return "bubble.left.and.bubble.right"
             case .settings: return "slider.horizontal.3"
             }
         }
@@ -66,10 +74,15 @@ struct RootView: View {
                 switch tab {
                 case .connect: ConnectView()
                 case .proxies: ProxiesView()
+                case .checker: CheckerView()
+                case .help: HelpView()
                 case .settings: SettingsView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if let toast = model.toast {
+                toastBar(toast)
+            }
             bar
         }
         .background(C.bg.ignoresSafeArea())
@@ -90,6 +103,19 @@ struct RootView: View {
                 .background(C.stop.ignoresSafeArea(edges: .top))
         }
         .buttonStyle(.plain)
+    }
+
+    /// That something worked, solid blue for a moment above the bar.
+    private func toastBar(_ words: String) -> some View {
+        Text(words)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(C.blue)
+            .onTapGesture { model.toast = nil }
+            .accessibilityAddTraits(.isStaticText)
     }
 
     private var bar: some View {

@@ -47,8 +47,22 @@ OPTIONS
   -v, --verbose         Print one line per request (to stderr).
   -h, --help            This text.
 
+ENVIRONMENT
+  HPROXY_PROXY          A proxy line, used when the command names no proxy, list,
+                        free pool or saved place. A password given this way stays
+                        off the command line: containers, services, scripts.
+  HPROXY_PROXY_FILE     The path of a list, used the same way.
+
 THEN point your software's proxy setting at the listen address, with no
 username or password. The same port speaks HTTP and SOCKS5.
+
+WHILE IT RUNS, a script in any language switches and reads it over HTTP, on
+the same port:
+  POST http://127.0.0.1:8080/hproxy/new-ip   the next proxy (GET works too);
+                                             ?member=N for proxy N of a list
+  GET  http://127.0.0.1:8080/hproxy/status   the proxy in use, and the counts
+Every answer is JSON with \"ok\", and \"error\" when ok is false. From a
+terminal, `hproxy new-ip` does the same.
 ";
 
 #[derive(Debug)]
@@ -139,8 +153,27 @@ pub fn read_list(path: &str) -> Result<(Vec<Upstream>, Option<String>), String> 
     Ok((members, note))
 }
 
-/// `Ok(None)` means help was asked for.
+/// A proxy line handed over by the environment, used when the command line
+/// names no source: the way containers and services pass a secret (Docker
+/// `-e`, Kubernetes and Amazon ECS secrets), and the way `hproxy mcp` reads it.
+/// It never appears on a command line, so it stays out of the list of running
+/// processes, and a background copy inherits it with the environment.
+pub const ENV_PROXY: &str = "HPROXY_PROXY";
+/// The path of a list, handed over the same way.
+pub const ENV_PROXY_FILE: &str = "HPROXY_PROXY_FILE";
+
+/// `Ok(None)` means help was asked for. A command line that names no source
+/// takes [`ENV_PROXY`], then [`ENV_PROXY_FILE`], from this process's environment.
 pub fn parse_args(argv: impl Iterator<Item = String>) -> Result<Option<Args>, String> {
+    parse_args_from(argv, |name| std::env::var(name).ok())
+}
+
+/// [`parse_args`] with the environment passed in, so a test never depends on
+/// the one it runs in.
+pub fn parse_args_from(
+    argv: impl Iterator<Item = String>,
+    env: impl Fn(&str) -> Option<String>,
+) -> Result<Option<Args>, String> {
     let mut proxy: Option<String> = None;
     let mut file: Option<String> = None;
     let mut rotate: Option<Rotation> = None;
@@ -218,11 +251,19 @@ pub fn parse_args(argv: impl Iterator<Item = String>) -> Result<Option<Args>, St
         return Err("a proxy line, --file, --free and --place each say where traffic goes. Pick one.".into());
     }
     if sources == 0 {
-        return Err(
-            "no proxy given. Pass your own line (host:port:user:pass), a list (--file proxies.txt), \
-             one saved in the HProxy app (--place NAME), or use the free pool (--free)."
-                .into(),
-        );
+        let set = |name: &str| env(name).filter(|v| !v.trim().is_empty());
+        if let Some(line) = set(ENV_PROXY) {
+            proxy = Some(line);
+        } else if let Some(path) = set(ENV_PROXY_FILE) {
+            file = Some(path);
+        } else {
+            return Err(
+                "no proxy given. Pass your own line (host:port:user:pass), a list (--file proxies.txt), \
+                 one saved in the HProxy app (--place NAME), use the free pool (--free), or set \
+                 HPROXY_PROXY."
+                    .into(),
+            );
+        }
     }
     if country.is_some() && !free {
         return Err("--country only applies to --free. Your own proxy already has a location.".into());
@@ -294,8 +335,9 @@ pub async fn source_from(args: &Args) -> Result<(Source, Option<String>), String
     ))
 }
 
-/// Run until Ctrl+C, printing the banner a person needs to configure their
-/// software, or with `--json` one line a program can read.
+/// Run until Ctrl+C or SIGTERM ([`crate::stop_signal`]), printing the banner a
+/// person needs to configure their software, or with `--json` one line a
+/// program can read.
 pub async fn run(args: Args) -> Result<(), String> {
     // The address before the source: asking the pool for an exit and then
     // finding the port taken wastes a pick.
@@ -305,7 +347,7 @@ pub async fn run(args: Args) -> Result<(), String> {
 }
 
 /// How connections travel, from `--skip`, `--only` and `--via`.
-fn routing_from(args: &Args) -> Result<Routing, String> {
+pub fn routing_from(args: &Args) -> Result<Routing, String> {
     let sites = match (&args.skip, &args.only) {
         (Some(sites), _) => Routes::new(Mode::Except, sites)?,
         (_, Some(sites)) => Routes::new(Mode::Only, sites)?,
@@ -321,10 +363,13 @@ pub async fn run_with_source(args: Args, src: Source, first_exit: Option<String>
     let addr = listen_addr(&args)?;
     let label = src.label(first_exit.as_deref());
     let kind = src.kind();
+    let can_rotate = src.can_rotate();
     let allow_lan = args.allow_lan;
     let json = args.json;
     let source = crate::SwitchableSource::new(src);
     source.set_routing(routing_from(&args)?);
+    // The stop signals are caught from here on, before the ready line or banner says it runs.
+    let stop = crate::stop_signal();
 
     crate::serve(
         addr,
@@ -342,6 +387,7 @@ pub async fn run_with_source(args: Args, src: Source, first_exit: Option<String>
                     "socks5_proxy": format!("socks5h://{local}"),
                     "source": kind,
                     "upstream": label,
+                    "control": crate::control::base_url(local),
                 });
                 println!("{ready}");
                 return;
@@ -349,6 +395,9 @@ pub async fn run_with_source(args: Args, src: Source, first_exit: Option<String>
             eprintln!("HProxy Relay");
             eprintln!("  upstream : {label}");
             eprintln!("  listening: {local} (HTTP and SOCKS5)");
+            if can_rotate {
+                eprintln!("  new IP   : {}/new-ip", crate::control::base_url(local));
+            }
             eprintln!();
             eprintln!("In your software, set the proxy to:");
             eprintln!("  Type     : HTTP, or SOCKS5 if that is all it offers");
@@ -362,7 +411,7 @@ pub async fn run_with_source(args: Args, src: Source, first_exit: Option<String>
             }
         },
         async move {
-            let _ = tokio::signal::ctrl_c().await;
+            stop.await;
             if !json {
                 eprintln!("\nStopped. Remember to turn the proxy setting back off in your software.");
             }
@@ -396,10 +445,51 @@ mod tests {
         assert_eq!(a.country.as_deref(), Some("de"));
     }
 
+    /// An environment with only these variables set.
+    fn env_of(vars: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |name| vars.iter().find(|(k, _)| *k == name).map(|(_, v)| v.to_string())
+    }
+
+    #[test]
+    fn the_environment_hands_over_a_proxy_when_the_command_names_none() {
+        let line = env_of(&[(ENV_PROXY, "1.2.3.4:8080:u:p")]);
+        let a = parse_args_from(argv("--listen 0.0.0.0:8080 --allow-lan"), &line)
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.proxy.as_deref(), Some("1.2.3.4:8080:u:p"));
+        assert!(a.file.is_none() && !a.free);
+
+        // A list, and its rotation rule with it.
+        let list = env_of(&[(ENV_PROXY_FILE, "/run/secrets/proxies.txt")]);
+        let a = parse_args_from(argv("--rotate every:10"), &list).unwrap().unwrap();
+        assert_eq!(a.file.as_deref(), Some("/run/secrets/proxies.txt"));
+
+        // The line comes first when both are set.
+        let both = env_of(&[(ENV_PROXY, "5.6.7.8:3128"), (ENV_PROXY_FILE, "/x.txt")]);
+        let a = parse_args_from(argv(""), &both).unwrap().unwrap();
+        assert_eq!(a.proxy.as_deref(), Some("5.6.7.8:3128"));
+        assert!(a.file.is_none());
+    }
+
+    #[test]
+    fn the_command_line_wins_and_an_empty_variable_counts_as_none() {
+        let line = env_of(&[(ENV_PROXY, "1.2.3.4:8080:u:p")]);
+        let a = parse_args_from(argv("9.9.9.9:80"), &line).unwrap().unwrap();
+        assert_eq!(a.proxy.as_deref(), Some("9.9.9.9:80"));
+        let a = parse_args_from(argv("--free"), &line).unwrap().unwrap();
+        assert!(a.free && a.proxy.is_none());
+
+        let blank = env_of(&[(ENV_PROXY, "  "), (ENV_PROXY_FILE, "")]);
+        let e = parse_args_from(argv(""), &blank).unwrap_err();
+        assert!(e.contains("no proxy given") && e.contains("HPROXY_PROXY"), "{e}");
+    }
+
     #[test]
     fn contradictions_and_omissions_explain_themselves() {
         assert!(parse_args(argv("--free 1.2.3.4:80")).unwrap_err().contains("Pick one"));
-        assert!(parse_args(argv("")).unwrap_err().contains("no proxy given"));
+        assert!(parse_args_from(argv(""), env_of(&[]))
+            .unwrap_err()
+            .contains("no proxy given"));
         assert!(parse_args(argv("1.2.3.4:80 --country US"))
             .unwrap_err()
             .contains("--country only"));

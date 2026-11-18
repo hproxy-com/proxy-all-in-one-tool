@@ -113,6 +113,9 @@ pub struct About<'a> {
 pub fn os_word() -> &'static str {
     if cfg!(target_os = "android") {
         "android"
+    } else if cfg!(target_os = "ios") {
+        // The iPhone app (2026-11-16); the server keeps it apart from the phone app's android.
+        "ios"
     } else if cfg!(windows) {
         "windows"
     } else if cfg!(target_os = "macos") {

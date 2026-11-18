@@ -334,11 +334,17 @@ impl List {
         self.members[i].clone()
     }
 
-    /// Move on because the person asked, whatever the rule.
+    /// Move on because the person asked, whatever the rule: to the member after
+    /// the one in use, which before the first connection is the one the first
+    /// connection would take.
+    ///
+    /// Found 2026-11-18: moving on from `index` while nothing had been served
+    /// yet landed on `index` itself, so the first "Next IP" of a fresh
+    /// connection (a script rotating before its first request) stayed put.
     fn advance(&self) -> Upstream {
         let mut st = self.lock();
         let now = Instant::now();
-        let from = st.last_used.map_or(st.index, |i| i + 1);
+        let from = st.last_used.unwrap_or(st.index) + 1;
         let i = match self.rule {
             Rotation::Random => self.random_up(&mut st, now),
             _ => self.next_up(&mut st, from, now),
@@ -364,6 +370,11 @@ impl List {
                 (from + n - 1) % n
             });
         self.settle_on(&mut st, i, now)
+    }
+
+    /// The line the last member came from (from 0).
+    fn last_line(&self) -> usize {
+        self.lines.last().copied().unwrap_or(0)
     }
 
     /// Make the member from `line` the one in use because the person picked
@@ -524,10 +535,15 @@ impl Source {
     pub fn go_to_line(&self, line: usize) -> Result<String, String> {
         match self {
             Source::List(l) => l.go_to_line(line).map(|u| u.to_string()).ok_or_else(|| {
-                format!(
-                    "proxy {} of the group is not in use: it could not be read when connecting",
-                    line + 1
-                )
+                let last = l.last_line();
+                if line > last {
+                    format!("there is no proxy {}: the list ends at proxy {}", line + 1, last + 1)
+                } else {
+                    format!(
+                        "proxy {} of the group is not in use: it could not be read when connecting",
+                        line + 1
+                    )
+                }
             }),
             _ => Err("only a group has proxies to pick from".into()),
         }
@@ -851,6 +867,31 @@ mod tests {
         assert!(src.can_rotate());
         assert_eq!(src.size(), Some(3));
         assert_eq!(src.kind(), SourceKind::List);
+    }
+
+    #[tokio::test]
+    async fn advance_moves_on_also_before_the_first_connection() {
+        // A script that asks for a new IP before its first request: the first
+        // member is the one in use, so the next one is the second.
+        for rule in [Rotation::OnFailure, Rotation::EveryConnection, Rotation::Every(5)] {
+            let src = Source::List(List::new(members(3), rule).unwrap());
+            assert_eq!(src.line_in_use(), Some(0), "{rule:?}");
+            assert!(src.advance().await.unwrap().contains("198.51.100.2"), "{rule:?}");
+            assert_eq!(src.line_in_use(), Some(1), "{rule:?}");
+            assert_eq!(src.take().await.host, "198.51.100.2", "{rule:?}");
+        }
+        // And round from the last to the first.
+        let src = Source::List(List::new(members(2), Rotation::OnFailure).unwrap());
+        src.advance().await.unwrap();
+        assert!(src.advance().await.unwrap().contains("198.51.100.1"));
+    }
+
+    #[test]
+    fn a_line_past_the_end_says_where_the_list_ends() {
+        let src = Source::List(List::new(members(2), Rotation::OnFailure).unwrap());
+        let e = src.go_to_line(8).unwrap_err();
+        assert!(e.contains("no proxy 9") && e.contains("ends at proxy 2"), "{e}");
+        assert!(src.go_to_line(1).unwrap().contains("198.51.100.2"));
     }
 
     #[tokio::test]

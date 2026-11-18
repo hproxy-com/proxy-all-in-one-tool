@@ -94,4 +94,78 @@ final class AppTests: XCTestCase {
         Engine.lastError = nil
         XCTAssertNil(Engine.lastError)
     }
+
+    /// The Checker: a paste becomes a run with one card per proxy, the run ends by itself,
+    /// and it is kept among the recent checks with its lines (checker.rs). The host app's
+    /// own pump may read the run's events, so this looks at what the engine keeps.
+    @MainActor
+    func testTheCheckerRunsAPaste() async throws {
+        let checker = CheckerModel()
+        let refused = await checker.start(text: "127.0.0.1:9")
+        XCTAssertNil(refused)
+        let run = try XCTUnwrap(checker.run)
+        XCTAssertEqual(run.cards.map(\.address), ["127.0.0.1:9"])
+        XCTAssertEqual(run.stage, .running)
+
+        var kept: CheckSummary?
+        let deadline = Date().addingTimeInterval(45)
+        while kept == nil, Date() < deadline {
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            await checker.refreshRecent()
+            kept = checker.recent.first { $0.id == run.id }
+        }
+        let summary = try XCTUnwrap(kept, "the run never finished")
+        XCTAssertEqual(summary.total, 1)
+        XCTAssertEqual(summary.working + summary.slow, 0, "a closed port counted as working")
+        let lines = await checker.lines(run.cards)
+        XCTAssertEqual(lines.first, "127.0.0.1:9")
+    }
+
+    /// The support chat keeps the thread from the engine's "chat" events. Events only: a test
+    /// never opens the real chat, so support's inbox gets nothing from it.
+    @MainActor
+    func testTheChatKeepsTheThread() {
+        defer { UserDefaults.standard.removeObject(forKey: "chatToken") }
+        let chat = SupportChat()
+        chat.handle(["type": "chat", "kind": "ready", "token": "t", "conversation": "c1", "online": true, "replyTime": "1-3 minutes"])
+        XCTAssertEqual(chat.link, .open)
+        XCTAssertTrue(chat.online)
+        XCTAssertEqual(chat.replyTime, "1-3 minutes")
+        chat.handle(["type": "chat", "kind": "message", "message": [
+            "id": "m1", "body": "Hello", "author_type": "agent", "author_name": "Sam", "created_at": "2026-11-16T18:00:00.123Z",
+        ]])
+        chat.handle(["type": "chat", "kind": "message", "message": ["id": "m2", "body": "note", "is_internal": true]])
+        XCTAssertEqual(chat.messages.map(\.body), ["Hello"], "an internal note never shows")
+        XCTAssertFalse(chat.messages[0].mine)
+        XCTAssertEqual(chat.messages[0].by, "Sam")
+        XCTAssertFalse(chat.send("Idea: "), "a starter alone is not sent")
+        chat.handle(["type": "chat", "kind": "down"])
+        XCTAssertEqual(chat.link, .down)
+    }
+
+    /// A last day comes back on the proxy, and the engine names the reminder due three days
+    /// before it (what Reminders.swift plans).
+    func testALastDayCallsForAReminder() async throws {
+        let library = try await add("198.51.100.9:8080")
+        let proxy = try XCTUnwrap(library.proxies.first { $0.address == "198.51.100.9:8080" })
+        let described = try await Engine.call("describe", ["ids": [proxy.id], "details": ["expires": "2030-01-15"]])
+        let after = try Engine.decode(Library.self, from: described)
+        XCTAssertEqual(after.proxies.first { $0.id == proxy.id }?.expires, "2030-01-15")
+        let due = try await Engine.call("remindersDue", ["today": "2030-01-12"]) as? [[String: Any]] ?? []
+        XCTAssertTrue(due.contains { ($0["body"] as? String)?.contains("expires") == true }, "\(due)")
+        XCTAssertEqual(Reminders.words(Reminders.written(Date()))?.words, "Ends today")
+        try await Engine.call("forget", ["id": proxy.id])
+    }
+
+    /// A card turns by what its answer says (CheckerState.kt's faces).
+    func testFaces() {
+        XCTAssertEqual(CheckAnswer(["alive": false]).face, .dead)
+        XCTAssertEqual(CheckAnswer(["alive": true, "carries": true, "tone": "good"]).face, .good)
+        XCTAssertEqual(CheckAnswer(["alive": true, "carries": true, "tone": "warn"]).face, .slow)
+        XCTAssertEqual(CheckAnswer(["alive": true, "carries": false, "tone": "bad", "notes": ["plain_http_only"]]).face, .noHttps)
+        XCTAssertEqual(CheckAnswer(["alive": true, "carries": true, "tone": "good", "site": ["verdict": "refuses", "why": "captcha"]]).face, .blocked)
+        XCTAssertEqual(flag("de"), "🇩🇪")
+        XCTAssertEqual(speedWords(180), "180 ms")
+        XCTAssertEqual(speedWords(1600), "1.6 s")
+    }
 }

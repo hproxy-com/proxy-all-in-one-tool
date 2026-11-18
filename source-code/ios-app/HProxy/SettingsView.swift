@@ -3,7 +3,11 @@ import SwiftUI
 /// Settings. The tunnel reads them when it starts, so they count from the next connection.
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var chat: SupportChat
+    /// The page on screen (RootView's): "Send an idea" opens Help.
+    @AppStorage("tab") private var tab = RootView.Tab.settings
     @AppStorage("killSwitch") private var killSwitch = true
+    @AppStorage("stayConnected") private var stayConnected = false
     @AppStorage("routeMode") private var routeMode = "all"
     @AppStorage("routeSites") private var routeSites = ""
     @AppStorage("firstHop") private var firstHop = ""
@@ -28,6 +32,13 @@ struct SettingsView: View {
                     Text(killSwitch
                         ? "If your proxy stops answering, apps wait for it."
                         : "If your proxy stops answering, apps use your own internet until it answers.")
+                }
+                .listRowBackground(C.s1)
+
+                Section {
+                    Toggle("Stay connected", isOn: $stayConnected).toggleStyle(CutToggle())
+                } footer: {
+                    Text("iOS connects to your proxy again by itself whenever there is internet, also after the iPhone restarts. The switch on Connect still turns it off.")
                 }
                 .listRowBackground(C.s1)
 
@@ -61,8 +72,18 @@ struct SettingsView: View {
                 .listRowBackground(C.s1)
 
                 Section {
+                    // An idea goes to the same support chat, the box ready to finish (the
+                    // phone app's "Send an idea"). Help is in the app: no link out to a shop.
+                    Button("Send an idea") {
+                        chat.draft = "Idea: "
+                        tab = .help
+                    }
+                    NavigationLink {
+                        UsageView()
+                    } label: {
+                        Text("Usage counts")
+                    }
                     Link("Privacy policy", destination: URL(string: "https://hproxy.com/privacy")!)
-                    Link("Support", destination: URL(string: "https://hproxy.com/contact")!)
                     LabeledContent("Version", value: version)
                 }
                 .listRowBackground(C.s1)

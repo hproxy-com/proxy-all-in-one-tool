@@ -10,8 +10,16 @@ use serde_json::Value;
 use crate::events::Events;
 
 /// Where the chat records the conversation began: this app. `page` adds the store and the version.
+/// The iPhone app is named apart (2026-11-16): support reads which app wrote, and from the iPhone
+/// it never sells (App Store guideline 3.1.1, docs/plan-2026-11-02-ios-app in the website repo).
+#[cfg(not(target_os = "ios"))]
 const PAGE: &str = "android-app://com.hproxy.app";
+#[cfg(not(target_os = "ios"))]
 const AGENT: &str = "HProxy Android";
+#[cfg(target_os = "ios")]
+const PAGE: &str = "ios-app://com.hproxy.app";
+#[cfg(target_os = "ios")]
+const AGENT: &str = "HProxy iPhone";
 
 /// The chat, once per engine: at most one socket, opened by the app.
 pub struct Chat(hproxy_chat::Chat);

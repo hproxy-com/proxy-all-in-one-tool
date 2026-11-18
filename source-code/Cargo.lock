@@ -1610,7 +1610,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hproxy-api"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "futures",
  "getrandom 0.2.17",
@@ -1624,7 +1624,7 @@ dependencies = [
 
 [[package]]
 name = "hproxy-chat"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "futures-util",
  "log",
@@ -1638,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "hproxy-checker"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1677,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "hproxy-cli"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "chrono",
  "hproxy-api",
@@ -1694,7 +1694,7 @@ dependencies = [
 
 [[package]]
 name = "hproxy-connection"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "hproxy-api",
  "hproxy-places",
@@ -1709,7 +1709,7 @@ dependencies = [
 
 [[package]]
 name = "hproxy-mobile"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "chrono",
  "hproxy-api",
@@ -1729,7 +1729,7 @@ dependencies = [
 
 [[package]]
 name = "hproxy-places"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "hproxy-probe",
  "serde",
@@ -1739,7 +1739,7 @@ dependencies = [
 
 [[package]]
 name = "hproxy-probe"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "futures",
  "log",
@@ -1755,7 +1755,7 @@ dependencies = [
 
 [[package]]
 name = "hproxy-relay"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "hproxy-probe",
  "reqwest 0.12.28",
@@ -1766,7 +1766,7 @@ dependencies = [
 
 [[package]]
 name = "hproxy-system"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -1776,7 +1776,7 @@ dependencies = [
 
 [[package]]
 name = "hproxy-tunnel"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "libc",
  "log",

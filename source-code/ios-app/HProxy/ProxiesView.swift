@@ -4,6 +4,8 @@ import SwiftUI
 struct ProxiesView: View {
     @EnvironmentObject private var model: AppModel
     @State private var adding = false
+    @State private var openedProxy: ProxyItem?
+    @State private var openedGroup: GroupItem?
 
     var body: some View {
         NavigationStack {
@@ -27,6 +29,8 @@ struct ProxiesView: View {
                 }
             }
             .sheet(isPresented: $adding) { AddView() }
+            .sheet(item: $openedProxy) { proxy in ProxySheet(id: proxy.id) }
+            .sheet(item: $openedGroup) { group in GroupSheet(id: group.id) }
         }
     }
 
@@ -50,7 +54,9 @@ struct ProxiesView: View {
     private var list: some View {
         List {
             ForEach(model.library.groups) { group in
-                row(group.name, group.size.map { "\($0) proxies" })
+                row(group.name, group.size.map { "\($0) proxies" }, lastDay: group.expires)
+                    .contentShape(Rectangle())
+                    .onTapGesture { openedGroup = group }
                     .swipeActions {
                         Button("Remove", role: .destructive) {
                             Task { await model.removeGroup(group) }
@@ -58,7 +64,9 @@ struct ProxiesView: View {
                     }
             }
             ForEach(model.library.proxies) { proxy in
-                row(proxy.title, words(for: proxy))
+                row(proxy.title, words(for: proxy), lastDay: proxy.expires)
+                    .contentShape(Rectangle())
+                    .onTapGesture { openedProxy = proxy }
                     .swipeActions {
                         Button("Remove", role: .destructive) {
                             Task { await model.remove(proxy) }
@@ -77,11 +85,21 @@ struct ProxiesView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    private func row(_ title: String, _ words: String?) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.system(size: 16, weight: .bold)).foregroundColor(C.ink).lineLimit(1)
-            if let words {
-                Text(words).font(.system(size: 13, weight: .medium)).foregroundColor(C.ink2).lineLimit(1)
+    private func row(_ title: String, _ words: String?, lastDay: String?) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 16, weight: .bold)).foregroundColor(C.ink).lineLimit(1)
+                if let words {
+                    Text(words).font(.system(size: 13, weight: .medium)).foregroundColor(C.ink2).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+            // A plan's last day, red once it is three days away (the reminder's own day).
+            if let ends = Reminders.words(lastDay) {
+                Text(ends.words)
+                    .font(.system(size: 12.5, weight: .bold))
+                    .foregroundColor(ends.soon ? C.bad : C.ink2)
+                    .lineLimit(1)
             }
         }
         .padding(.vertical, 4)

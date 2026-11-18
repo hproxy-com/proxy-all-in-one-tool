@@ -160,6 +160,16 @@ impl Stats {
 /// One open client connection. Dropping it closes the count.
 pub struct Open<'a>(&'a Stats);
 
+impl Open<'_> {
+    /// This connection was a request for the relay's own pages, which is no
+    /// traffic: it leaves the counts as if it had never come. Called before
+    /// the status page reads them, so the page never counts itself.
+    pub fn not_traffic(self) {
+        self.0.connections.fetch_sub(1, Ordering::Relaxed);
+        // Dropping `self` takes it out of `active`.
+    }
+}
+
 impl Drop for Open<'_> {
     fn drop(&mut self) {
         self.0.active.fetch_sub(1, Ordering::Relaxed);

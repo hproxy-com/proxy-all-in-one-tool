@@ -39,6 +39,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+use crate::control::{self, Control};
 use crate::routes::Login;
 use crate::stats::{Counted, Said, Stats, Why};
 use crate::switchable::Ticket;
@@ -199,7 +200,7 @@ fn split_target(t: &str) -> Option<(String, u16)> {
 }
 
 /// Pull host, port and origin-form path out of an absolute request URI.
-fn split_absolute_uri(uri: &str) -> Option<(String, u16, String)> {
+pub(crate) fn split_absolute_uri(uri: &str) -> Option<(String, u16, String)> {
     let (default_port, rest) = match uri.split_once("://") {
         Some(("http", r)) => (80u16, r),
         Some(("https", r)) => (443, r),
@@ -836,14 +837,18 @@ fn carries_login(head: &[u8], login: &Login) -> bool {
 ///
 /// `stats` counts this connection, its failure if it cannot reach the proxy,
 /// and every byte that crosses the proxy side of it.
+///
+/// A request for the relay's own pages (`/hproxy/...`, control.rs) is answered
+/// here too, and counted as no traffic.
 pub async fn handle(
     mut client: TcpStream,
     mut ticket: Ticket,
     verbose: bool,
     stats: &Arc<Stats>,
     login: Option<&Login>,
+    control: &Control,
 ) {
-    let _open = stats.opened();
+    let open = stats.opened();
     let src = Arc::clone(&ticket.source);
     // A relay other devices use serves this network and nobody further away.
     if login.is_some() && !client.peer_addr().is_ok_and(|peer| on_this_network(peer.ip())) {
@@ -874,6 +879,24 @@ pub async fn handle(
         Err(_) => return,
     };
 
+    let first = String::from_utf8_lossy(&head).lines().next().unwrap_or("").to_string();
+    let mut it = first.split_whitespace();
+    let (method, uri) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
+
+    // The relay's own pages, for scripts. Before the proxy's login check: a
+    // page is logged in to with `Authorization`, which the pages accept as
+    // well as `Proxy-Authorization` (control.rs).
+    if !method.eq_ignore_ascii_case("CONNECT") {
+        if let Some(page) = control::page_of(uri, client.local_addr().ok()) {
+            open.not_traffic();
+            if verbose {
+                eprintln!("  {method} {}/{}", control::PREFIX, page.name);
+            }
+            control::answer(&mut client, &head, method, &page, login, stats, control).await;
+            return;
+        }
+    }
+
     if login.is_some_and(|login| !carries_login(&head, login)) {
         let _ = client
             .write_all(
@@ -884,10 +907,6 @@ pub async fn handle(
             .await;
         return;
     }
-
-    let first = String::from_utf8_lossy(&head).lines().next().unwrap_or("").to_string();
-    let mut it = first.split_whitespace();
-    let (method, uri) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
 
     if method.eq_ignore_ascii_case("CONNECT") {
         let Some((host, port)) = split_target(uri) else {
@@ -933,7 +952,8 @@ pub async fn handle(
         reply_error(
             &mut client,
             "400 Bad Request",
-            "this port expects proxy requests. Point your software's PROXY setting here rather than opening it as a web page.",
+            "this port expects proxy requests. Point your software's PROXY setting here rather than opening it as a web page. \
+             Scripts find its control pages under /hproxy: /hproxy/status and /hproxy/new-ip.",
         )
         .await;
         return;

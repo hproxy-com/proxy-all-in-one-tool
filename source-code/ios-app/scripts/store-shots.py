@@ -10,7 +10,7 @@ from PIL import Image
 
 BACKGROUND = (0x07, 0x0A, 0x12)
 # The order the store shows them in: what the app does first.
-ORDER = ["connected", "proxies", "stopped", "settings", "off"]
+ORDER = ["connected", "checker", "proxies", "help", "stopped", "settings", "off"]
 
 source = pathlib.Path(sys.argv[1])
 out = pathlib.Path(sys.argv[2])
