@@ -44,9 +44,27 @@ jobs:
 
       - name: FreeBSD's own libraries (base.txz, checked against FreeBSD's MANIFEST)
         run: |
-          base="$FREEBSD_URL/amd64/$FREEBSD"
-          curl -fsSL "$base/MANIFEST" -o MANIFEST
-          curl -fsSL "$base/base.txz" -o base.txz
+          mkdir -p "$RUNNER_TEMP/bin"
+          # FreeBSD's big files: its own server first, then the MIT mirror. A download that stalls
+          # (under 100 KB/s for 30 s) moves on to the next. The SHA-256 lists come only from
+          # download.freebsd.org, so a file from the mirror is checked against FreeBSD's own word.
+          cat > "$RUNNER_TEMP/bin/freebsd-get" <<'EOF'
+          #!/bin/sh
+          # freebsd-get <path below releases/> <file to write>
+          for root in https://download.freebsd.org/releases https://mirrors.mit.edu/FreeBSD/releases; do
+            if curl -fsSL --retry 2 --connect-timeout 20 --speed-limit 102400 --speed-time 30 "$root/$1" -o "$2"; then
+              echo "$2: from $root"
+              exit 0
+            fi
+            echo "::warning::$root was too slow or failed for $1" >&2
+          done
+          exit 1
+          EOF
+          chmod 755 "$RUNNER_TEMP/bin/freebsd-get"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+          curl -fsSL --retry 3 --max-time 120 "$FREEBSD_URL/amd64/$FREEBSD/MANIFEST" -o MANIFEST
+          "$RUNNER_TEMP/bin/freebsd-get" "amd64/$FREEBSD/base.txz" base.txz
           want=$(awk -F '\t' '$1 == "base.txz" { print $2 }' MANIFEST)
           got=$(sha256sum base.txz | cut -d ' ' -f 1)
           echo "base.txz: $got"
@@ -99,10 +117,10 @@ jobs:
 
       - name: FreeBSD 14.4 (the official cloud-init image, checked against FreeBSD's CHECKSUM.SHA256)
         run: |
-          dir="$FREEBSD_URL/VM-IMAGES/$FREEBSD/amd64/Latest"
+          dir="VM-IMAGES/$FREEBSD/amd64/Latest"
           img="FreeBSD-$FREEBSD-amd64-BASIC-CLOUDINIT-ufs.qcow2"
-          curl -fsSL "$dir/CHECKSUM.SHA256" -o CHECKSUM.SHA256
-          curl -fsSL "$dir/$img.xz" -o "$img.xz"
+          curl -fsSL --retry 3 --max-time 120 "$FREEBSD_URL/$dir/CHECKSUM.SHA256" -o CHECKSUM.SHA256
+          freebsd-get "$dir/$img.xz" "$img.xz"
           want=$(sed -n "s/^SHA256 ($img.xz) = \([0-9a-f]*\)$/\1/p" CHECKSUM.SHA256)
           got=$(sha256sum "$img.xz" | cut -d ' ' -f 1)
           echo "$img.xz: $got"
