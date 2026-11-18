@@ -65,6 +65,10 @@ jobs:
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
           adb="$ANDROID_HOME/platform-tools/adb"
+          # The emulator loads PulseAudio's library even with -no-audio, and OpenGL's for its
+          # software renderer; GitHub's Ubuntu 24.04 has neither.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libpulse0 libgl1 > /dev/null
           yes | "$sdkmanager" --licenses > /dev/null || true
           "$sdkmanager" --install emulator platform-tools "system-images;android-34;default;x86_64" | tail -3
           ls "$ANDROID_HOME/system-images/android-34/default/x86_64" | head -5
