@@ -69,6 +69,10 @@ jobs:
           # software renderer; GitHub's Ubuntu 24.04 has neither.
           sudo apt-get update -qq
           sudo apt-get install -y -qq libpulse0 libgl1 > /dev/null
+          # One folder for the virtual phone: newer avdmanager writes to ~/.config/.android/avd, the
+          # emulator reads ~/.android/avd; both honour ANDROID_AVD_HOME.
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
           yes | "$sdkmanager" --licenses > /dev/null || true
           "$sdkmanager" --install emulator platform-tools "system-images;android-34;default;x86_64" | tail -3
           ls "$ANDROID_HOME/system-images/android-34/default/x86_64" | head -5
