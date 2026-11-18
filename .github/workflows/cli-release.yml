@@ -252,8 +252,13 @@ jobs:
           .\hproxy-cli-windows-arm64.exe list --limit 2
           if ($LASTEXITCODE -ne 0) { throw "list ended with $LASTEXITCODE" }
 
+  # FreeBSD: built against FreeBSD's own libraries and proven in FreeBSD itself, in a virtual
+  # machine (cli-freebsd-check.yml, which leaves the file as this run's artifact).
+  freebsd:
+    uses: ./.github/workflows/cli-freebsd-check.yml
+
   release:
-    needs: [build, windows-arm]
+    needs: [build, windows-arm, freebsd]
     if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-22.04
     permissions:
@@ -298,6 +303,7 @@ jobs:
           | \`hproxy-cli-linux-i686\` | Linux on 32-bit x86: older PCs and thin clients |
           | \`hproxy-cli-linux-riscv64\` | Linux on 64-bit RISC-V boards and servers |
           | \`hproxy-cli-android-arm64\` | Android 7 and later on 64-bit ARM, in Termux |
+          | \`hproxy-cli-freebsd-x86_64\` | FreeBSD 14.4 and later on x86_64 |
           | \`hproxy-cli-windows-x86_64.exe\` | Windows 10 and 11, x64 |
           | \`hproxy-cli-windows-arm64.exe\` | Windows 11 on ARM |
           | \`hproxy-cli-windows-x86.exe\` | Windows 10, 32-bit |

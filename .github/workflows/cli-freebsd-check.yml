@@ -4,18 +4,20 @@ name: Command-line tool, FreeBSD check
 #
 # The build: on Linux, with clang and lld, against FreeBSD 14.4's own system libraries, unpacked
 # from FreeBSD's base.txz after a check against the SHA-256 in FreeBSD's MANIFEST. The file needs
-# nothing beyond FreeBSD's base system, and FreeBSD runs it on 14.4 and later (15 included): plain
-# FreeBSD servers, pfSense and OPNsense firewalls.
+# nothing beyond FreeBSD's base system, and FreeBSD runs it on 14.4 and later (15 included). The
+# check prints the newest libc symbol version it needs, which says how far back it would go.
 #
 # The proof: FreeBSD 14.4's official cloud-init image (its SHA-256 checked against FreeBSD's
 # CHECKSUM.SHA256), booted with QEMU and KVM on this machine. At first boot its user-data script
 # fetches the file from this machine, runs it, sends the output back with nc, and powers off.
 #
-# Started by hand (Actions, "Command-line tool, FreeBSD check", Run workflow). It uses no secret and
-# changes nothing in this repository.
+# Started by hand (Actions, "Command-line tool, FreeBSD check", Run workflow), and by the
+# command-line release (cli-release.yml), which takes the proven file from this run's artifact. It
+# uses no secret and changes nothing in this repository.
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -107,6 +109,11 @@ jobs:
               exit 1
             fi
           done < needs.txt
+          # The newest symbol versions it asks of FreeBSD's libraries: a FreeBSD whose libc has
+          # them runs it.
+          echo "symbol versions it needs:"
+          readelf --version-info "$f" | grep -oE '(FBSD|FBSDprivate|GCC)_[0-9.]+' | sort -uV | tr '\n' ' '
+          echo
 
       - name: Hardware acceleration for the virtual machine (KVM)
         run: |
@@ -181,3 +188,10 @@ jobs:
           grep -q "hproxy $version" report.txt
           grep -q "== list exit 0" report.txt
           grep -q "== ip exit 0" report.txt
+
+      # The file proven above, for the command-line release (cli-release.yml) to attach.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hproxy-cli-freebsd-x86_64
+          path: serve/hproxy-cli-freebsd-x86_64
+          if-no-files-found: error
