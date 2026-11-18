@@ -74,6 +74,37 @@ jobs:
           fi
           docker stop addon > /dev/null
 
+      - name: A skipped site goes straight out, and every request is logged when asked
+        run: |
+          before=$(cat tinyproxy-3128.log tinyproxy-3129.log | grep -c 'Request (file descriptor' || true)
+          printf '{"source":"own","country":"","socks5":false,"proxies":["http://host.docker.internal:3128","http://host.docker.internal:3129"],"rotate":"every","skip":["hproxy.com"],"only":[],"log_requests":true}' > skip.json
+          docker run -d --name skip --add-host host.docker.internal:host-gateway \
+            -p 127.0.0.1:18081:8080 -v "$PWD/skip.json:/data/options.json:ro" hproxy-addon:test
+          for i in $(seq 60); do
+            if docker logs skip 2>&1 | grep -q "listening"; then break; fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null -x http://127.0.0.1:18081 https://hproxy.com/install.sh
+          sleep 1
+          docker logs skip 2>&1
+          after=$(cat tinyproxy-3128.log tinyproxy-3129.log | grep -c 'Request (file descriptor' || true)
+          echo "requests the test proxies saw: $before before, $after after"
+          test "$before" = "$after"
+          docker logs skip 2>&1 | grep -q "Straight out, past the proxy: hproxy.com"
+          docker logs skip 2>&1 | grep -q "CONNECT hproxy.com:443"
+          docker stop skip > /dev/null
+
+      - name: skip and only together stop with a note
+        run: |
+          printf '{"source":"free","country":"","socks5":false,"proxies":[],"rotate":"every","skip":["a.example"],"only":["b.example"],"log_requests":false}' > both.json
+          if docker run --rm -v "$PWD/both.json:/data/options.json:ro" hproxy-addon:test > both.log 2>&1; then
+            cat both.log
+            echo "::error::it should have stopped"
+            exit 1
+          fi
+          cat both.log
+          grep -q "opposite things" both.log
+
       - name: With no proxies yet, it says what to do and stops
         run: |
           printf '{"source":"own","country":"","proxies":[],"rotate":"every"}' > empty.json

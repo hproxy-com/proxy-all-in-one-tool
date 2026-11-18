@@ -26,6 +26,20 @@ password.
 | `random` | One at random for each connection |
 | `on-failure` | Stays with one until it stops answering |
 
+## More settings
+
+| Setting | What it does |
+| --- | --- |
+| `socks5` | With the free pool: only exits that speak SOCKS5 |
+| `skip` | Sites that go straight out on your own address, past the proxy: your bank, a work tool, your own network (`192.168.0.0/16`) |
+| `only` | The reverse: only these sites use the proxy, everything else goes straight out |
+| `via` | A proxy in front of yours. Your proxies only ever see its address, which helps with a proxy that accepts one allowed address |
+| `log_requests` | One line per request in the **Log** tab: which site and port, never a login |
+
+A site is a name (`example.com` covers everything under it, like `www.example.com`), an address,
+or a range (`10.0.0.0/8`). Fill in `skip` or `only`; the add-on stops with a note when both are
+filled in.
+
 ## Who can reach it
 
 Port 8080 on Home Assistant's address is open to your home network, and the proxy asks for no

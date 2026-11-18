@@ -5,11 +5,26 @@ configuration:
   country:
     name: Country
     description: With the free pool, a two-letter country such as US or DE. Empty for any.
+  socks5:
+    name: SOCKS5 exits
+    description: With the free pool, only exits that speak SOCKS5.
   proxies:
     name: Your proxies
     description: One per entry, in any shape your provider prints (host:port:user:pass, http://user:pass@host:port, socks5://...).
   rotate:
     name: Rotation
     description: "With your own proxies: every (a new one per connection), every:25 (every 25 connections), every:10m (every 10 minutes), random, or on-failure."
+  skip:
+    name: Sites that skip the proxy
+    description: "These go straight out on your own address: a name (covers everything under it), an address or a range like 192.168.0.0/16. One per entry."
+  only:
+    name: Only these sites use the proxy
+    description: "The rest goes straight out. Same shapes as above. Fill in only one of the two lists."
+  via:
+    name: A proxy in front (via)
+    description: Reach your proxies through this one first, so they only ever see its address. Any shape your provider prints.
+  log_requests:
+    name: Log every request
+    description: One line per request in the Log tab (the site and port, never a login). For finding out what goes where.
 network:
   8080/tcp: The proxy, HTTP and SOCKS5 on one port

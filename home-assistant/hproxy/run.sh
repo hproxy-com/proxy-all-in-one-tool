@@ -7,6 +7,11 @@ options=/data/options.json
 source=$(jq -r '.source // "free"' "${options}")
 rotate=$(jq -r '.rotate // "every"' "${options}")
 country=$(jq -r '.country // ""' "${options}")
+socks5=$(jq -r '.socks5 // false' "${options}")
+skip=$(jq -r '[.skip[]? // empty] | join(",")' "${options}")
+only=$(jq -r '[.only[]? // empty] | join(",")' "${options}")
+via=$(jq -r '.via // ""' "${options}")
+log_requests=$(jq -r '.log_requests // false' "${options}")
 
 # Inside the add-on the proxy has to listen on its own network to be reachable at all; Home
 # Assistant then offers port 8080 on its address in your home network.
@@ -17,7 +22,12 @@ if [ "${source}" = "free" ]; then
     if [ -n "${country}" ]; then
         args+=(--country "${country}")
     fi
-    echo "[HProxy] The free HProxy pool${country:+ in ${country}}, a new exit whenever one stops answering."
+    exits=""
+    if [ "${socks5}" = "true" ]; then
+        args+=(--socks5)
+        exits=", SOCKS5 exits"
+    fi
+    echo "[HProxy] The free HProxy pool${country:+ in ${country}}${exits}, a new exit whenever one stops answering."
 else
     list=/tmp/proxies.txt
     umask 077
@@ -29,6 +39,26 @@ else
     fi
     args+=(--file "${list}" --rotate "${rotate}")
     echo "[HProxy] ${count} of your proxies, rotation: ${rotate}."
+fi
+
+if [ -n "${skip}" ] && [ -n "${only}" ]; then
+    echo "[HProxy] skip and only say opposite things: fill in one of them and leave the other empty." >&2
+    exit 1
+fi
+if [ -n "${skip}" ]; then
+    args+=(--skip "${skip}")
+    echo "[HProxy] Straight out, past the proxy: ${skip}"
+fi
+if [ -n "${only}" ]; then
+    args+=(--only "${only}")
+    echo "[HProxy] Only these sites use the proxy: ${only}"
+fi
+if [ -n "${via}" ]; then
+    args+=(--via "${via}")
+    echo "[HProxy] Through your first proxy (via) on the way."
+fi
+if [ "${log_requests}" = "true" ]; then
+    args+=(--verbose)
 fi
 
 export HPROXY_NO_UPDATE_CHECK=1
