@@ -3,7 +3,8 @@
  *   cc -std=c11 -Wall -Wextra -Werror -I. tests/test_hproxy_api.c hproxy_api.c -o test_hproxy_api
  *   ./test_hproxy_api
  *
- * The check rows are lines hproxy.com's checker really sent on 2026-11-18. */
+ * The check rows have the shape of lines hproxy.com's checker sent on 2026-11-18, with every address
+ * replaced by one from the ranges kept for documentation (RFC 5737, RFC 3849). */
 #include "hproxy_api.h"
 
 #include <stdio.h>
@@ -49,19 +50,19 @@ static void the_list_url(void) {
 
 static void proxy_lines(void) {
     char out[HPROXY_PROXY_MAX];
-    CHECK(hproxy_proxy_from_line("1.2.3.4:8080", out, sizeof(out)) == HproxyLineProxy);
-    CHECK_STR(out, "1.2.3.4:8080");
-    CHECK(hproxy_proxy_from_line("  95.182.114.41:80\r\n", out, sizeof(out)) == HproxyLineProxy);
-    CHECK_STR(out, "95.182.114.41:80");
-    CHECK(hproxy_proxy_from_line("socks5://5.6.7.8:1080", out, sizeof(out)) == HproxyLineProxy);
-    CHECK_STR(out, "socks5://5.6.7.8:1080");
+    CHECK(hproxy_proxy_from_line("192.0.2.4:8080", out, sizeof(out)) == HproxyLineProxy);
+    CHECK_STR(out, "192.0.2.4:8080");
+    CHECK(hproxy_proxy_from_line("  192.0.2.11:80\r\n", out, sizeof(out)) == HproxyLineProxy);
+    CHECK_STR(out, "192.0.2.11:80");
+    CHECK(hproxy_proxy_from_line("socks5://198.51.100.8:1080", out, sizeof(out)) == HproxyLineProxy);
+    CHECK_STR(out, "socks5://198.51.100.8:1080");
     CHECK(hproxy_proxy_from_line("proxy.example.com:3128", out, sizeof(out)) == HproxyLineProxy);
     CHECK(hproxy_proxy_from_line("[2001:db8::1]:8080", out, sizeof(out)) == HproxyLineProxy);
     CHECK_STR(out, "[2001:db8::1]:8080");
 
     /* A line with a login never leaves the Flipper, in any of the shapes providers print. */
-    CHECK(hproxy_proxy_from_line("user:pass@1.2.3.4:80", out, sizeof(out)) == HproxyLineLogin);
-    CHECK(hproxy_proxy_from_line("1.2.3.4:80:user:pass", out, sizeof(out)) == HproxyLineLogin);
+    CHECK(hproxy_proxy_from_line("user:pass@192.0.2.4:80", out, sizeof(out)) == HproxyLineLogin);
+    CHECK(hproxy_proxy_from_line("192.0.2.4:80:user:pass", out, sizeof(out)) == HproxyLineLogin);
     CHECK(hproxy_proxy_from_line("http://u:p@host.example:80", out, sizeof(out)) == HproxyLineLogin);
     CHECK(hproxy_proxy_from_line("[2001:db8::1]:8080:u:p", out, sizeof(out)) == HproxyLineLogin);
 
@@ -69,14 +70,14 @@ static void proxy_lines(void) {
     CHECK(hproxy_proxy_from_line("   \r\n", out, sizeof(out)) == HproxyLineBlank);
     CHECK(hproxy_proxy_from_line("# my proxies", out, sizeof(out)) == HproxyLineBlank);
 
-    CHECK(hproxy_proxy_from_line("1.2.3.4", out, sizeof(out)) == HproxyLineInvalid);
-    CHECK(hproxy_proxy_from_line("1.2.3.4:", out, sizeof(out)) == HproxyLineInvalid);
-    CHECK(hproxy_proxy_from_line("1.2.3.4:0", out, sizeof(out)) == HproxyLineInvalid);
-    CHECK(hproxy_proxy_from_line("1.2.3.4:65536", out, sizeof(out)) == HproxyLineInvalid);
-    CHECK(hproxy_proxy_from_line("1.2.3.4:80 fast", out, sizeof(out)) == HproxyLineInvalid);
+    CHECK(hproxy_proxy_from_line("192.0.2.4", out, sizeof(out)) == HproxyLineInvalid);
+    CHECK(hproxy_proxy_from_line("192.0.2.4:", out, sizeof(out)) == HproxyLineInvalid);
+    CHECK(hproxy_proxy_from_line("192.0.2.4:0", out, sizeof(out)) == HproxyLineInvalid);
+    CHECK(hproxy_proxy_from_line("192.0.2.4:65536", out, sizeof(out)) == HproxyLineInvalid);
+    CHECK(hproxy_proxy_from_line("192.0.2.4:80 fast", out, sizeof(out)) == HproxyLineInvalid);
     CHECK(hproxy_proxy_from_line("a\"b.example:80", out, sizeof(out)) == HproxyLineInvalid);
     CHECK(hproxy_proxy_from_line(":8080", out, sizeof(out)) == HproxyLineInvalid);
-    CHECK(hproxy_proxy_from_line("1.2.3.4:80:x", out, sizeof(out)) == HproxyLineInvalid);
+    CHECK(hproxy_proxy_from_line("192.0.2.4:80:x", out, sizeof(out)) == HproxyLineInvalid);
     CHECK(hproxy_proxy_from_line("[2001:db8::1]8080", out, sizeof(out)) == HproxyLineInvalid);
     CHECK(
         hproxy_proxy_from_line(
@@ -101,22 +102,22 @@ static size_t command_length(const char* payload) {
 
 static void check_payloads(void) {
     char body[512];
-    const char* three[] = {"1.2.3.4:80", "5.6.7.8:3128", "[2001:db8::1]:8080"};
+    const char* three[] = {"192.0.2.4:80", "198.51.100.8:3128", "[2001:db8::1]:8080"};
     CHECK(hproxy_check_payload(body, sizeof(body), three, 3, NULL) == 3);
     CHECK_STR(
         body,
-        "{\"proxies\":[\"1.2.3.4:80\",\"5.6.7.8:3128\",\"[2001:db8::1]:8080\"],"
+        "{\"proxies\":[\"192.0.2.4:80\",\"198.51.100.8:3128\",\"[2001:db8::1]:8080\"],"
         "\"timeout_ms\":1500,\"retries\":0}");
     CHECK(hproxy_check_payload(body, sizeof(body), three, 1, "socks5") == 1);
     CHECK_STR(
         body,
-        "{\"proxies\":[\"1.2.3.4:80\"],\"timeout_ms\":1500,\"retries\":0,\"protocols\":[\"socks5\"]}");
+        "{\"proxies\":[\"192.0.2.4:80\"],\"timeout_ms\":1500,\"retries\":0,\"protocols\":[\"socks5\"]}");
     CHECK(command_length(body) <= HPROXY_BOARD_COMMAND_MAX - 1);
 
     /* Thirty typical addresses: one batch takes at most HPROXY_BATCH_MAX, and fits. */
     const char* many[30];
     for(int i = 0; i < 30; i++)
-        many[i] = "159.65.230.146:8888";
+        many[i] = "203.0.113.146:8888";
     CHECK(hproxy_check_payload(body, sizeof(body), many, 30, "http") == HPROXY_BATCH_MAX);
     CHECK(command_length(body) <= HPROXY_BOARD_COMMAND_MAX - 1);
 
@@ -135,22 +136,28 @@ static void check_payloads(void) {
 static void check_rows(void) {
     HproxyResult r;
     const char* alive =
-        "{\"input\":\"213.188.192.1:80\",\"status\":\"alive\",\"ip\":\"213.188.192.1\",\"port\":80,"
-        "\"exit_ip\":\"213.188.192.1\",\"alive\":true,\"protocols\":[\"http\"],\"supports_udp\":null,"
+        "{\"input\":\"192.0.2.10:80\",\"status\":\"alive\",\"ip\":\"192.0.2.10\",\"port\":80,"
+        "\"exit_ip\":\"192.0.2.10\",\"alive\":true,\"protocols\":[\"http\"],\"supports_udp\":null,"
         "\"speed_mbps\":null,\"anonymity\":\"anonymous\",\"latency_ms\":55,\"country_code\":\"US\","
-        "\"region\":\"Mississippi\",\"city\":null,\"asn\":40509,\"asn_org\":\"Fly.io, Inc.\","
+        "\"region\":\"Example\",\"city\":null,\"asn\":64500,\"asn_org\":\"Example Hosting\","
         "\"is_datacenter\":true,\"error\":null,\"failure\":null}";
     CHECK(hproxy_parse_check_row(alive, &r) == HproxyRowResult);
-    CHECK_STR(r.input, "213.188.192.1:80");
+    CHECK_STR(r.input, "192.0.2.10:80");
     CHECK(r.alive);
     CHECK(r.latency_ms == 55);
     CHECK_STR(r.country, "US");
     CHECK_STR(r.anonymity, "anonymous");
     CHECK_STR(r.status, "alive");
+    CHECK_STR(r.protocols, "http");
 
-    char shown[96];
-    hproxy_format_result(&r, shown, sizeof(shown));
-    CHECK_STR(shown, "+ 213.188.192.1:80\n  US 55ms anonymous\n");
+    char shown[192];
+    hproxy_result_label(&r, shown, sizeof(shown));
+    CHECK_STR(shown, "+ 192.0.2.10:80");
+    hproxy_result_detail(&r, shown, sizeof(shown));
+    CHECK_STR(
+        shown,
+        "192.0.2.10:80\n\nWorks, answered in 55 ms\nCountry: US\nAnonymity: anonymous\n"
+        "Protocols: http\n");
 
     /* A refused address, whose error text holds quotes and the word "input". */
     const char* forbidden =
@@ -165,24 +172,41 @@ static void check_rows(void) {
     CHECK(r.latency_ms == -1);
     CHECK_STR(r.country, "");
     CHECK_STR(r.anonymity, "");
-    hproxy_format_result(&r, shown, sizeof(shown));
-    CHECK_STR(shown, "- 198.51.100.7:8080\n  not checkable here\n");
+    CHECK_STR(r.protocols, "");
+    hproxy_result_label(&r, shown, sizeof(shown));
+    CHECK_STR(shown, "- 198.51.100.7:8080");
+    hproxy_result_detail(&r, shown, sizeof(shown));
+    CHECK_STR(shown, "198.51.100.7:8080\n\nNot checkable: a private or reserved address.\n");
 
     const char* dead =
-        "{\"input\":\"184.75.221.82:3118\",\"status\":\"dead\",\"alive\":false,\"protocols\":[],"
+        "{\"input\":\"203.0.113.82:3118\",\"status\":\"dead\",\"alive\":false,\"protocols\":[],"
         "\"latency_ms\":null,\"country_code\":\"CA\"}";
     CHECK(hproxy_parse_check_row(dead, &r) == HproxyRowResult);
-    hproxy_format_result(&r, shown, sizeof(shown));
-    CHECK_STR(shown, "- 184.75.221.82:3118\n  dead\n");
+    hproxy_result_detail(&r, shown, sizeof(shown));
+    CHECK_STR(shown, "203.0.113.82:3118\n\nDead: no proxy answered at this address.\n");
 
-    /* Keys in any order, nested values before them, spaces around. */
+    /* Keys in any order, nested values before them, spaces around; the array keeps its strings. */
     const char* shuffled =
-        " { \"protocols\" : [\"http\",{\"x\":[1,2]}] , \"alive\" : true , \"input\" : \"1.1.1.1:80\" } ";
+        " { \"protocols\" : [\"http\",{\"x\":[1,2]},\"socks5\"] , \"alive\" : true , \"input\" : "
+        "\"192.0.2.1:80\" } ";
     CHECK(hproxy_parse_check_row(shuffled, &r) == HproxyRowResult);
-    CHECK_STR(r.input, "1.1.1.1:80");
+    CHECK_STR(r.input, "192.0.2.1:80");
     CHECK(r.alive);
-    hproxy_format_result(&r, shown, sizeof(shown));
-    CHECK_STR(shown, "+ 1.1.1.1:80\n  alive\n");
+    CHECK_STR(r.protocols, "http, socks5");
+    hproxy_result_detail(&r, shown, sizeof(shown));
+    CHECK_STR(shown, "192.0.2.1:80\n\nWorks\nProtocols: http, socks5\n");
+
+    /* More protocols than fit: the ones that fit, whole. */
+    const char* many =
+        "{\"input\":\"192.0.2.2:1080\",\"alive\":true,\"protocols\":[\"http\",\"https\",\"socks4\","
+        "\"socks5\",\"socks5h\",\"udp\"]}";
+    CHECK(hproxy_parse_check_row(many, &r) == HproxyRowResult);
+    CHECK_STR(r.protocols, "http, https, socks4, socks5");
+
+    /* A tiny buffer still ends with a terminating zero. */
+    char tiny[6];
+    hproxy_result_detail(&r, tiny, sizeof(tiny));
+    CHECK(strlen(tiny) == 5);
 
     CHECK(hproxy_parse_check_row("{\"_event\":\"end\",\"done\":1,\"duration_ms\":0,\"total\":1}", &r) == HproxyRowEnd);
     CHECK(hproxy_parse_check_row("{\"_event\":\"progress\",\"done\":3}", &r) == HproxyRowOther);
@@ -200,7 +224,7 @@ static void board_lines(void) {
     CHECK(hproxy_board_line("[ERROR] WiFi not connected."));
     CHECK(hproxy_board_line("[PONG]"));
     CHECK(!hproxy_board_line("[2001:db8::1]:8080"));
-    CHECK(!hproxy_board_line("213.188.192.1:80"));
+    CHECK(!hproxy_board_line("192.0.2.10:80"));
     CHECK(!hproxy_board_line("true"));
     CHECK(!hproxy_board_line("[]"));
 
@@ -214,7 +238,7 @@ static void board_lines(void) {
     CHECK(hproxy_board_status("[POST/SUCCESS]{\"Status-Code\":429,\"Content-Length\":80}") == 429);
     CHECK(hproxy_board_status("[POST/SUCCESS] POST request successful.") == -1);
     CHECK(hproxy_board_status("[GET/END]") == -1);
-    CHECK(hproxy_board_status("213.188.192.1:80") == -1);
+    CHECK(hproxy_board_status("192.0.2.10:80") == -1);
 }
 
 int main(void) {

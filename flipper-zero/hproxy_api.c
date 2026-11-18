@@ -311,6 +311,30 @@ static bool json_bool(const char* v, bool* out) {
     return false;
 }
 
+/* The strings of a JSON array, joined with ", " (anything else in it is skipped). */
+static bool json_string_array(const char* v, char* out, size_t size) {
+    if(!v || *v != '[' || size == 0) return false;
+    out[0] = '\0';
+    size_t n = 0;
+    const char* p = skip_space(v + 1);
+    while(*p && *p != ']') {
+        if(*p == '"') {
+            char item[24];
+            if(!json_string(p, item, sizeof(item))) return false;
+            /* Whole names only: one that does not fit ends the list, never half of it. */
+            size_t need = (n ? 2 : 0) + strlen(item);
+            if(n + need >= size) return true;
+            snprintf(out + n, size - n, "%s%s", n ? ", " : "", item);
+            n += need;
+        }
+        p = skip_value(p);
+        if(!p) return false;
+        p = skip_space(p);
+        if(*p == ',') p = skip_space(p + 1);
+    }
+    return *p == ']';
+}
+
 static bool json_int(const char* v, int32_t* out) {
     if(!v || !(is_digit(*v) || *v == '-')) return false;
     char* end = NULL;
@@ -348,36 +372,46 @@ HproxyRowKind hproxy_parse_check_row(const char* line, HproxyResult* result) {
     if(!json_string(json_value(p, "status"), result->status, sizeof(result->status))) {
         result->status[0] = '\0';
     }
+    if(!json_string_array(json_value(p, "protocols"), result->protocols, sizeof(result->protocols))) {
+        result->protocols[0] = '\0';
+    }
     return HproxyRowResult;
 }
 
-size_t hproxy_format_result(const HproxyResult* result, char* out, size_t size) {
-    if(!result || !out || size == 0) return 0;
-    int n;
-    if(result->alive) {
-        char details[48] = "";
-        size_t d = 0;
-        if(result->country[0]) {
-            d += (size_t)snprintf(details + d, sizeof(details) - d, "%s", result->country);
-        }
-        if(result->latency_ms >= 0 && d < sizeof(details)) {
-            d += (size_t)snprintf(
-                details + d,
-                sizeof(details) - d,
-                "%s%ldms",
-                d ? " " : "",
-                (long)result->latency_ms);
-        }
-        if(result->anonymity[0] && d < sizeof(details)) {
-            snprintf(details + d, sizeof(details) - d, "%s%s", d ? " " : "", result->anonymity);
-        }
-        n = snprintf(out, size, "+ %s\n  %s\n", result->input, details[0] ? details : "alive");
-    } else {
-        const char* why = strcmp(result->status, "forbidden") == 0 ? "not checkable here" : "dead";
-        n = snprintf(out, size, "- %s\n  %s\n", result->input, why);
-    }
+static size_t written(int n, size_t size) {
     if(n < 0) return 0;
     return (size_t)n < size ? (size_t)n : size - 1;
+}
+
+size_t hproxy_result_label(const HproxyResult* result, char* out, size_t size) {
+    if(!result || !out || size == 0) return 0;
+    return written(snprintf(out, size, "%c %s", result->alive ? '+' : '-', result->input), size);
+}
+
+size_t hproxy_result_detail(const HproxyResult* result, char* out, size_t size) {
+    if(!result || !out || size == 0) return 0;
+    if(!result->alive) {
+        const char* why = strcmp(result->status, "forbidden") == 0 ?
+                              "Not checkable: a private or reserved address." :
+                              "Dead: no proxy answered at this address.";
+        return written(snprintf(out, size, "%s\n\n%s\n", result->input, why), size);
+    }
+    size_t n = written(snprintf(out, size, "%s\n\nWorks", result->input), size);
+    if(result->latency_ms >= 0 && n + 1 < size) {
+        n += written(
+            snprintf(out + n, size - n, ", answered in %ld ms", (long)result->latency_ms), size - n);
+    }
+    if(n + 1 < size) n += written(snprintf(out + n, size - n, "\n"), size - n);
+    if(result->country[0] && n + 1 < size) {
+        n += written(snprintf(out + n, size - n, "Country: %s\n", result->country), size - n);
+    }
+    if(result->anonymity[0] && n + 1 < size) {
+        n += written(snprintf(out + n, size - n, "Anonymity: %s\n", result->anonymity), size - n);
+    }
+    if(result->protocols[0] && n + 1 < size) {
+        n += written(snprintf(out + n, size - n, "Protocols: %s\n", result->protocols), size - n);
+    }
+    return n;
 }
 
 /* ---- the board's own lines ------------------------------------------------------------------- */

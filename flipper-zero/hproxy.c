@@ -6,23 +6,28 @@
  *
  * The board keeps its WiFi networks itself (set up once in the FlipperHTTP app) and joins them
  * when it starts, so this app only asks whether it is online. Every request runs in a worker
- * thread while the screen shows how far it got, and Back always leaves.
+ * thread; a progress screen shows how far it got, and Back always stops it.
  *
  * Files in apps_data/hproxy on the SD card:
- *   proxies.txt  your own list, one host:port per line; lines with a login stay on the Flipper
- *   free.txt     the last free list fetched here
- *   alive.txt    the proxies that answered in the last check
+ *   proxies.txt   your own list, one host:port per line; lines with a login stay on the Flipper
+ *   free.txt      the last free list fetched here
+ *   alive.txt     the proxies that worked in the last check
+ *   settings.txt  the free-list choices, kept between runs
  */
 #include <furi.h>
 #include <gui/gui.h>
+#include <gui/elements.h>
+#include <gui/view.h>
 #include <gui/view_dispatcher.h>
 #include <gui/modules/submenu.h>
 #include <gui/modules/text_box.h>
 #include <gui/modules/variable_item_list.h>
+#include <notification/notification_messages.h>
 #include <storage/storage.h>
 #include <expansion/expansion.h>
 
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -35,6 +40,7 @@
 #define PATH_MINE HPROXY_DIR "/proxies.txt"
 #define PATH_FREE HPROXY_DIR "/free.txt"
 #define PATH_ALIVE HPROXY_DIR "/alive.txt"
+#define PATH_SETTINGS HPROXY_DIR "/settings.txt"
 
 #define LIST_READ_MAX (8 * 1024) /* the most of a list file read */
 #define CHECK_MAX 50 /* proxies per check */
@@ -49,6 +55,9 @@
 typedef enum {
     ViewMenu,
     ViewFree,
+    ViewProgress,
+    ViewFreeList,
+    ViewResults,
     ViewText,
 } ViewId;
 
@@ -56,12 +65,12 @@ typedef enum {
     MenuFree,
     MenuCheckMine,
     MenuCheckFree,
+    MenuResults,
     MenuSetup,
 } MenuIndex;
 
 typedef enum {
-    EventUpdate = 1,
-    EventDone,
+    EventJobDone = 1,
 } EventId;
 
 typedef enum {
@@ -69,6 +78,13 @@ typedef enum {
     JobCheckMine,
     JobCheckFree,
 } Job;
+
+typedef enum {
+    OutcomeNone, /* stopped with Back */
+    OutcomeText, /* a message: work_text */
+    OutcomeFreeList,
+    OutcomeResults,
+} Outcome;
 
 typedef enum {
     BoardReady,
@@ -83,6 +99,28 @@ typedef enum {
     AnswerSilent,
     AnswerCancelled,
 } AnswerEnd;
+
+typedef enum {
+    RowPending, /* sent, no answer yet */
+    RowAlive,
+    RowDead,
+    RowSilent, /* no answer inside the board's 2-second window */
+} RowState;
+
+typedef struct {
+    HproxyResult result; /* result.input is the proxy as read from the list */
+    RowState state;
+} Row;
+
+typedef struct {
+    char title[24];
+    char status[48];
+    float progress; /* 0 to 1; below 0, no bar */
+    uint16_t alive;
+    uint16_t dead;
+    uint16_t silent;
+    bool counters;
+} ProgressModel;
 
 static const char* const PROTOCOL_NAMES[] = {"Any", "HTTP", "HTTPS", "SOCKS4", "SOCKS5"};
 static const char* const PROTOCOL_PARAMS[] = {NULL, "http", "https", "socks4", "socks5"};
@@ -99,25 +137,30 @@ static const char SETUP_TEXT[] =
     "\n"
     "2. Set up WiFi once in the FlipperHTTP app. The board remembers it and joins by itself.\n"
     "\n"
-    "3. Free proxies: pick a protocol, a country and how many, then Get the list. It is saved as "
-    "apps_data/hproxy/free.txt.\n"
+    "3. Free proxies: pick a protocol, a country and how many, then Get the list. Check them right "
+    "from the list.\n"
     "\n"
     "4. Your own list: put it on the SD card as apps_data/hproxy/proxies.txt, one host:port per "
-    "line. Lines with a login stay on your Flipper: they are never sent.\n"
+    "line, up to 50. Lines with a login stay on your Flipper: they are never sent.\n"
     "\n"
-    "Checks run on hproxy.com, ten proxies at a time, with 1.5 seconds per proxy. The ones that "
-    "answer are saved as apps_data/hproxy/alive.txt.\n"
+    "Checks run on hproxy.com, ten proxies at a time, 1.5 seconds per proxy. The ones that work "
+    "are saved as apps_data/hproxy/alive.txt.\n"
     "\n"
     "hproxy.com";
 
 typedef struct {
     Gui* gui;
     ViewDispatcher* view_dispatcher;
+    NotificationApp* notifications;
     Submenu* menu;
     VariableItemList* free_options;
+    View* progress;
+    Submenu* free_list_menu;
+    Submenu* results_menu;
     TextBox* text_box;
     ViewId view;
-    ViewId text_back; /* where Back leads from the text view */
+    ViewId text_back; /* where Back leads from the text screen */
+    ViewId job_back; /* where Back leads from the progress screen */
 
     Expansion* expansion;
     FlipperHTTP* fhttp; /* NULL when the GPIO serial port could not be opened */
@@ -126,10 +169,22 @@ typedef struct {
     FuriThread* worker;
     volatile bool cancel;
     Job job;
+    Outcome outcome;
+    bool pending; /* a job asked for while the last one was still finishing */
+    Job pending_job;
+    ViewId pending_back;
 
-    FuriMutex* mutex;
-    FuriString* work_text; /* written by the worker, under mutex */
+    FuriMutex* mutex; /* guards what the worker hands to the screens below */
+    FuriString* work_text;
+    FuriString* free_lines; /* one host:port per line */
+    size_t free_count;
+    Row* rows;
+    size_t row_count;
+    bool results_ready; /* rows hold a finished check, the one the results screen shows */
+
     FuriString* show_text; /* what the text box shows: the GUI thread's own copy */
+    char free_title[32];
+    char results_title[32];
 
     uint8_t protocol_index;
     uint8_t country_index;
@@ -176,9 +231,39 @@ static bool file_read(const char* path, FuriString* out, size_t limit) {
     return ok;
 }
 
-/* ---- the text on screen --------------------------------------------------------------------- */
+/* The free-list choices, as "protocol=1", "country=3", "count=1" lines. */
+static uint8_t setting(const char* text, const char* key, uint8_t limit, uint8_t fallback) {
+    const char* p = strstr(text, key);
+    if(!p) return fallback;
+    long value = strtol(p + strlen(key), NULL, 10);
+    return value >= 0 && value < limit ? (uint8_t)value : fallback;
+}
 
-/* Worker side: change the text, then ask the GUI thread to show it. */
+static void settings_load(App* app) {
+    FuriString* text = furi_string_alloc();
+    if(file_read(PATH_SETTINGS, text, 256)) {
+        const char* s = furi_string_get_cstr(text);
+        app->protocol_index =
+            setting(s, "protocol=", (uint8_t)COUNT_OF(PROTOCOL_NAMES), app->protocol_index);
+        app->country_index = setting(s, "country=", (uint8_t)COUNT_OF(COUNTRIES), app->country_index);
+        app->count_index = setting(s, "count=", (uint8_t)COUNT_OF(COUNTS), app->count_index);
+    }
+    furi_string_free(text);
+}
+
+static void settings_save(App* app) {
+    FuriString* text = furi_string_alloc_printf(
+        "protocol=%u\ncountry=%u\ncount=%u\n",
+        app->protocol_index,
+        app->country_index,
+        app->count_index);
+    file_write(PATH_SETTINGS, text);
+    furi_string_free(text);
+}
+
+/* ---- what the worker hands over --------------------------------------------------------------- */
+
+/* A message for the text screen, shown when the job ends. */
 static void text_printf(App* app, bool append, const char* format, ...) {
     va_list args;
     va_start(args, format);
@@ -190,21 +275,71 @@ static void text_printf(App* app, bool append, const char* format, ...) {
     }
     furi_mutex_release(app->mutex);
     va_end(args);
-    view_dispatcher_send_custom_event(app->view_dispatcher, EventUpdate);
 }
 
-/* GUI side: the text box lets go of the old text before its copy changes. */
-static void show_update(App* app) {
-    text_box_set_text(app->text_box, "");
-    furi_mutex_acquire(app->mutex, FuriWaitForever);
-    furi_string_set(app->show_text, app->work_text);
-    furi_mutex_release(app->mutex);
-    text_box_set_text(app->text_box, furi_string_get_cstr(app->show_text));
+/* The progress screen. Its model locks itself, so the worker may change it directly. */
+static void progress_set(App* app, const char* title, const char* status, float progress) {
+    with_view_model(
+        app->progress,
+        ProgressModel * model,
+        {
+            if(title) snprintf(model->title, sizeof(model->title), "%s", title);
+            if(status) snprintf(model->status, sizeof(model->status), "%s", status);
+            model->progress = progress;
+        },
+        true);
 }
 
-static void view_switch(App* app, ViewId view) {
-    app->view = view;
-    view_dispatcher_switch_to_view(app->view_dispatcher, view);
+static void progress_reset(App* app, const char* title, const char* status, bool counters) {
+    with_view_model(
+        app->progress,
+        ProgressModel * model,
+        {
+            snprintf(model->title, sizeof(model->title), "%s", title);
+            snprintf(model->status, sizeof(model->status), "%s", status);
+            model->progress = -1.0f;
+            model->alive = 0;
+            model->dead = 0;
+            model->silent = 0;
+            model->counters = counters;
+        },
+        true);
+}
+
+static void progress_count(App* app, RowState state) {
+    with_view_model(
+        app->progress,
+        ProgressModel * model,
+        {
+            if(state == RowAlive) model->alive++;
+            if(state == RowDead) model->dead++;
+            if(state == RowSilent) model->silent++;
+        },
+        true);
+}
+
+static void progress_draw(Canvas* canvas, void* data) {
+    ProgressModel* model = data;
+    canvas_clear(canvas);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str_aligned(canvas, 64, 2, AlignCenter, AlignTop, model->title);
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str_aligned(canvas, 64, 16, AlignCenter, AlignTop, model->status);
+    if(model->progress >= 0.0f) {
+        elements_progress_bar(canvas, 6, 28, 116, model->progress);
+    }
+    if(model->counters) {
+        char line[40];
+        snprintf(
+            line,
+            sizeof(line),
+            "Alive %u   Dead %u   Slow %u",
+            (unsigned)model->alive,
+            (unsigned)model->dead,
+            (unsigned)model->silent);
+        canvas_draw_str_aligned(canvas, 64, 43, AlignCenter, AlignTop, line);
+    }
+    canvas_draw_str_aligned(canvas, 64, 63, AlignCenter, AlignBottom, "Back to stop");
 }
 
 /* ---- the WiFi board ------------------------------------------------------------------------- */
@@ -241,6 +376,7 @@ static bool elapsed(uint32_t since, uint32_t ms) {
 static BoardState board_check(App* app) {
     if(!app->fhttp) return BoardNoPort;
 
+    progress_set(app, NULL, "Looking for the WiFi board...", -1.0f);
     lines_clear(app);
     if(!flipper_http_send_command(app->fhttp, HTTP_CMD_PING)) return BoardMissing;
     bool pong = false;
@@ -254,6 +390,7 @@ static BoardState board_check(App* app) {
     }
     if(!pong) return BoardMissing;
 
+    progress_set(app, NULL, "Is it online?", -1.0f);
     lines_clear(app);
     if(!flipper_http_send_command(app->fhttp, HTTP_CMD_STATUS)) return BoardMissing;
     start = furi_get_tick();
@@ -277,7 +414,7 @@ static const char* board_problem(BoardState state) {
     case BoardMissing:
         return "No WiFi board answered.\n\n"
                "Plug in the WiFi Devboard (or another board) flashed with FlipperHTTP 2.2 or "
-               "newer, then try again. See How to set up.";
+               "newer, then try again. More in Setup and help.";
     case BoardOffline:
         return "The WiFi board is not online.\n\n"
                "Set up WiFi once in the FlipperHTTP app: the board remembers it and joins by "
@@ -311,7 +448,7 @@ static AnswerEnd board_request(
     uint32_t cancelled_at = 0;
     for(;;) {
         if(app->cancel && !cancelled_at) cancelled_at = furi_get_tick();
-        /* After Back, the answer may still finish, so the next request starts on a quiet line. */
+        /* After Back the answer may still finish, so the next request starts on a quiet line. */
         if(cancelled_at && elapsed(cancelled_at, WAIT_END_MS)) return AnswerCancelled;
         FuriString* line = line_next(app, 100);
         if(!line) {
@@ -350,7 +487,8 @@ static void report_failure(App* app, AnswerEnd end, FuriString* error) {
             "The WiFi board stopped answering.\n\nIs it still plugged in, and is its WiFi "
             "in reach?");
     } else {
-        text_printf(app, false, "The WiFi board reported a problem:\n\n%s", furi_string_get_cstr(error));
+        text_printf(
+            app, false, "The WiFi board reported a problem:\n\n%s", furi_string_get_cstr(error));
     }
 }
 
@@ -365,7 +503,7 @@ static void pause_ms(App* app, uint32_t ms) {
 /* ---- free proxies --------------------------------------------------------------------------- */
 
 typedef struct {
-    FuriString* list; /* one host:port per line */
+    FuriString* list;
     size_t count;
 } FreeList;
 
@@ -378,32 +516,32 @@ static void free_list_line(const char* line, void* context) {
     }
 }
 
-static void job_free_list(App* app) {
+static Outcome job_free_list(App* app) {
     const char* protocol = PROTOCOL_PARAMS[app->protocol_index];
     const char* country = app->country_index ? COUNTRIES[app->country_index] : NULL;
     unsigned count = COUNTS[app->count_index];
     char url[192];
     if(!hproxy_list_url(url, sizeof(url), protocol, country, count)) {
-        text_printf(app, false, "These options do not make a request.");
-        return;
+        text_printf(app, false, "These choices do not make a request.");
+        return OutcomeText;
     }
-    text_printf(
-        app,
-        false,
-        "Asking hproxy.com for %u free %s%sproxies%s%s...",
-        count,
-        protocol ? PROTOCOL_NAMES[app->protocol_index] : "",
-        protocol ? " " : "",
-        country ? " in " : "",
-        country ? country : "");
 
+    BoardState board = board_check(app);
+    if(app->cancel) return OutcomeNone;
+    if(board != BoardReady) {
+        text_printf(app, false, "%s", board_problem(board));
+        return OutcomeText;
+    }
+
+    progress_set(app, NULL, "Asking hproxy.com...", -1.0f);
     FreeList free_list = {.list = furi_string_alloc(), .count = 0};
     FuriString* error = furi_string_alloc();
     int status;
     AnswerEnd end =
         board_request(app, GET, url, NULL, NULL, free_list_line, &free_list, &status, error);
-    if(end == AnswerCancelled) {
-        /* Back was pressed: nothing to show. */
+    Outcome outcome = OutcomeText;
+    if(end == AnswerCancelled || app->cancel) {
+        outcome = OutcomeNone;
     } else if(end != AnswerDone) {
         report_failure(app, end, error);
     } else if(status >= 400) {
@@ -416,78 +554,93 @@ static void job_free_list(App* app) {
             "protocol.");
     } else {
         app->free_protocol = protocol;
-        bool saved = file_write(PATH_FREE, free_list.list);
-        text_printf(
-            app,
-            false,
-            "%u free proxies from hproxy.com\n%s\n\n%s",
+        file_write(PATH_FREE, free_list.list);
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        furi_string_set(app->free_lines, free_list.list);
+        app->free_count = free_list.count;
+        snprintf(
+            app->free_title,
+            sizeof(app->free_title),
+            "%u %s%s%s",
             (unsigned)free_list.count,
-            saved ? "Saved: apps_data/hproxy/free.txt" : "Could not save them to the SD card.",
-            furi_string_get_cstr(free_list.list));
+            protocol ? PROTOCOL_NAMES[app->protocol_index] : "proxies",
+            country ? " " : "",
+            country ? country : "");
+        furi_mutex_release(app->mutex);
+        outcome = OutcomeFreeList;
     }
     furi_string_free(error);
     furi_string_free(free_list.list);
+    return outcome;
 }
 
 /* ---- checking proxies ----------------------------------------------------------------------- */
 
 typedef struct {
-    char (*proxies)[HPROXY_PROXY_MAX];
-    bool* answered;
-    size_t count;
-    size_t batch_start;
-    size_t batch_count;
-    size_t alive;
-    size_t logins;
-    size_t invalid;
-    FuriString* results; /* two lines per proxy */
-    FuriString* alive_list; /* one host:port per line */
-} Check;
+    App* app;
+    size_t start;
+    size_t end;
+} Batch;
 
 static void check_line(const char* line, void* context) {
-    Check* check = context;
+    Batch* batch = context;
+    App* app = batch->app;
     HproxyResult result;
     if(hproxy_parse_check_row(line, &result) != HproxyRowResult) return;
-    for(size_t i = check->batch_start; i < check->batch_start + check->batch_count; i++) {
-        if(check->answered[i] || strcmp(check->proxies[i], result.input) != 0) continue;
-        check->answered[i] = true;
-        char shown[128];
-        hproxy_format_result(&result, shown, sizeof(shown));
-        furi_string_cat_str(check->results, shown);
-        if(result.alive) {
-            check->alive++;
-            furi_string_cat_printf(check->alive_list, "%s\n", result.input);
-        }
-        return;
+    RowState state = RowPending;
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    for(size_t i = batch->start; i < batch->end; i++) {
+        Row* row = &app->rows[i];
+        if(row->state != RowPending || strcmp(row->result.input, result.input) != 0) continue;
+        row->result = result;
+        row->state = result.alive ? RowAlive : RowDead;
+        state = row->state;
+        break;
     }
+    furi_mutex_release(app->mutex);
+    if(state == RowPending) return;
+    progress_count(app, state);
+    if(state == RowAlive) notification_message(app->notifications, &sequence_blink_green_10);
 }
 
-/* The proxies in a list file, at most CHECK_MAX; logins and other lines are only counted. */
-static void check_read(Check* check, FuriString* text) {
+/* The proxies of a list file into the rows, at most CHECK_MAX. */
+static size_t check_read(App* app, FuriString* text, size_t* logins, size_t* invalid) {
+    size_t count = 0;
     const char* p = furi_string_get_cstr(text);
-    while(*p && check->count < CHECK_MAX) {
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    /* The rows are about to change: the results screen has nothing to show until this check ends. */
+    app->results_ready = false;
+    while(*p && count < CHECK_MAX) {
         const char* newline = strchr(p, '\n');
         size_t len = newline ? (size_t)(newline - p) : strlen(p);
         char line[HPROXY_PROXY_MAX + 40];
         if(len >= sizeof(line)) {
             /* Too long to be one of ours; a login in it is still a login. */
             if(memchr(p, '@', len)) {
-                check->logins++;
+                (*logins)++;
             } else {
-                check->invalid++;
+                (*invalid)++;
             }
         } else {
             memcpy(line, p, len);
             line[len] = '\0';
-            switch(hproxy_proxy_from_line(line, check->proxies[check->count], HPROXY_PROXY_MAX)) {
-            case HproxyLineProxy:
-                check->count++;
+            char proxy[HPROXY_PROXY_MAX];
+            switch(hproxy_proxy_from_line(line, proxy, sizeof(proxy))) {
+            case HproxyLineProxy: {
+                /* A clean row: nothing of an earlier check stays in it. */
+                Row* row = &app->rows[count];
+                memset(row, 0, sizeof(*row));
+                memcpy(row->result.input, proxy, sizeof(row->result.input));
+                row->result.latency_ms = -1;
+                row->state = RowPending;
+                count++;
                 break;
+            }
             case HproxyLineLogin:
-                check->logins++;
+                (*logins)++;
                 break;
             case HproxyLineInvalid:
-                check->invalid++;
+                (*invalid)++;
                 break;
             default:
                 break;
@@ -496,20 +649,20 @@ static void check_read(Check* check, FuriString* text) {
         p += len;
         if(*p == '\n') p++;
     }
+    app->row_count = count;
+    furi_mutex_release(app->mutex);
+    return count;
 }
 
-static void job_check(App* app, const char* path, bool mine, const char* protocol) {
-    Check check = {0};
-    check.proxies = malloc(sizeof(*check.proxies) * CHECK_MAX);
-    check.answered = malloc(sizeof(bool) * CHECK_MAX);
-    memset(check.answered, 0, sizeof(bool) * CHECK_MAX);
-    check.results = furi_string_alloc();
-    check.alive_list = furi_string_alloc();
+static Outcome job_check(App* app, const char* path, bool mine, const char* protocol) {
+    /* The list first: a missing one is said at once, without waking the board. */
     FuriString* text = furi_string_alloc();
-    FuriString* error = furi_string_alloc();
-
+    size_t logins = 0;
+    size_t invalid = 0;
+    size_t count = 0;
     bool found = file_read(path, text, LIST_READ_MAX);
-    if(found) check_read(&check, text);
+    if(found) count = check_read(app, text, &logins, &invalid);
+    furi_string_free(text);
 
     if(!found) {
         text_printf(
@@ -519,179 +672,328 @@ static void job_check(App* app, const char* path, bool mine, const char* protoco
                    "apps_data/hproxy/proxies.txt, one host:port per line."
                  : "There is no free list yet.\n\nGet one first: Free proxies, then Get the "
                    "list.");
-    } else if(check.count == 0) {
+        return OutcomeText;
+    }
+    if(count == 0) {
         text_printf(app, false, "Nothing to check in this list.");
-        if(check.logins) {
+        if(logins) {
             text_printf(
                 app,
                 true,
                 "\n\n%u lines carry a login. They stay on your Flipper and are never sent.",
-                (unsigned)check.logins);
+                (unsigned)logins);
         }
-        if(check.invalid) {
+        if(invalid) {
             text_printf(
-                app,
-                true,
-                "\n\n%u lines are not host:port and were left out.",
-                (unsigned)check.invalid);
+                app, true, "\n\n%u lines are not host:port and were left out.", (unsigned)invalid);
         }
-    } else {
-        size_t start = 0;
-        bool stopped = false;
-        while(start < check.count && !app->cancel) {
-            text_printf(
-                app,
-                false,
-                "Checking %u of %u through hproxy.com...\n\n%s",
-                (unsigned)(start + 1),
-                (unsigned)check.count,
-                furi_string_get_cstr(check.results));
-
-            const char* batch[HPROXY_BATCH_MAX];
-            size_t n = 0;
-            for(size_t i = start; i < check.count && n < HPROXY_BATCH_MAX; i++) {
-                batch[n++] = check.proxies[i];
-            }
-            char payload[HPROXY_BOARD_COMMAND_MAX];
-            size_t packed = hproxy_check_payload(payload, sizeof(payload), batch, n, protocol);
-            if(packed == 0) {
-                /* One proxy too long for the board's request on its own. */
-                check.invalid++;
-                start++;
-                continue;
-            }
-            check.batch_start = start;
-            check.batch_count = packed;
-
-            int status = -1;
-            AnswerEnd end = AnswerFailed;
-            for(int attempt = 0; attempt < 2 && !app->cancel; attempt++) {
-                end = board_request(
-                    app,
-                    POST,
-                    HPROXY_CHECK_URL,
-                    HPROXY_POST_HEADERS,
-                    payload,
-                    check_line,
-                    &check,
-                    &status,
-                    error);
-                if(end == AnswerDone && status == 429 && attempt == 0) {
-                    text_printf(app, true, "\nhproxy.com asks for a short pause...");
-                    pause_ms(app, RATE_PAUSE_MS);
-                    continue;
-                }
-                break;
-            }
-            if(end == AnswerCancelled || app->cancel) break;
-            if(end != AnswerDone) {
-                report_failure(app, end, error);
-                stopped = true;
-                break;
-            }
-            if(status >= 400) {
-                text_printf(
-                    app, false, "hproxy.com answered %d.\n\nTry again in a minute.", status);
-                stopped = true;
-                break;
-            }
-            /* The board ends an answer after 2 seconds without data: a proxy that had not
-             * answered by then is shown as such. */
-            for(size_t i = start; i < start + packed; i++) {
-                if(!check.answered[i]) {
-                    furi_string_cat_printf(
-                        check.results, "? %s\n  no answer in time\n", check.proxies[i]);
-                }
-            }
-            start += packed;
-        }
-
-        if(!app->cancel && !stopped) {
-            bool saved = file_write(PATH_ALIVE, check.alive_list);
-            text_printf(
-                app,
-                false,
-                "%u of %u answered\n%s",
-                (unsigned)check.alive,
-                (unsigned)check.count,
-                check.alive ? (saved ? "Saved: apps_data/hproxy/alive.txt" :
-                                       "Could not save them to the SD card.") :
-                              "");
-            if(check.logins) {
-                text_printf(
-                    app,
-                    true,
-                    "\n%u lines with a login stayed on your Flipper.",
-                    (unsigned)check.logins);
-            }
-            if(check.invalid) {
-                text_printf(
-                    app, true, "\n%u lines were not host:port.", (unsigned)check.invalid);
-            }
-            text_printf(app, true, "\n\n%s", furi_string_get_cstr(check.results));
-        }
+        return OutcomeText;
     }
 
+    BoardState board = board_check(app);
+    if(app->cancel) return OutcomeNone;
+    if(board != BoardReady) {
+        text_printf(app, false, "%s", board_problem(board));
+        return OutcomeText;
+    }
+
+    progress_reset(app, "Checking proxies", "Sending them to hproxy.com...", true);
+    progress_set(app, NULL, NULL, 0.0f);
+    FuriString* error = furi_string_alloc();
+    Outcome outcome = OutcomeResults;
+    size_t start = 0;
+    while(start < count && !app->cancel) {
+        const char* batch_proxies[HPROXY_BATCH_MAX];
+        size_t n = 0;
+        for(size_t i = start; i < count && n < HPROXY_BATCH_MAX; i++) {
+            batch_proxies[n++] = app->rows[i].result.input;
+        }
+        char payload[HPROXY_BOARD_COMMAND_MAX];
+        size_t packed = hproxy_check_payload(payload, sizeof(payload), batch_proxies, n, protocol);
+        if(packed == 0) {
+            /* One proxy too long for the board's request on its own. */
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            app->rows[start].state = RowSilent;
+            furi_mutex_release(app->mutex);
+            progress_count(app, RowSilent);
+            start++;
+            continue;
+        }
+
+        Batch batch = {.app = app, .start = start, .end = start + packed};
+        int status = -1;
+        AnswerEnd end = AnswerFailed;
+        for(int attempt = 0; attempt < 2 && !app->cancel; attempt++) {
+            end = board_request(
+                app,
+                POST,
+                HPROXY_CHECK_URL,
+                HPROXY_POST_HEADERS,
+                payload,
+                check_line,
+                &batch,
+                &status,
+                error);
+            if(end == AnswerDone && status == 429 && attempt == 0) {
+                progress_set(app, NULL, "hproxy.com asks for a pause...", -1.0f);
+                pause_ms(app, RATE_PAUSE_MS);
+                continue;
+            }
+            break;
+        }
+        if(end == AnswerCancelled || app->cancel) {
+            outcome = OutcomeNone;
+            break;
+        }
+        if(end != AnswerDone) {
+            report_failure(app, end, error);
+            outcome = OutcomeText;
+            break;
+        }
+        if(status >= 400) {
+            text_printf(app, false, "hproxy.com answered %d.\n\nTry again in a minute.", status);
+            outcome = OutcomeText;
+            break;
+        }
+        /* The board ends an answer after 2 seconds without data: a proxy that had not answered by
+         * then is slow, or dead. */
+        for(size_t i = start; i < start + packed; i++) {
+            bool silent = false;
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            if(app->rows[i].state == RowPending) {
+                app->rows[i].state = RowSilent;
+                silent = true;
+            }
+            furi_mutex_release(app->mutex);
+            if(silent) progress_count(app, RowSilent);
+        }
+        start += packed;
+        char status_line[48];
+        snprintf(
+            status_line, sizeof(status_line), "%u of %u checked", (unsigned)start, (unsigned)count);
+        progress_set(app, NULL, status_line, (float)start / (float)count);
+    }
     furi_string_free(error);
-    furi_string_free(text);
-    furi_string_free(check.alive_list);
-    furi_string_free(check.results);
-    free(check.answered);
-    free(check.proxies);
+
+    if(outcome == OutcomeResults) {
+        FuriString* alive_list = furi_string_alloc();
+        size_t alive = 0;
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        for(size_t i = 0; i < app->row_count; i++) {
+            if(app->rows[i].state != RowAlive) continue;
+            furi_string_cat_printf(alive_list, "%s\n", app->rows[i].result.input);
+            alive++;
+        }
+        snprintf(
+            app->results_title,
+            sizeof(app->results_title),
+            "%u of %u work",
+            (unsigned)alive,
+            (unsigned)app->row_count);
+        app->results_ready = true;
+        furi_mutex_release(app->mutex);
+        file_write(PATH_ALIVE, alive_list);
+        furi_string_free(alive_list);
+    }
+    return outcome;
 }
 
-/* ---- the worker ------------------------------------------------------------------------------ */
+/* ---- jobs ------------------------------------------------------------------------------------ */
 
 static int32_t worker_main(void* context) {
     App* app = context;
-    BoardState board = board_check(app);
-    if(app->cancel) {
-        /* Back was pressed. */
-    } else if(board != BoardReady) {
-        text_printf(app, false, "%s", board_problem(board));
-    } else {
-        switch(app->job) {
-        case JobFreeList:
-            job_free_list(app);
-            break;
-        case JobCheckMine:
-            job_check(app, PATH_MINE, true, NULL);
-            break;
-        case JobCheckFree:
-            job_check(app, PATH_FREE, false, app->free_protocol);
-            break;
-        }
+    Outcome outcome = OutcomeNone;
+    switch(app->job) {
+    case JobFreeList:
+        outcome = job_free_list(app);
+        break;
+    case JobCheckMine:
+        outcome = job_check(app, PATH_MINE, true, NULL);
+        break;
+    case JobCheckFree:
+        outcome = job_check(app, PATH_FREE, false, app->free_protocol);
+        break;
     }
-    view_dispatcher_send_custom_event(app->view_dispatcher, EventDone);
+    app->outcome = app->cancel ? OutcomeNone : outcome;
+    view_dispatcher_send_custom_event(app->view_dispatcher, EventJobDone);
     return 0;
 }
 
-static void job_start(App* app, Job job, ViewId back) {
-    if(app->worker) return; /* the last one is still finishing */
-    app->job = job;
-    app->cancel = false;
-    app->text_back = back;
+static void view_switch(App* app, ViewId view) {
+    app->view = view;
+    view_dispatcher_switch_to_view(app->view_dispatcher, view);
+}
+
+/* GUI side: the text box lets go of the old text before its copy changes. */
+static void show_update(App* app) {
+    text_box_set_text(app->text_box, "");
     furi_mutex_acquire(app->mutex, FuriWaitForever);
-    furi_string_set_str(app->work_text, "Asking the WiFi board...");
+    furi_string_set(app->show_text, app->work_text);
     furi_mutex_release(app->mutex);
+    text_box_set_text(app->text_box, furi_string_get_cstr(app->show_text));
+}
+
+static void show_text(App* app, const char* text, ViewId back) {
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    furi_string_set_str(app->work_text, text);
+    furi_mutex_release(app->mutex);
+    app->text_back = back;
     show_update(app);
     text_box_set_focus(app->text_box, TextBoxFocusStart);
     view_switch(app, ViewText);
+}
+
+static void job_start(App* app, Job job, ViewId back) {
+    app->job_back = back;
+    if(app->worker) {
+        /* The last one is still finishing after Back: this one follows it. */
+        app->pending = true;
+        app->pending_job = job;
+        app->pending_back = back;
+        progress_reset(app, "One moment", "Finishing the last request...", false);
+        view_switch(app, ViewProgress);
+        return;
+    }
+    app->job = job;
+    app->cancel = false;
+    app->outcome = OutcomeNone;
+    if(job == JobFreeList) {
+        progress_reset(app, "Free proxies", "Looking for the WiFi board...", false);
+    } else {
+        progress_reset(app, "Checking proxies", "Reading the list...", false);
+    }
+    view_switch(app, ViewProgress);
     app->worker = furi_thread_alloc_ex("HProxyWorker", WORKER_STACK, worker_main, app);
     furi_thread_start(app->worker);
 }
 
-/* ---- the screens ---------------------------------------------------------------------------- */
+/* ---- the lists on screen -------------------------------------------------------------------- */
 
-static void show_static(App* app, const char* text) {
-    furi_mutex_acquire(app->mutex, FuriWaitForever);
-    furi_string_set_str(app->work_text, text);
-    furi_mutex_release(app->mutex);
-    app->text_back = ViewMenu;
-    show_update(app);
-    text_box_set_focus(app->text_box, TextBoxFocusStart);
-    view_switch(app, ViewText);
+static void on_free_list(void* context, uint32_t index) {
+    App* app = context;
+    if(index == 0) job_start(app, JobCheckFree, ViewFreeList);
 }
+
+static void free_list_build(App* app) {
+    submenu_reset(app->free_list_menu);
+    submenu_set_header(app->free_list_menu, app->free_title);
+    char check[32];
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    snprintf(check, sizeof(check), "Check these %u now", (unsigned)app->free_count);
+    submenu_add_item(app->free_list_menu, check, 0, on_free_list, app);
+    const char* p = furi_string_get_cstr(app->free_lines);
+    uint32_t index = 1;
+    while(*p) {
+        const char* newline = strchr(p, '\n');
+        size_t len = newline ? (size_t)(newline - p) : strlen(p);
+        char label[HPROXY_PROXY_MAX];
+        if(len > 0 && len < sizeof(label)) {
+            memcpy(label, p, len);
+            label[len] = '\0';
+            submenu_add_item(app->free_list_menu, label, index++, on_free_list, app);
+        }
+        p += len;
+        if(*p == '\n') p++;
+    }
+    furi_mutex_release(app->mutex);
+}
+
+static void on_result(void* context, uint32_t index) {
+    App* app = context;
+    char detail[320];
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    if(index >= app->row_count) {
+        furi_mutex_release(app->mutex);
+        return;
+    }
+    Row* row = &app->rows[index];
+    if(row->state == RowAlive || row->state == RowDead) {
+        hproxy_result_detail(&row->result, detail, sizeof(detail));
+    } else {
+        snprintf(
+            detail,
+            sizeof(detail),
+            "%s\n\nNo answer in time: nothing came back within the 2 seconds the WiFi board "
+            "waits. Slow, or dead.\n",
+            row->result.input);
+    }
+    furi_mutex_release(app->mutex);
+    show_text(app, detail, ViewResults);
+}
+
+/* The results: the ones that work first, fastest first; then the slow ones, then the dead. */
+static void results_build(App* app) {
+    submenu_reset(app->results_menu);
+    submenu_set_header(app->results_menu, app->results_title);
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    bool shown[CHECK_MAX] = {false};
+    for(;;) {
+        size_t best = CHECK_MAX;
+        for(size_t i = 0; i < app->row_count; i++) {
+            if(shown[i] || app->rows[i].state != RowAlive) continue;
+            int32_t latency = app->rows[i].result.latency_ms;
+            if(best == CHECK_MAX ||
+               (latency >= 0 && (app->rows[best].result.latency_ms < 0 ||
+                                 latency < app->rows[best].result.latency_ms))) {
+                best = i;
+            }
+        }
+        if(best == CHECK_MAX) break;
+        shown[best] = true;
+        char label[HPROXY_PROXY_MAX + 4];
+        hproxy_result_label(&app->rows[best].result, label, sizeof(label));
+        submenu_add_item(app->results_menu, label, (uint32_t)best, on_result, app);
+    }
+    for(size_t i = 0; i < app->row_count; i++) {
+        if(app->rows[i].state != RowSilent && app->rows[i].state != RowPending) continue;
+        char label[HPROXY_PROXY_MAX + 4];
+        snprintf(label, sizeof(label), "? %s", app->rows[i].result.input);
+        submenu_add_item(app->results_menu, label, (uint32_t)i, on_result, app);
+    }
+    for(size_t i = 0; i < app->row_count; i++) {
+        if(app->rows[i].state != RowDead) continue;
+        char label[HPROXY_PROXY_MAX + 4];
+        hproxy_result_label(&app->rows[i].result, label, sizeof(label));
+        submenu_add_item(app->results_menu, label, (uint32_t)i, on_result, app);
+    }
+    furi_mutex_release(app->mutex);
+}
+
+static void job_done(App* app) {
+    furi_thread_join(app->worker);
+    furi_thread_free(app->worker);
+    app->worker = NULL;
+    if(app->pending) {
+        app->pending = false;
+        job_start(app, app->pending_job, app->pending_back);
+        return;
+    }
+    if(app->cancel || app->view != ViewProgress) return; /* left with Back */
+    switch(app->outcome) {
+    case OutcomeFreeList:
+        free_list_build(app);
+        view_switch(app, ViewFreeList);
+        notification_message(app->notifications, &sequence_success);
+        break;
+    case OutcomeResults:
+        results_build(app);
+        view_switch(app, ViewResults);
+        notification_message(app->notifications, &sequence_success);
+        break;
+    case OutcomeText:
+        app->text_back = app->job_back;
+        show_update(app);
+        text_box_set_focus(app->text_box, TextBoxFocusStart);
+        view_switch(app, ViewText);
+        notification_message(app->notifications, &sequence_error);
+        break;
+    default:
+        view_switch(app, app->job_back);
+        break;
+    }
+}
+
+/* ---- menus and keys ------------------------------------------------------------------------- */
 
 static void on_menu(void* context, uint32_t index) {
     App* app = context;
@@ -705,8 +1007,23 @@ static void on_menu(void* context, uint32_t index) {
     case MenuCheckFree:
         job_start(app, JobCheckFree, ViewMenu);
         break;
+    case MenuResults: {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        bool ready = app->results_ready;
+        furi_mutex_release(app->mutex);
+        if(ready) {
+            view_switch(app, ViewResults);
+        } else {
+            show_text(
+                app,
+                "No results yet.\n\nCheck your list or the free list first: the results stay "
+                "here until the next check.",
+                ViewMenu);
+        }
+        break;
+    }
     case MenuSetup:
-        show_static(app, SETUP_TEXT);
+        show_text(app, SETUP_TEXT, ViewMenu);
         break;
     default:
         break;
@@ -733,37 +1050,48 @@ static void on_count(VariableItem* item) {
 
 static void on_free_enter(void* context, uint32_t index) {
     App* app = context;
-    if(index == 3) job_start(app, JobFreeList, ViewFree);
+    if(index == 3) {
+        settings_save(app);
+        job_start(app, JobFreeList, ViewFree);
+    }
 }
 
 static bool on_custom_event(void* context, uint32_t event) {
     App* app = context;
-    if(event != EventUpdate && event != EventDone) return false;
-    if(app->view == ViewText) show_update(app);
-    if(event == EventDone && app->worker) {
-        furi_thread_join(app->worker);
-        furi_thread_free(app->worker);
-        app->worker = NULL;
-    }
+    if(event != EventJobDone) return false;
+    if(app->worker) job_done(app);
     return true;
 }
 
 static bool on_back(void* context) {
     App* app = context;
     switch(app->view) {
-    case ViewText:
-        if(app->worker) app->cancel = true;
-        view_switch(app, app->text_back);
-        return true;
     case ViewFree:
+        settings_save(app);
         view_switch(app, ViewMenu);
+        return true;
+    case ViewProgress:
+        app->pending = false;
+        if(app->worker) app->cancel = true;
+        view_switch(app, app->job_back);
+        return true;
+    case ViewFreeList:
+        view_switch(app, ViewFree);
+        return true;
+    case ViewResults:
+        view_switch(app, ViewMenu);
+        return true;
+    case ViewText:
+        view_switch(app, app->text_back);
         return true;
     default:
         return false; /* the menu: leave the app */
     }
 }
 
-static VariableItem* add_choice(
+/* ---- the app --------------------------------------------------------------------------------- */
+
+static void add_choice(
     VariableItemList* list,
     const char* label,
     const char* const* names,
@@ -774,7 +1102,6 @@ static VariableItem* add_choice(
     VariableItem* item = variable_item_list_add(list, label, count, callback, app);
     variable_item_set_current_value_index(item, index);
     variable_item_set_current_value_text(item, names[index]);
-    return item;
 }
 
 static App* app_alloc(void) {
@@ -784,7 +1111,11 @@ static App* app_alloc(void) {
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->work_text = furi_string_alloc();
     app->show_text = furi_string_alloc();
+    app->free_lines = furi_string_alloc();
+    app->rows = malloc(sizeof(Row) * CHECK_MAX);
+    memset(app->rows, 0, sizeof(Row) * CHECK_MAX);
     app->lines = furi_message_queue_alloc(LINE_QUEUE, sizeof(FuriString*));
+    app->notifications = furi_record_open(RECORD_NOTIFICATION);
 
     /* The expansion module service listens on the GPIO serial port; it steps aside while HProxy
      * talks to the WiFi board there, and comes back when HProxy closes. */
@@ -798,10 +1129,11 @@ static App* app_alloc(void) {
         FURI_LOG_E(TAG, "the GPIO serial port could not be opened");
     }
 
-    /* The folder for proxies.txt, so it is there to find on the SD card. */
+    /* The folder for proxies.txt, so it is there to find on the SD card, and the last choices. */
     Storage* storage = furi_record_open(RECORD_STORAGE);
     storage_simply_mkdir(storage, HPROXY_DIR);
     furi_record_close(RECORD_STORAGE);
+    settings_load(app);
 
     app->gui = furi_record_open(RECORD_GUI);
     app->view_dispatcher = view_dispatcher_alloc();
@@ -815,7 +1147,8 @@ static App* app_alloc(void) {
     submenu_add_item(app->menu, "Free proxies", MenuFree, on_menu, app);
     submenu_add_item(app->menu, "Check my list", MenuCheckMine, on_menu, app);
     submenu_add_item(app->menu, "Check the free list", MenuCheckFree, on_menu, app);
-    submenu_add_item(app->menu, "How to set up", MenuSetup, on_menu, app);
+    submenu_add_item(app->menu, "Last results", MenuResults, on_menu, app);
+    submenu_add_item(app->menu, "Setup and help", MenuSetup, on_menu, app);
     view_dispatcher_add_view(app->view_dispatcher, ViewMenu, submenu_get_view(app->menu));
 
     app->free_options = variable_item_list_alloc();
@@ -848,6 +1181,26 @@ static App* app_alloc(void) {
     view_dispatcher_add_view(
         app->view_dispatcher, ViewFree, variable_item_list_get_view(app->free_options));
 
+    app->progress = view_alloc();
+    view_allocate_model(app->progress, ViewModelTypeLocking, sizeof(ProgressModel));
+    view_set_draw_callback(app->progress, progress_draw);
+    with_view_model(
+        app->progress,
+        ProgressModel * model,
+        {
+            memset(model, 0, sizeof(*model));
+            model->progress = -1.0f;
+        },
+        false);
+    view_dispatcher_add_view(app->view_dispatcher, ViewProgress, app->progress);
+
+    app->free_list_menu = submenu_alloc();
+    view_dispatcher_add_view(
+        app->view_dispatcher, ViewFreeList, submenu_get_view(app->free_list_menu));
+
+    app->results_menu = submenu_alloc();
+    view_dispatcher_add_view(app->view_dispatcher, ViewResults, submenu_get_view(app->results_menu));
+
     app->text_box = text_box_alloc();
     text_box_set_font(app->text_box, TextBoxFontText);
     view_dispatcher_add_view(app->view_dispatcher, ViewText, text_box_get_view(app->text_box));
@@ -863,11 +1216,19 @@ static void app_free(App* app) {
         furi_thread_free(app->worker);
         app->worker = NULL;
     }
+    settings_save(app);
+
     view_dispatcher_remove_view(app->view_dispatcher, ViewMenu);
     view_dispatcher_remove_view(app->view_dispatcher, ViewFree);
+    view_dispatcher_remove_view(app->view_dispatcher, ViewProgress);
+    view_dispatcher_remove_view(app->view_dispatcher, ViewFreeList);
+    view_dispatcher_remove_view(app->view_dispatcher, ViewResults);
     view_dispatcher_remove_view(app->view_dispatcher, ViewText);
     submenu_free(app->menu);
     variable_item_list_free(app->free_options);
+    view_free(app->progress);
+    submenu_free(app->free_list_menu);
+    submenu_free(app->results_menu);
     text_box_free(app->text_box);
     view_dispatcher_free(app->view_dispatcher);
     furi_record_close(RECORD_GUI);
@@ -877,7 +1238,10 @@ static void app_free(App* app) {
     furi_message_queue_free(app->lines);
     expansion_enable(app->expansion);
     furi_record_close(RECORD_EXPANSION);
+    furi_record_close(RECORD_NOTIFICATION);
 
+    free(app->rows);
+    furi_string_free(app->free_lines);
     furi_string_free(app->show_text);
     furi_string_free(app->work_text);
     furi_mutex_free(app->mutex);

@@ -6,12 +6,14 @@ WiFi board running FlipperHTTP.
 ## What it does
 
 - **Free proxies.** Pick a protocol (HTTP, HTTPS, SOCKS4, SOCKS5), a country and how many. The app
-  takes them from hproxy.com's free list, which is re-checked around the clock, and saves them as
-  `apps_data/hproxy/free.txt`.
+  takes them from hproxy.com's free list, which is re-checked around the clock, shows them, and
+  saves them as `apps_data/hproxy/free.txt`. "Check these now" sits right on top of the list.
 - **Check my list.** Checks the proxies in `apps_data/hproxy/proxies.txt` through hproxy.com's
-  checker: which ones answer, from which country, how fast, and how anonymous they are. The ones
-  that answer are saved as `apps_data/hproxy/alive.txt`.
-- **Check the free list.** The same, for the last free list.
+  checker, with a progress bar and live counts of the ones alive, dead and slow (a green blink for
+  each one that works). The ones that work are saved as `apps_data/hproxy/alive.txt`.
+- **Last results.** The ones that work first, fastest first; OK on any of them shows its country,
+  speed, anonymity and protocols.
+- Your choices (protocol, country, how many) are kept between runs.
 
 ## What you need
 
@@ -23,8 +25,18 @@ WiFi board running FlipperHTTP.
 
 ## Install
 
-Download the file for your firmware from the latest build or release (`hproxy-official.fap`,
-`hproxy-momentum.fap`, `hproxy-unleashed.fap`) and copy it to the SD card under `apps/GPIO/`.
+Download the file for your firmware from the latest release and copy it to the SD card under
+`apps/GPIO/`:
+
+| Firmware | File |
+| --- | --- |
+| Official, current release | `hproxy-official.fap` |
+| Official 1.4.3 | `hproxy-official-1.4.3.fap` |
+| Official, release candidate / development | `hproxy-official-rc.fap` / `hproxy-official-dev.fap` |
+| Momentum, release / development | `hproxy-momentum.fap` / `hproxy-momentum-dev.fap` |
+| Unleashed, release / development | `hproxy-unleashed.fap` / `hproxy-unleashed-dev.fap` |
+
+An app is built against one firmware's interface, so each firmware gets its own file.
 
 ## Your own list
 

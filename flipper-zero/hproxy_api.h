@@ -56,6 +56,7 @@ typedef struct {
     char country[3]; /* "US", or "" */
     char anonymity[16]; /* "elite", "anonymous", "transparent", or "" */
     char status[16]; /* "alive", "dead", "forbidden", ..., or "" */
+    char protocols[32]; /* "http, socks5", or "" */
 } HproxyResult;
 
 /* The free list as plain text, one host:port per line. `protocol` is http, https, socks4,
@@ -87,8 +88,11 @@ size_t hproxy_check_payload(
 /* One line of the checker's answer. */
 HproxyRowKind hproxy_parse_check_row(const char* line, HproxyResult* result);
 
-/* A result as two short lines for the Flipper's screen. Returns the length written. */
-size_t hproxy_format_result(const HproxyResult* result, char* out, size_t size);
+/* A result as one list line: "+ host:port" when it answered, "- host:port" when not. */
+size_t hproxy_result_label(const HproxyResult* result, char* out, size_t size);
+
+/* A result in full, for its own screen. Returns the length written. */
+size_t hproxy_result_detail(const HproxyResult* result, char* out, size_t size);
 
 /* The board's own lines. */
 bool hproxy_board_line(const char* line); /* "[GET/END]", "[ERROR] ...", "[PONG]", ... */
