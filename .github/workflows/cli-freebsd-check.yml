@@ -1,0 +1,165 @@
+name: Command-line tool, FreeBSD check
+
+# Builds the command-line tool for FreeBSD from source-code/ and runs it on FreeBSD itself.
+#
+# The build: on Linux, with clang and lld, against FreeBSD 14.4's own system libraries, unpacked
+# from FreeBSD's base.txz after a check against the SHA-256 in FreeBSD's MANIFEST. The file needs
+# nothing beyond FreeBSD's base system, and FreeBSD runs it on 14.4 and later (15 included): plain
+# FreeBSD servers, pfSense and OPNsense firewalls.
+#
+# The proof: FreeBSD 14.4's official cloud-init image (its SHA-256 checked against FreeBSD's
+# CHECKSUM.SHA256), booted with QEMU and KVM on this machine. At first boot its user-data script
+# fetches the file from this machine, runs it, sends the output back with nc, and powers off.
+#
+# Started by hand (Actions, "Command-line tool, FreeBSD check", Run workflow). It uses no secret and
+# changes nothing in this repository.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FREEBSD: 14.4-RELEASE
+  FREEBSD_URL: https://download.freebsd.org/releases
+
+jobs:
+  freebsd:
+    name: hproxy on FreeBSD 14.4 (amd64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Tools from Ubuntu (clang, lld, QEMU, an ISO writer)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld llvm qemu-system-x86 qemu-utils genisoimage netcat-openbsd > /dev/null
+          clang --version | head -1
+          ld.lld --version
+
+      - name: FreeBSD's own libraries (base.txz, checked against FreeBSD's MANIFEST)
+        run: |
+          base="$FREEBSD_URL/amd64/$FREEBSD"
+          curl -fsSL "$base/MANIFEST" -o MANIFEST
+          curl -fsSL "$base/base.txz" -o base.txz
+          want=$(awk -F '\t' '$1 == "base.txz" { print $2 }' MANIFEST)
+          got=$(sha256sum base.txz | cut -d ' ' -f 1)
+          echo "base.txz: $got"
+          if [ -z "$want" ] || [ "$want" != "$got" ]; then
+            echo "::error::base.txz does not match FreeBSD's MANIFEST ($want)"
+            exit 1
+          fi
+          sysroot="$RUNNER_TEMP/freebsd-sysroot"
+          mkdir -p "$sysroot"
+          tar -xJf base.txz -C "$sysroot" ./lib ./usr/lib ./usr/include
+          ls "$sysroot/usr/lib/crt1.o" "$sysroot/lib/libc.so.7"
+          # One compiler and linker for FreeBSD: clang for FreeBSD 14.4 against its libraries, lld.
+          mkdir -p "$RUNNER_TEMP/bin"
+          printf '#!/bin/sh\nexec clang --target=x86_64-unknown-freebsd14.4 --sysroot=%s -fuse-ld=lld "$@"\n' "$sysroot" > "$RUNNER_TEMP/bin/freebsd-cc"
+          chmod 755 "$RUNNER_TEMP/bin/freebsd-cc"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Built for FreeBSD
+        working-directory: source-code
+        env:
+          CC_x86_64_unknown_freebsd: freebsd-cc
+          AR_x86_64_unknown_freebsd: llvm-ar
+          CARGO_TARGET_X86_64_UNKNOWN_FREEBSD_LINKER: freebsd-cc
+        run: |
+          rustup target add x86_64-unknown-freebsd
+          cargo build --release --locked -p hproxy-cli --target x86_64-unknown-freebsd
+          mkdir -p ../serve
+          cp target/x86_64-unknown-freebsd/release/hproxy ../serve/hproxy-cli-freebsd-x86_64
+
+      - name: Nothing has to be installed beside it (FreeBSD's base system only)
+        run: |
+          f=serve/hproxy-cli-freebsd-x86_64
+          file "$f" | tee kind.txt
+          grep -q "FreeBSD" kind.txt
+          readelf -d "$f" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tee needs.txt
+          sysroot="$RUNNER_TEMP/freebsd-sysroot"
+          while read -r lib; do
+            if [ ! -e "$sysroot/lib/$lib" ] && [ ! -e "$sysroot/usr/lib/$lib" ]; then
+              echo "::error::$lib is not part of FreeBSD's base system"
+              exit 1
+            fi
+          done < needs.txt
+
+      - name: Hardware acceleration for the virtual machine (KVM)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules > /dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: FreeBSD 14.4 (the official cloud-init image, checked against FreeBSD's CHECKSUM.SHA256)
+        run: |
+          dir="$FREEBSD_URL/VM-IMAGES/$FREEBSD/amd64/Latest"
+          img="FreeBSD-$FREEBSD-amd64-BASIC-CLOUDINIT-ufs.qcow2"
+          curl -fsSL "$dir/CHECKSUM.SHA256" -o CHECKSUM.SHA256
+          curl -fsSL "$dir/$img.xz" -o "$img.xz"
+          want=$(sed -n "s/^SHA256 ($img.xz) = \([0-9a-f]*\)$/\1/p" CHECKSUM.SHA256)
+          got=$(sha256sum "$img.xz" | cut -d ' ' -f 1)
+          echo "$img.xz: $got"
+          if [ -z "$want" ] || [ "$want" != "$got" ]; then
+            echo "::error::$img.xz does not match FreeBSD's CHECKSUM.SHA256 ($want)"
+            exit 1
+          fi
+          xz -d "$img.xz"
+          echo "IMG=$img" >> "$GITHUB_ENV"
+
+      - name: It starts on FreeBSD and reaches hproxy.com
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' source-code/Cargo.toml | head -1)
+          # At first boot, FreeBSD's nuageinit runs this user-data as a script: fetch the file from
+          # this machine (10.0.2.2 to the guest), run it, send everything back, power off.
+          mkdir seed
+          printf 'instance-id: hproxy-check\nlocal-hostname: hproxy-check\n' > seed/meta-data
+          cat > seed/user-data <<'EOF'
+          #!/bin/sh
+          (
+            echo "== $(uname -sr) $(uname -m)"
+            for i in $(seq 1 30); do
+              fetch -q -o /tmp/hproxy http://10.0.2.2:8000/hproxy-cli-freebsd-x86_64 && break
+              sleep 2
+            done
+            chmod 755 /tmp/hproxy
+            /tmp/hproxy --version
+            /tmp/hproxy list --limit 2
+            echo "== list exit $?"
+            /tmp/hproxy ip 8.8.8.8
+            echo "== ip exit $?"
+          ) 2>&1 | nc -N 10.0.2.2 9000
+          shutdown -p now
+          EOF
+          genisoimage -quiet -output seed.iso -volid cidata -joliet -rock seed/user-data seed/meta-data
+
+          (cd serve && python3 -m http.server 8000 > ../http.log 2>&1 &)
+          nc -l 9000 > report.txt &
+          qemu-system-x86_64 -accel kvm -m 2048 -smp 2 -display none -serial file:console.log -no-reboot \
+            -drive file="$IMG",if=virtio,format=qcow2 -cdrom seed.iso \
+            -netdev user,id=n0 -device virtio-net-pci,netdev=n0 &
+          qemu=$!
+          for i in $(seq 1 120); do
+            if grep -q "== ip exit" report.txt 2> /dev/null; then break; fi
+            if ! kill -0 "$qemu" 2> /dev/null; then break; fi
+            sleep 5
+          done
+          echo "--- what FreeBSD sent back:"
+          cat report.txt || true
+          if ! grep -q "== ip exit" report.txt 2> /dev/null; then
+            echo "--- the console:"
+            tail -60 console.log || true
+            echo "--- the file server:"
+            cat http.log || true
+            echo "::error::FreeBSD did not send back its report"
+            exit 1
+          fi
+          grep -q "hproxy $version" report.txt
+          grep -q "== list exit 0" report.txt
+          grep -q "== ip exit 0" report.txt
