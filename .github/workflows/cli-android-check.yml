@@ -1,0 +1,101 @@
+name: Command-line tool, Android check
+
+# Runs the command-line tool on Android itself: Google's emulator with Google's Android 14 system
+# image, both installed through the Android SDK that GitHub's machine carries, on this machine's own
+# processor (x86_64, hardware-accelerated with KVM). The tool is built here from source-code/ with
+# the same NDK and the same oldest Android (API 24) as the file released for Termux on Android
+# phones (hproxy-cli-android-arm64, cli-release.yml), for x86_64 so the emulator runs it at full
+# speed. What it proves is the Android side, which the 64-bit ARM file shares: Android's C library
+# (bionic), Android's way of looking names up (a static Linux file cannot, Android has no
+# /etc/resolv.conf), and Android's file system.
+#
+# Started by hand (Actions, "Command-line tool, Android check", Run workflow). It uses no secret and
+# changes nothing in this repository.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: hproxy on Android 14 (Google's emulator)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: The Android NDK's compiler, as GitHub's machine has it
+        run: |
+          ndk="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          if [ ! -d "$ndk" ]; then
+            echo "::error::this machine has no Android NDK"
+            exit 1
+          fi
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/x86_64-linux-android24-clang"
+          echo "NDK $(basename "$ndk")"
+          {
+            echo "CC_x86_64_linux_android=$bin/x86_64-linux-android24-clang"
+            echo "AR_x86_64_linux_android=$bin/llvm-ar"
+            echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$bin/x86_64-linux-android24-clang"
+          } >> "$GITHUB_ENV"
+
+      - name: Built for Android
+        working-directory: source-code
+        run: |
+          rustup target add x86_64-linux-android
+          cargo build --release --locked -p hproxy-cli --target x86_64-linux-android
+          cp target/x86_64-linux-android/release/hproxy ../hproxy-android
+          file ../hproxy-android
+
+      - name: Hardware acceleration for the emulator (KVM)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules > /dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Google's emulator and Android 14, started and booted
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          adb="$ANDROID_HOME/platform-tools/adb"
+          yes | "$sdkmanager" --licenses > /dev/null || true
+          "$sdkmanager" --install emulator platform-tools "system-images;android-34;default;x86_64" > /dev/null
+          echo no | "$avdmanager" create avd --force --name check --package "system-images;android-34;default;x86_64" > /dev/null
+          nohup "$ANDROID_HOME/emulator/emulator" -avd check -no-window -no-audio -no-boot-anim -no-snapshot \
+            -gpu swiftshader_indirect -accel on > emulator.log 2>&1 &
+          timeout 300 "$adb" wait-for-device
+          booted=""
+          for i in $(seq 120); do
+            if [ "$("$adb" shell getprop sys.boot_completed 2> /dev/null | tr -d '\r')" = 1 ]; then
+              booted=yes
+              echo "booted after about $((i * 5)) s"
+              break
+            fi
+            sleep 5
+          done
+          if [ -z "$booted" ]; then
+            tail -40 emulator.log
+            echo "::error::Android did not finish booting in 10 minutes"
+            exit 1
+          fi
+          echo "Android $("$adb" shell getprop ro.build.version.release | tr -d '\r'), $("$adb" shell getprop ro.product.cpu.abi | tr -d '\r')"
+
+      - name: It starts on Android and reaches hproxy.com
+        run: |
+          adb="$ANDROID_HOME/platform-tools/adb"
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' source-code/Cargo.toml | head -1)
+          "$adb" push hproxy-android /data/local/tmp/hproxy > /dev/null
+          "$adb" shell chmod 755 /data/local/tmp/hproxy
+          "$adb" shell /data/local/tmp/hproxy --version | tr -d '\r' | tee said.txt
+          grep -qx "hproxy $version" said.txt
+          "$adb" shell /data/local/tmp/hproxy --help > /dev/null
+          # Names looked up the Android way, then HTTPS with the program's own certificates.
+          "$adb" shell /data/local/tmp/hproxy list --limit 2
+          "$adb" shell /data/local/tmp/hproxy ip 8.8.8.8
