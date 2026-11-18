@@ -1,0 +1,86 @@
+name: Test
+
+# The add-on built the way Home Assistant builds it on the device (its Dockerfile on Home
+# Assistant's base image for that processor), then run with the settings Home Assistant would hand
+# it in /data/options.json: with two test proxies on this machine, requests go through both in
+# turn, as HTTP and as SOCKS5; with no proxies yet, it says what to do and stops.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  addon:
+    name: The add-on on ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Built as Home Assistant builds it
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          base=$(sed -n "s/^  $ARCH: //p" hproxy/build.yaml)
+          echo "base image: $base"
+          test -n "$base"
+          docker build --build-arg BUILD_FROM="$base" -t hproxy-addon:test hproxy
+
+      - name: Two test proxies on this machine (tinyproxy, from Ubuntu)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tinyproxy > /dev/null
+          sudo systemctl stop tinyproxy 2> /dev/null || true
+          for port in 3128 3129; do
+          printf 'Port %s\nListen 0.0.0.0\nTimeout 60\nAllow 127.0.0.1\nAllow 172.16.0.0/12\nConnectPort 443\nLogFile "%s/tinyproxy-%s.log"\nLogLevel Connect\n' "$port" "$PWD" "$port" > "tinyproxy-$port.conf"
+          tinyproxy -c "$PWD/tinyproxy-$port.conf"
+          done
+
+      - name: With its own proxies, requests go through both in turn
+        run: |
+          printf '{"source":"own","country":"","proxies":["http://host.docker.internal:3128","http://host.docker.internal:3129"],"rotate":"every"}' > options.json
+          docker run -d --name addon --add-host host.docker.internal:host-gateway \
+            -p 127.0.0.1:18080:8080 -v "$PWD/options.json:/data/options.json:ro" hproxy-addon:test
+          for i in $(seq 60); do
+            if docker logs addon 2>&1 | grep -q "listening"; then break; fi
+            sleep 1
+          done
+          docker logs addon 2>&1
+          docker logs addon 2>&1 | grep -q "listening: 0.0.0.0:8080"
+          for i in 1 2; do
+            curl -fsS -o /dev/null -x http://127.0.0.1:18080 https://hproxy.com/install.sh
+            curl -fsS -o /dev/null --socks5-hostname 127.0.0.1:18080 https://hproxy.com/install.sh
+          done
+          first=$(grep -c 'Request (file descriptor' tinyproxy-3128.log || true)
+          second=$(grep -c 'Request (file descriptor' tinyproxy-3129.log || true)
+          echo "through the first test proxy: $first, through the second: $second"
+          test "$first" -ge 1
+          test "$second" -ge 1
+          if docker logs addon 2>&1 | grep -q "host.docker.internal:3128"; then
+            echo "::error::a proxy line appeared in the log"
+            exit 1
+          fi
+          docker stop addon > /dev/null
+
+      - name: With no proxies yet, it says what to do and stops
+        run: |
+          printf '{"source":"own","country":"","proxies":[],"rotate":"every"}' > empty.json
+          if docker run --rm -v "$PWD/empty.json:/data/options.json:ro" hproxy-addon:test > empty.log 2>&1; then
+            cat empty.log
+            echo "::error::it should have stopped"
+            exit 1
+          fi
+          cat empty.log
+          grep -q "No proxies yet" empty.log

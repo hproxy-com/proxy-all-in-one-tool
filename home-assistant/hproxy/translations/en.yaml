@@ -1,0 +1,15 @@
+configuration:
+  source:
+    name: Where the proxies come from
+    description: "free: the free HProxy pool, with a new exit whenever one stops answering. own: your proxies below."
+  country:
+    name: Country
+    description: With the free pool, a two-letter country such as US or DE. Empty for any.
+  proxies:
+    name: Your proxies
+    description: One per entry, in any shape your provider prints (host:port:user:pass, http://user:pass@host:port, socks5://...).
+  rotate:
+    name: Rotation
+    description: "With your own proxies: every (a new one per connection), every:25 (every 25 connections), every:10m (every 10 minutes), random, or on-failure."
+network:
+  8080/tcp: The proxy, HTTP and SOCKS5 on one port
