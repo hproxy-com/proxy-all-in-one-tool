@@ -46,7 +46,7 @@ jobs:
             update: --index-url=https://update.flipperzero.one/firmware/directory.json --channel=release
             file: hproxy-official.fap
           - name: Official 1.4.3, the release before
-            update: --url=https://update.flipperzero.one/builds/firmware/1.4.3/flipper-z-f7-sdk-1.4.3.zip
+            update: --url=https://update.flipperzero.one/builds/firmware/1.4.3/flipper-z-f7-sdk-1.4.3.zip --hw-target=f7
             file: hproxy-official-1.4.3.fap
           - name: Official, release candidate
             update: --index-url=https://update.flipperzero.one/firmware/directory.json --channel=rc
