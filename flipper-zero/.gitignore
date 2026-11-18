@@ -1,0 +1,5 @@
+dist/
+*.fap
+test_hproxy_api
+test_hproxy_api_san
+.vscode/

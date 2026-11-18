@@ -1,0 +1,84 @@
+name: Build
+
+# Tests the app's logic on Linux, then builds the app for the firmware people run on their
+# Flipper Zero: the official release and its development channel, Momentum and Unleashed. The
+# build uses ufbt, Flipper's own SDK tool, from PyPI at a fixed version, and only GitHub's own
+# actions, each pinned to a commit.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  logic:
+    name: The logic, tested on Linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Strict, then again under the address and undefined-behaviour sanitizers
+        run: |
+          gcc -std=c11 -Wall -Wextra -Werror -Wshadow -Wconversion -O2 -I. \
+            tests/test_hproxy_api.c hproxy_api.c -o test_hproxy_api
+          ./test_hproxy_api
+          gcc -std=c11 -g -fsanitize=address,undefined -fno-omit-frame-pointer -I. \
+            tests/test_hproxy_api.c hproxy_api.c -o test_hproxy_api_san
+          ./test_hproxy_api_san
+
+  app:
+    name: ${{ matrix.name }}
+    needs: logic
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Official firmware
+            index: https://update.flipperzero.one/firmware/directory.json
+            channel: release
+            file: hproxy-official.fap
+          - name: Official firmware, development
+            index: https://update.flipperzero.one/firmware/directory.json
+            channel: dev
+            file: hproxy-official-dev.fap
+          - name: Momentum
+            index: https://up.momentum-fw.dev/firmware/directory.json
+            channel: release
+            file: hproxy-momentum.fap
+          - name: Unleashed
+            index: https://up.unleashedflip.com/directory.json
+            channel: release
+            file: hproxy-unleashed.fap
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: ufbt, Flipper's SDK tool
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ufbt"
+          "$RUNNER_TEMP/ufbt/bin/pip" install --quiet ufbt==0.2.6
+          echo "$RUNNER_TEMP/ufbt/bin" >> "$GITHUB_PATH"
+
+      - name: The SDK of ${{ matrix.name }}
+        env:
+          INDEX: ${{ matrix.index }}
+          CHANNEL: ${{ matrix.channel }}
+        run: ufbt update --index-url="$INDEX" --channel="$CHANNEL"
+
+      - name: Build
+        env:
+          FILE: ${{ matrix.file }}
+        run: |
+          ufbt
+          ls -l dist
+          cp dist/hproxy.fap "$FILE"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.file }}
+          path: ${{ matrix.file }}
+          if-no-files-found: error

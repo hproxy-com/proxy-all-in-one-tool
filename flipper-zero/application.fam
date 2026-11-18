@@ -1,0 +1,15 @@
+App(
+    appid="hproxy",
+    name="HProxy",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="hproxy_app",
+    stack_size=4 * 1024,
+    fap_category="GPIO",
+    fap_icon="icon.png",
+    fap_version="1.0",
+    fap_author="HProxy",
+    fap_weburl="https://github.com/hproxy-com/flipper-zero-app",
+    fap_description="Free proxies from hproxy.com and a proxy checker, over a WiFi board running FlipperHTTP.",
+    # The tests in tests/ are built on a computer, never into the app.
+    sources=["hproxy.c", "hproxy_api.c", "flipper_http/flipper_http.c"],
+)
