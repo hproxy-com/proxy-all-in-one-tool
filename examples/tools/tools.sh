@@ -24,7 +24,8 @@ if has aria2c; then
 fi
 if has http; then
     printf 'HTTPie: '
-    http --body --proxy="https:$PROXY" "$TRACE" | show
+    # --ignore-stdin: in a script, HTTPie would read the input as the request body.
+    http --ignore-stdin --body --proxy="https:$PROXY" "$TRACE" | show
 fi
 if has git; then
     printf 'git:    '

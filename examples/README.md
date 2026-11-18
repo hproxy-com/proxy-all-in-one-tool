@@ -61,6 +61,8 @@ the address and the country the site saw, one line per request.
 | C and C++, libcurl | [c/example.c](c/example.c) | `cc example.c -lcurl -o example && ./example` |
 | Perl | [perl/example.pl](perl/example.pl) | `perl example.pl` |
 | R | [r/example.R](r/example.R) | `Rscript example.R` |
+| PHP, Guzzle | [php/guzzle/example.php](php/guzzle/example.php) | `composer install`, then `php example.php` |
+| Go, Colly | [go/colly/main.go](go/colly/main.go) | `go mod tidy`, then `go run .` |
 | wget, aria2, HTTPie, git, pip, npm | [tools/tools.sh](tools/tools.sh) | `sh tools.sh` |
 
 Browsers, the whole computer, phones and apps with a proxy field of their own:

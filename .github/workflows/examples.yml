@@ -137,12 +137,21 @@ jobs:
             run: perl example.pl
           - name: R (httr)
             dir: examples/r
-            setup: sudo apt-get install -y -qq r-base-core r-cran-httr > /dev/null
+            # R alone (Ubuntu's R recommends compilers and more), and no manual-page index after.
+            setup: sudo rm -f /var/lib/man-db/auto-update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends r-base-core r-cran-httr
             run: Rscript example.R
           - name: Command-line tools
             dir: examples/tools
             setup: sudo apt-get install -y -qq aria2 httpie > /dev/null
             run: sh tools.sh
+          - name: PHP (Guzzle)
+            dir: examples/php/guzzle
+            setup: composer install --quiet --no-interaction
+            run: php example.php
+          - name: Go (Colly)
+            dir: examples/go/colly
+            setup: go mod tidy
+            run: go run .
     defaults:
       run:
         shell: bash

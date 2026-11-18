@@ -1,0 +1,10 @@
+{
+    "name": "hproxy/example-guzzle",
+    "description": "Requests through the hproxy rotating proxy with Guzzle",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.1",
+        "guzzlehttp/guzzle": "^7.8"
+    }
+}

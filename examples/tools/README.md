@@ -12,7 +12,7 @@ address `127.0.0.1:8080`, with no username and no password. It speaks HTTP and S
 | curl | `curl -x http://127.0.0.1:8080 https://example.com` |
 | wget | `wget -e use_proxy=yes -e https_proxy=http://127.0.0.1:8080 https://example.com` |
 | aria2 | `aria2c --all-proxy=http://127.0.0.1:8080 https://example.com/file.zip` |
-| HTTPie | `http --proxy=https:http://127.0.0.1:8080 https://example.com` |
+| HTTPie | `http --proxy=https:http://127.0.0.1:8080 https://example.com` (in a script, add `--ignore-stdin`) |
 | git | `git -c http.proxy=http://127.0.0.1:8080 clone https://github.com/...` |
 | pip | `pip install --proxy http://127.0.0.1:8080 requests` |
 | npm | `npm install --proxy http://127.0.0.1:8080 --https-proxy http://127.0.0.1:8080` |
