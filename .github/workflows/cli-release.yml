@@ -55,6 +55,20 @@ jobs:
             target: arm-unknown-linux-musleabihf
             file: hproxy-cli-linux-armv6
             run: qemu
+            emulator: qemu-arm -cpu arm1176
+          - os: ubuntu-22.04
+            target: i686-unknown-linux-musl
+            file: hproxy-cli-linux-i686
+            run: native
+          - os: ubuntu-22.04
+            target: riscv64gc-unknown-linux-musl
+            file: hproxy-cli-linux-riscv64
+            run: qemu
+            emulator: qemu-riscv64
+          - os: ubuntu-22.04
+            target: aarch64-linux-android
+            file: hproxy-cli-android-arm64
+            run: "no"
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             file: hproxy-cli-windows-x86_64.exe
@@ -63,6 +77,10 @@ jobs:
             target: aarch64-pc-windows-msvc
             file: hproxy-cli-windows-arm64.exe
             run: "no"
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            file: hproxy-cli-windows-x86.exe
+            run: native
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -75,6 +93,7 @@ jobs:
       # runtime installed.
       CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
       CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+      CARGO_TARGET_I686_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
       # 64-bit ARM Linux: Ubuntu's musl-gcc (the cc crate would look for aarch64-linux-musl-gcc).
       CC_aarch64_unknown_linux_musl: musl-gcc
       # 32-bit ARM Linux, ARMv6 and newer (every Raspberry Pi): Ubuntu's ARM compiler; the cc crate
@@ -82,6 +101,16 @@ jobs:
       CC_arm_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
       AR_arm_unknown_linux_musleabihf: arm-linux-gnueabihf-ar
       CARGO_TARGET_ARM_UNKNOWN_LINUX_MUSLEABIHF_LINKER: arm-linux-gnueabihf-gcc
+      # 32-bit x86 Linux (older PCs, thin clients): Ubuntu's gcc in its 32-bit mode (gcc-multilib)
+      # for ring's C code; the cc crate adds -m32. The program carries Rust's own musl.
+      CC_i686_unknown_linux_musl: gcc
+      # 64-bit RISC-V Linux: Ubuntu's RISC-V compiler. Rust links this target against the system's
+      # C library unless asked otherwise, which here would be the compiler's glibc; crt-static makes
+      # it one file with Rust's own musl inside, like every other Linux file.
+      CC_riscv64gc_unknown_linux_musl: riscv64-linux-gnu-gcc
+      AR_riscv64gc_unknown_linux_musl: riscv64-linux-gnu-ar
+      CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_LINKER: riscv64-linux-gnu-gcc
+      CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -93,14 +122,35 @@ jobs:
           fi
           cargo --version
 
-      - name: Linux tools (musl; for 32-bit ARM the ARM compiler and an ARMv6 machine to run on)
+      - name: Linux tools (musl; the compiler for the processor, and a machine of its kind to run on)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
-          if [ "${{ matrix.target }}" = arm-unknown-linux-musleabihf ]; then
-            sudo apt-get install -y gcc-arm-linux-gnueabihf qemu-user
+          # One machine per file: gcc-multilib and Ubuntu's cross compilers cannot be installed together.
+          case "${{ matrix.target }}" in
+            arm-unknown-linux-musleabihf) sudo apt-get install -y gcc-arm-linux-gnueabihf qemu-user ;;
+            i686-unknown-linux-musl) sudo apt-get install -y gcc-multilib ;;
+            riscv64gc-unknown-linux-musl) sudo apt-get install -y gcc-riscv64-linux-gnu qemu-user ;;
+          esac
+
+      - name: The Android NDK's compiler (Termux on Android phones), as GitHub's machine has it
+        if: endsWith(matrix.target, '-android')
+        run: |
+          ndk="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          if [ ! -d "$ndk" ]; then
+            echo "::error::this machine has no Android NDK"
+            exit 1
           fi
+          # API 24: Android 7, the oldest Android that Termux runs on.
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/aarch64-linux-android24-clang"
+          echo "NDK $(basename "$ndk")"
+          {
+            echo "CC_aarch64_linux_android=$bin/aarch64-linux-android24-clang"
+            echo "AR_aarch64_linux_android=$bin/llvm-ar"
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$bin/aarch64-linux-android24-clang"
+          } >> "$GITHUB_ENV"
 
       - name: Add the target
         run: rustup target add ${{ matrix.target }}
@@ -119,11 +169,23 @@ jobs:
           cp "$src" "../${{ matrix.file }}"
 
       - name: Nothing has to be installed beside it (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !endsWith(matrix.target, '-android')
         working-directory: .
         run: |
           file "${{ matrix.file }}" | tee kind.txt
           grep -Eq "statically linked|static-pie linked" kind.txt
+
+      - name: Nothing has to be installed beside it (Android, only Android's own libraries)
+        if: endsWith(matrix.target, '-android')
+        working-directory: .
+        run: |
+          file "${{ matrix.file }}" | tee kind.txt
+          grep -q "interpreter /system/bin/linker64" kind.txt
+          readelf -d "${{ matrix.file }}" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tee needs.txt
+          if grep -v -x -E 'lib(c|dl|m|log)\.so' needs.txt; then
+            echo "::error::a library that is not part of every Android"
+            exit 1
+          fi
 
       - name: Nothing has to be installed beside it (macOS), and the oldest macOS it starts on
         if: runner.os == 'macOS'
@@ -156,7 +218,7 @@ jobs:
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' source-code/Cargo.toml | head -1)
           run="./${{ matrix.file }}"
-          if [ "${{ matrix.run }}" = qemu ]; then run="qemu-arm -cpu arm1176 ./${{ matrix.file }}"; fi
+          if [ "${{ matrix.run }}" = qemu ]; then run="${{ matrix.emulator }} ./${{ matrix.file }}"; fi
           $run --version | tee said.txt
           grep -q "hproxy $version" said.txt
           $run --help > /dev/null
@@ -233,8 +295,12 @@ jobs:
           | \`hproxy-cli-linux-x86_64\` | Linux on x86_64, any distribution |
           | \`hproxy-cli-linux-arm64\` | Linux on 64-bit ARM: ARM servers, Raspberry Pi 3, 4 and 5 with a 64-bit system |
           | \`hproxy-cli-linux-armv6\` | Linux on 32-bit ARM: every Raspberry Pi with a 32-bit system, Pi Zero and Pi 1 included |
+          | \`hproxy-cli-linux-i686\` | Linux on 32-bit x86: older PCs and thin clients |
+          | \`hproxy-cli-linux-riscv64\` | Linux on 64-bit RISC-V boards and servers |
+          | \`hproxy-cli-android-arm64\` | Android 7 and later on 64-bit ARM, in Termux |
           | \`hproxy-cli-windows-x86_64.exe\` | Windows 10 and 11, x64 |
           | \`hproxy-cli-windows-arm64.exe\` | Windows 11 on ARM |
+          | \`hproxy-cli-windows-x86.exe\` | Windows 10, 32-bit |
           EOF
           # A version is built once. hproxy.com's installers check every file against the sum
           # published here, so the files of a release never change: to build again, raise the
