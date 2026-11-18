@@ -66,10 +66,16 @@ jobs:
           avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
           adb="$ANDROID_HOME/platform-tools/adb"
           yes | "$sdkmanager" --licenses > /dev/null || true
-          "$sdkmanager" --install emulator platform-tools "system-images;android-34;default;x86_64" > /dev/null
-          echo no | "$avdmanager" create avd --force --name check --package "system-images;android-34;default;x86_64" > /dev/null
+          "$sdkmanager" --install emulator platform-tools "system-images;android-34;default;x86_64" | tail -3
+          ls "$ANDROID_HOME/system-images/android-34/default/x86_64" | head -5
+          echo no | "$avdmanager" create avd --force --name check --package "system-images;android-34;default;x86_64"
+          "$avdmanager" list avd | grep -E "Name|Path|Target" || true
+          "$ANDROID_HOME/emulator/emulator" -version | head -1
+          "$ANDROID_HOME/emulator/emulator" -accel-check || true
           nohup "$ANDROID_HOME/emulator/emulator" -avd check -no-window -no-audio -no-boot-anim -no-snapshot \
             -gpu swiftshader_indirect -accel on > emulator.log 2>&1 &
+          # Whatever goes wrong from here, the emulator's own words say why.
+          trap 'echo "--- emulator.log:"; tail -60 emulator.log' EXIT
           timeout 300 "$adb" wait-for-device
           booted=""
           for i in $(seq 120); do
