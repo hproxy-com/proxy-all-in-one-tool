@@ -3,6 +3,10 @@
 Free proxies from [hproxy.com](https://hproxy.com) and a proxy checker on your Flipper Zero, over a
 WiFi board running FlipperHTTP.
 
+**Beta.** Built for every firmware below, and its logic tested on every change. If something on your
+Flipper looks off, [open an issue](https://github.com/hproxy-com/flipper-zero-app/issues) and say
+which firmware and board you run.
+
 ## What it does
 
 - **Free proxies.** Pick a protocol (HTTP, HTTPS, SOCKS4, SOCKS5), a country and how many. The app

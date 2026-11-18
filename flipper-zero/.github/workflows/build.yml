@@ -118,6 +118,9 @@ jobs:
           cd dist
           sha256sum hproxy-*.fap > SHA256SUMS
           cat SHA256SUMS
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "HProxy for Flipper Zero ${TAG#v}" \
+          # A tag with a dash (v1.0-beta) is a pre-release.
+          kind=()
+          case "$TAG" in *-*) kind=(--prerelease) ;; esac
+          gh release create "$TAG" "${kind[@]}" --repo "$GITHUB_REPOSITORY" --title "HProxy for Flipper Zero ${TAG#v}" \
             --notes "One file per firmware: hproxy-official.fap for the official release, hproxy-official-1.4.3.fap for 1.4.3, -rc and -dev for its release candidate and development channel, hproxy-momentum.fap and hproxy-unleashed.fap (and their -dev files) for Momentum and Unleashed. Copy yours to the SD card under apps/GPIO/. It needs a WiFi board flashed with FlipperHTTP 2.2 or newer; see the README." \
             hproxy-*.fap SHA256SUMS
