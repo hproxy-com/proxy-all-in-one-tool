@@ -39,10 +39,6 @@
           name = "hproxy-cli-linux-riscv64";
           hash = "sha256-iINd3dAJiWFk73ybdh4ZUqbxTIVxzHnNM6YH3KZFqSE=";
         };
-        x86_64-darwin = {
-          name = "hproxy-cli-macos-x86_64";
-          hash = "sha256-NXHwBL7SiAWd04cn4Q1d93WgY0CfvT5oGzpya2ruqwc=";
-        };
         aarch64-darwin = {
           name = "hproxy-cli-macos-arm64";
           hash = "sha256-APM2NS4YjAaTqu3DDaICz38fkBPodDsczqEOMoFds4Y=";
