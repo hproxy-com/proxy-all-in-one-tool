@@ -123,7 +123,7 @@ jobs:
           VERSION: ${{ needs.wheels.outputs.version }}
         run: |
           python -m pip install --no-index --find-links dist hproxy-cli
-          python -m pip show hproxy-cli | head -2
+          python -m pip show hproxy-cli | sed -n 1,2p  # sed reads it all: head would break pip's pipe
           hproxy --version
           hproxy --version | grep -qx "hproxy $VERSION"
           python -m hproxy_cli --version | grep -qx "hproxy $VERSION"
@@ -200,7 +200,7 @@ jobs:
           docker run --rm --platform "$PLATFORM" -v "$PWD/dist:/dist:ro" -e VERSION "$IMAGE" sh -c '
             python -c "import platform; print(platform.machine())"
             pip install -q --root-user-action=ignore --no-index --find-links /dist hproxy-cli
-            pip show hproxy-cli | head -2
+            pip show hproxy-cli | sed -n 1,2p
             hproxy --version
             test "$(hproxy --version)" = "hproxy $VERSION"'
 
