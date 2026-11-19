@@ -42,13 +42,16 @@
 | --- | --- |
 | **[Flipper Zero](flipper-zero/)** | Your own proxies on the Flipper: add any kind (typed, from a link, from a file), see which protocols answer, and New IP on your rotator, over a WiFi board running FlipperHTTP. Above: its screens, drawn pixel for pixel by the firmware's own fonts and code |
 | **[Home Assistant](home-assistant/)** | Your own proxies as one rotating proxy for your whole home network, with a New IP button on the dashboard. [Add it to Home Assistant](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fhproxy-com%2Fproxy-all-in-one-tool) |
+| **[Chrome](https://chromewebstore.google.com/detail/mnbaebpfkhopgljijkaoogbadedkffjo)** | The extension: check proxies and connect through them inside the browser |
 | **[Zapier](zapier/)** | Residential proxy lines from your plans, their traffic, and the proxy checker, free list and IP lookup as Zap steps |
+| **[n8n](https://github.com/hproxy-com/n8n-nodes-hproxy)** | The same as nodes for your n8n workflows, and as a tool for n8n's AI agents: `@hproxy/n8n-nodes-hproxy` |
 | **[GitHub Actions](https://github.com/hproxy-com/setup-hproxy)** | A rotating proxy for a CI job, which a later step switches with one `curl` |
 | **[Docker, Kubernetes, AWS](Docker/)** | The rotator beside your app on `127.0.0.1`, on six processor types, with the proxy kept in a secret |
 | **Homebrew, Scoop** | `brew install hproxy-com/tap/hproxy`, `scoop install hproxy/hproxy` |
 | **[Routers, FreeBSD, RISC-V, Android phones](Linux/)** | One line installs it: OpenWrt with `wget`, FreeBSD with `fetch`, Termux with `curl` |
-| **[AI assistants](source-code/README.md#for-ai-assistants-mcp)** | `hproxy mcp`: an assistant checks, connects and switches proxies itself |
+| **[AI assistants](source-code/README.md#for-ai-assistants-mcp)** | `hproxy mcp`: an assistant checks, connects and switches proxies itself. Or [the hosted server](https://github.com/hproxy-com/hproxy-mcp) at `https://mcp.hproxy.com/mcp`, nothing to install: Claude, ChatGPT, Cursor, VS Code, a Claude Code plugin |
 | **[Your own code](examples/)** | 31 tested examples, Python to Rust, browsers included, and a new IP in one HTTP call |
+| **[The free proxy list](https://github.com/hproxy-com/free-proxy-list)** | HTTP, HTTPS, SOCKS4 and SOCKS5 proxies verified around the clock, with country, anonymity, latency and uptime, as files updated several times a day |
 
 ## Command line
 
