@@ -21,7 +21,9 @@ Connect it with an API key from your HProxy dashboard (Settings > API keys). The
 
 ## Development
 
-Built on `zapier-platform-core`. The GitHub workflow validates the integration with Zapier's checks and runs the steps
-against hproxy.com on every push; a manual run with "push" uploads the version to Zapier.
+Built on `zapier-platform-core`. The workflow `.github/workflows/zapier.yml` of this repository validates the
+integration with Zapier's checks and runs the steps against hproxy.com whenever `zapier/` changes; a manual run with
+"push" uploads the version to Zapier.
 
-MIT licence.
+MIT license. Part of [proxy-all-in-one-tool](https://github.com/hproxy-com/proxy-all-in-one-tool), with the HProxy
+apps and the `hproxy` command-line tool.

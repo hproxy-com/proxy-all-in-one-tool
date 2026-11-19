@@ -5,7 +5,8 @@
   "homepage": "https://hproxy.com/residential-proxies",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hproxy-com/zapier-hproxy.git"
+    "url": "git+https://github.com/hproxy-com/proxy-all-in-one-tool.git",
+    "directory": "zapier"
   },
   "license": "MIT",
   "private": true,

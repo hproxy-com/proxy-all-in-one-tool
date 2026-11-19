@@ -42,6 +42,7 @@
 | --- | --- |
 | **[Flipper Zero](flipper-zero/)** | Your own proxies on the Flipper: add any kind (typed, from a link, from a file), see which protocols answer, and New IP on your rotator, over a WiFi board running FlipperHTTP. Above: its screens, drawn pixel for pixel by the firmware's own fonts and code |
 | **[Home Assistant](home-assistant/)** | Your own proxies as one rotating proxy for your whole home network, with a New IP button on the dashboard. [Add it to Home Assistant](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fhproxy-com%2Fproxy-all-in-one-tool) |
+| **[Zapier](zapier/)** | Residential proxy lines from your plans, their traffic, and the proxy checker, free list and IP lookup as Zap steps |
 | **[GitHub Actions](https://github.com/hproxy-com/setup-hproxy)** | A rotating proxy for a CI job, which a later step switches with one `curl` |
 | **[Docker, Kubernetes, AWS](Docker/)** | The rotator beside your app on `127.0.0.1`, on six processor types, with the proxy kept in a secret |
 | **Homebrew, Scoop** | `brew install hproxy-com/tap/hproxy`, `scoop install hproxy/hproxy` |

@@ -1,10 +1,13 @@
-# Validates the integration against Zapier's schema and style checks and runs its steps against hproxy.com on every
-# push; run by hand with "push" ticked, it uploads this version to Zapier (app 249602) with the deploy key.
+# The Zapier integration in zapier/: validates it against Zapier's schema and style checks and runs its steps against
+# hproxy.com whenever zapier/ changes; run by hand with "push" ticked, it uploads this version to Zapier (app 249602)
+# with the deploy key. It is the one workflow here with secrets: Zapier's deploy key and a read-only HProxy key of the
+# test account. Pull requests from forks never get them.
 name: Zapier
 
 on:
   push:
     branches: [main]
+    paths: [zapier/**, .github/workflows/zapier.yml]
   workflow_dispatch:
     inputs:
       push:
@@ -15,9 +18,13 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    working-directory: zapier
+
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
