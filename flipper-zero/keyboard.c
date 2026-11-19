@@ -128,9 +128,13 @@ static void keyboard_draw(Canvas* canvas, void* data) {
                 canvas_set_color(canvas, ColorWhite);
             }
             switch(key->kind) {
-            case HproxyKeyChar:
-                canvas_draw_glyph(canvas, x + 2, top + 7, (uint16_t)hproxy_keys_char(key, model->caps));
+            case HproxyKeyChar: {
+                char c = hproxy_keys_char(key, model->caps);
+                /* '_' hangs below the line; two pixels up it sits inside its own key instead of
+                 * on top of the key below it. */
+                canvas_draw_glyph(canvas, x + 2, top + (c == '_' ? 5 : 7), (uint16_t)c);
                 break;
+            }
             case HproxyKeySpace:
                 draw_space(canvas, x, top, w);
                 break;

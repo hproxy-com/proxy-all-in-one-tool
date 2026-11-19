@@ -781,13 +781,32 @@ size_t hproxy_result_tag(const HproxyResult* result, char* out, size_t size) {
     return written(snprintf(out, size, "%s", web ? web : socks ? socks : "works"), size);
 }
 
-/* The proxy a result is about, as a screen shows it. */
+/* The proxy a result is about, as a list line shows it. */
 static size_t result_address(const HproxyResult* result, char* out, size_t size) {
     HproxyProxy proxy;
     if(hproxy_proxy_parse(result->input, strlen(result->input), &proxy) != HproxyLineProxy) {
         return written(snprintf(out, size, "a line hproxy.com could not read"), size);
     }
     return masked(&proxy, out, size);
+}
+
+/* The same for its own screen: the address on one line and the username under it, so neither is
+ * broken across lines. */
+static size_t result_heading(const HproxyResult* result, char* out, size_t size) {
+    HproxyProxy proxy;
+    if(hproxy_proxy_parse(result->input, strlen(result->input), &proxy) != HproxyLineProxy) {
+        return written(snprintf(out, size, "a line hproxy.com could not read"), size);
+    }
+    size_t n = hproxy_proxy_address(&proxy, out, size);
+    if(proxy.pair && proxy.user_len > 0 && n + 1 < size) {
+        n += written(
+            snprintf(
+                out + n, size - n, "\nLogin: %.*s", (int)proxy.user_len, proxy.line + proxy.user_at),
+            size - n);
+    } else if(proxy.login) {
+        append(out, size, &n, "%s", "\nWith a login");
+    }
+    return n;
 }
 
 size_t hproxy_result_label(const HproxyResult* result, bool answered, char* out, size_t size) {
@@ -841,7 +860,7 @@ static const char* dead_reason(const HproxyResult* result) {
 
 size_t hproxy_result_detail(const HproxyResult* result, bool answered, char* out, size_t size) {
     if(!result || !out || size == 0) return 0;
-    size_t n = result_address(result, out, size);
+    size_t n = result_heading(result, out, size);
     append(out, size, &n, "%s", "\n\n");
     switch(hproxy_verdict(result, answered)) {
     case HproxyVerdictWorks:
@@ -988,6 +1007,30 @@ static size_t uptime_text(uint64_t s, char* out, size_t size) {
         size);
 }
 
+/* The connector shows its proxy as "http://alice:********@gw.example.com:7777" or
+ * "socks5://203.0.113.9:1080 (no login)". On a screen 30 characters wide the protocol goes next to
+ * the proxy's number, and the stars, which say nothing, go. */
+static void upstream_parts(const char* upstream, char* scheme, size_t scheme_size, char* rest, size_t rest_size) {
+    scheme[0] = '\0';
+    const char* body = upstream;
+    const char* sep = strstr(upstream, "://");
+    if(sep && (size_t)(sep - upstream) < scheme_size) {
+        memcpy(scheme, upstream, (size_t)(sep - upstream));
+        scheme[sep - upstream] = '\0';
+        body = sep + 3;
+    }
+    size_t n = 0;
+    for(const char* p = body; *p && n + 1 < rest_size;) {
+        if(starts_with(p, ":********@")) {
+            p += strlen(":********");
+            continue;
+        }
+        if(strcmp(p, " (no login)") == 0) break;
+        rest[n++] = *p++;
+    }
+    rest[n] = '\0';
+}
+
 size_t hproxy_connector_text(const HproxyConnector* c, bool switched, char* out, size_t size) {
     if(!c || !out || size == 0) return 0;
     size_t n = 0;
@@ -997,19 +1040,43 @@ size_t hproxy_connector_text(const HproxyConnector* c, bool switched, char* out,
         return n;
     }
     if(switched) append(out, size, &n, "%s", "Switched.\n\n");
+    char scheme[12];
+    char rest[sizeof(c->upstream)];
+    upstream_parts(c->upstream, scheme, sizeof(scheme), rest, sizeof(rest));
+    const char* comma = scheme[0] ? ", " : "";
     if(strcmp(c->source, "list") == 0 && c->member > 0) {
         if(n + 1 < size) {
             n += written(
                 snprintf(
-                    out + n, size - n, "Proxy %ld of %ld\n", (long)c->member, (long)c->members),
+                    out + n,
+                    size - n,
+                    "Proxy %ld of %ld%s%s\n",
+                    (long)c->member,
+                    (long)c->members,
+                    comma,
+                    scheme),
                 size - n);
         }
-    } else if(strcmp(c->source, "pool") == 0) {
-        append(out, size, &n, "%s", "The free pool\n");
-    } else {
-        append(out, size, &n, "%s", "One proxy\n");
+    } else if(n + 1 < size) {
+        n += written(
+            snprintf(
+                out + n,
+                size - n,
+                "%s%s%s\n",
+                strcmp(c->source, "pool") == 0 ? "The free pool" : "One proxy",
+                comma,
+                scheme),
+            size - n);
     }
-    if(c->upstream[0]) append(out, size, &n, "%s\n", c->upstream);
+    /* The address on its own line and the username under it, as on a proxy's own screen. */
+    const char* at = strrchr(rest, '@');
+    if(at && n + 1 < size) {
+        n += written(
+            snprintf(out + n, size - n, "%s\nLogin: %.*s\n", at + 1, (int)(at - rest), rest),
+            size - n);
+    } else if(rest[0]) {
+        append(out, size, &n, "%s\n", rest);
+    }
     char up[24];
     char down[24];
     bytes_text(c->bytes_up, up, sizeof(up));

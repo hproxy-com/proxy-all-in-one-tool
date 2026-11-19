@@ -4,7 +4,7 @@
  * proxy or a link cannot be typed with it. This one has every printable character on two pages.
  * Each row is 13 slots wide; a key takes one slot or more.
  *
- *   letters:  1 2 3 4 5 6 7 8 9 0 - _ .        symbols:  1 2 3 4 5 6 7 8 9 0 - _ .
+ *   letters:  1 2 3 4 5 6 7 8 9 0 - . _        symbols:  1 2 3 4 5 6 7 8 9 0 - . _
  *             q w e r t y u i o p : / @                  : / @ ? = & % # ! $ * + ,
  *             a s d f g h j k l ? = [del]                ( ) [ ] { } < > ; ' " [del]
  *             [^] z x c v b n m [#+] [ OK ]              [space] ` ~ ^ | \ [abc] [ OK ]

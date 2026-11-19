@@ -17,8 +17,9 @@ static const HproxyKey DIGITS[] = {
     C('9', 8),
     C('0', 9),
     C('-', 10),
-    C('_', 11),
-    C('.', 12),
+    /* '_' hangs low: last, above '@' and ',', where it cannot pass for a '7' or a '±'. */
+    C('.', 11),
+    C('_', 12),
 };
 
 static const HproxyKey LETTERS_1[] = {

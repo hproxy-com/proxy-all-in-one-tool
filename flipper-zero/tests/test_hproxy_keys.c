@@ -69,7 +69,8 @@ static void moves(void) {
     uint8_t row = 0;
     uint8_t index = 0;
     hproxy_keys_move(HproxyKeysLetters, &row, &index, -1, 0);
-    CHECK(row == 0 && index == 12); /* left from '1' wraps to '.' */
+    CHECK(row == 0 && index == 12); /* left from '1' wraps to the last key, '_' */
+    CHECK(hproxy_keys_char(hproxy_keys_get(HproxyKeysLetters, row, index), false) == '_');
     hproxy_keys_move(HproxyKeysLetters, &row, &index, 1, 0);
     CHECK(row == 0 && index == 0);
     hproxy_keys_move(HproxyKeysLetters, &row, &index, 0, -1);

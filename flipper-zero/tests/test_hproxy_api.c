@@ -329,9 +329,30 @@ static void check_rows(void) {
     hproxy_result_detail(&r, true, shown, sizeof(shown));
     CHECK_STR(
         shown,
-        "alice@gate.example.com:7000\n\nSomething answers there but turns the check away. It may "
-        "want a login, or a different one.\n");
+        "gate.example.com:7000\nLogin: alice\n\nSomething answers there but turns the check away. "
+        "It may want a login, or a different one.\n");
     CHECK(strstr(shown, "s3cret") == NULL);
+
+    /* The detail screen's picture in tools/screens.py says exactly this. */
+    const char* gateway =
+        "{\"input\":\"gate.example.com:7000:alice:s3cret\",\"status\":\"alive\",\"alive\":true,"
+        "\"protocols\":[\"http\",\"https\"],\"latency_ms\":182,\"country_code\":\"US\","
+        "\"anonymity\":\"elite\"}";
+    CHECK(hproxy_parse_check_row(gateway, &r) == HproxyRowResult);
+    hproxy_result_detail(&r, true, shown, sizeof(shown));
+    CHECK_STR(
+        shown,
+        "gate.example.com:7000\nLogin: alice\n\nWorks, answered in 182 ms\nProtocols: http, https\n"
+        "Country: US\nAnonymity: elite\n");
+
+    /* A login that is not one username and one password: said, never shown. */
+    const char* odd_login =
+        "{\"input\":\"192.0.2.4:8080:a:b:c\",\"status\":\"alive\",\"alive\":true,\"protocols\":[\"http\"]}";
+    CHECK(hproxy_parse_check_row(odd_login, &r) == HproxyRowResult);
+    hproxy_result_detail(&r, true, shown, sizeof(shown));
+    CHECK_STR(shown, "192.0.2.4:8080\nWith a login\n\nWorks\nProtocols: http\n");
+    hproxy_result_label(&r, true, shown, sizeof(shown));
+    CHECK_STR(shown, "http 192.0.2.4:8080 (login)");
 
     const char* unresolved =
         "{\"input\":\"gate.example.com:7000\",\"status\":\"unresolved\",\"alive\":false,"
@@ -441,10 +462,10 @@ static void connector(void) {
     hproxy_connector_text(&c, false, text, sizeof(text));
     CHECK_STR(
         text,
-        "Proxy 4 of 10\nhttp://alice:********@gw.example.com:7777\n\nConnections: 1234, 3 open\n"
+        "Proxy 4 of 10, http\ngw.example.com:7777\nLogin: alice\n\nConnections: 1234, 3 open\n"
         "Traffic: 12.3 MB up, 456.0 MB down\nRunning for 3 h 12 min\nhproxy 0.4.9\n");
     hproxy_connector_text(&c, true, text, sizeof(text));
-    CHECK(strncmp(text, "Switched.\n\nProxy 4 of 10\n", 25) == 0);
+    CHECK(strncmp(text, "Switched.\n\nProxy 4 of 10, http\n", 31) == 0);
 
     const char* fixed =
         "{\"ok\":true,\"upstream\":\"socks5://203.0.113.9:1080 (no login)\",\"source\":\"fixed\","
@@ -455,7 +476,7 @@ static void connector(void) {
     hproxy_connector_text(&c, false, text, sizeof(text));
     CHECK_STR(
         text,
-        "One proxy\nsocks5://203.0.113.9:1080 (no login)\n\nConnections: 0, 0 open\n"
+        "One proxy, socks5\n203.0.113.9:1080\n\nConnections: 0, 0 open\n"
         "Traffic: 0 B up, 512 B down\nRunning for 42 s\nNew IP: not with one proxy.\nhproxy 0.4.9\n");
 
     const char* refused =

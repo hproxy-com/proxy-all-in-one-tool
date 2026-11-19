@@ -3,10 +3,12 @@
 There is no Flipper Zero emulator. So this draws each screen of the app with the firmware's own
 rules: the fonts are the very u8g2 fonts the firmware carries (read from its u8g2_fonts.c), the
 font decoder, the string width, the boxes, rounded frames and circles follow u8g2's code, and the
-menus, the option list, the text box, the scrollbar and the progress bar follow the firmware's
-gui modules (submenu.c, variable_item_list.c, text_box.c, elements.c of release 1.5.1). The
-progress screen is the app's own progress_draw (hproxy.c). What each screen says is what the app
-says; the addresses are documentation addresses (RFC 5737), never real proxies.
+menus, the text box (its line breaks too), the scrollbar and the progress bar follow the
+firmware's gui modules (submenu.c, text_box.c, elements.c of release 1.5.1). The progress screen
+is the app's own progress_draw (hproxy.c), and the keyboard its keyboard_draw (keyboard.c), with
+the layout read from hproxy_keys.c itself. What each screen says is what the app says: the
+result and connector texts are the strings tests/test_hproxy_api.c checks. The addresses are
+documentation addresses (RFC 5737), never real proxies.
 
     python tools/screens.py            # writes screenshots/*.png (4x, crisp) and screenshots/all.png
 
@@ -306,6 +308,19 @@ class Canvas:
             w = w - dx + last_w + last_x
         return w
 
+    # u8g2_GetGlyphWidth, canvas_glyph_width: a glyph's advance
+    def advance(self, ch) -> int:
+        f = self.font
+        p = f.glyph(ord(ch))
+        if p is None:
+            return 0
+        b = Bits(f.data, p)
+        b.u(f.bits_w)
+        b.u(f.bits_h)
+        b.s(f.bits_x)
+        b.s(f.bits_y)
+        return b.s(f.bits_dx)
+
     # canvas_draw_str_aligned
     def text_aligned(self, x, y, horizontal, vertical, s):
         if horizontal == "right":
@@ -358,7 +373,13 @@ def fit_width(c: Canvas, s: str, width: int) -> str:
     return s
 
 
-# ---- the views: the firmware's modules, and the app's own progress screen ------------------------
+# ---- the views: the firmware's modules, and the app's own screens --------------------------------
+
+
+def multiline(c: Canvas, x, y, text):
+    """elements_multiline_text: one line under the other, a font height apart."""
+    for i, line in enumerate(text.split("\n")):
+        c.text(x, y + i * c.font_height(), line)
 
 
 def submenu(fonts, header, items, position=0, window=0) -> Canvas:
@@ -382,47 +403,53 @@ def submenu(fonts, header, items, position=0, window=0) -> Canvas:
     return c
 
 
-def option_list(fonts, items, position=0, window=0) -> Canvas:
-    """variable_item_list: (label, how many values, the index shown, the value's text)."""
-    c = Canvas()
-    c.font = fonts["secondary"]
-    for pos, (label, count, index, value) in enumerate(items):
-        item = pos - window
-        if 0 <= item < 4:
-            y = item * 16
-            text_y = y + 12
-            if pos == position:
-                c.color = BLACK
-                c.rbox(0, y + 1, 123, 14, 1)
-                c.color = WHITE
-            else:
-                c.color = BLACK
-            c.text(6, text_y, label)
-            if index > 0:
-                c.text(73, text_y, "<")
-            c.text_aligned((115 + 73) // 2 + 1, text_y, "center", "bottom", value)
-            if index < count - 1:
-                c.text(115, text_y, ">")
-    scrollbar(c, position, len(items))
-    return c
+TEXT_BOX_TEXT_WIDTH = 120
+TEXT_BOX_TEXT_HEIGHT = 56
 
 
-def text_box(fonts, text) -> Canvas:
+def text_box(fonts, text, scroll=0) -> Canvas:
+    """text_box.c: lines break where the next glyph would pass 120 pixels, then five at a time."""
     c = Canvas()
     c.font = fonts["secondary"]
+
+    def next_line(offset):  # text_box_seek_next_line
+        width = 0
+        while offset < len(text):
+            ch = text[offset]
+            if ch == "\n":
+                return offset + 1
+            advance = c.advance(ch)
+            if width + advance > TEXT_BOX_TEXT_WIDTH:
+                return offset
+            width += advance
+            offset += 1
+        return offset
+
+    on_screen = TEXT_BOX_TEXT_HEIGHT // c.font_height()
+    lines, offset = 0, 0  # text_box_prepare_model
+    while True:
+        offset = next_line(offset)
+        lines += 1
+        if offset >= len(text):
+            break
+    lines += 1
+    scroll_num = lines - on_screen if lines > on_screen else 0
+
+    offset = 0
+    for _ in range(scroll):
+        offset = next_line(offset)
+    shown = []
+    for _ in range(on_screen):  # text_box_update_screen_text
+        start = offset
+        offset = next_line(offset)
+        line = text[start:offset]
+        shown.append(line if line.endswith("\n") else line + "\n")
+        if offset >= len(text):
+            break
     c.color = BLACK
     c.rframe(0, 0, 124, 64, 1)
-    lines = text.split("\n")
-    on_screen = 56 // c.font_height()
-    scrollbar(c, 0, max(len(lines) - on_screen, 0))
-    y = 11
-    for line in lines:
-        if c.width(line) > 120:
-            raise SystemExit(f"text box line too wide for this drawing: {line!r}")
-        c.text(3, y, line)
-        y += c.font_height()
-        if y >= 64:
-            break
+    scrollbar(c, scroll, scroll_num)
+    multiline(c, 3, 11, "".join(shown).rstrip("\n"))
     return c
 
 
@@ -436,58 +463,182 @@ def progress(fonts, title, status, fraction, counts=None) -> Canvas:
     if fraction >= 0:
         progress_bar(c, 6, 28, 116, fraction)
     if counts:
-        alive, dead, slow = counts
-        c.text_aligned(64, 43, "center", "top", f"Alive {alive}   Dead {dead}   Slow {slow}")
+        works, dead, slow = counts
+        c.text_aligned(64, 43, "center", "top", f"Work {works}   Dead {dead}   Slow {slow}")
     c.text_aligned(64, 63, "center", "bottom", "Back to stop")
     return c
 
 
+# ---- the keyboard: keyboard.c, with the layout read from hproxy_keys.c -----------------------------
+
+KEYS_SOURCE = HERE.parent / "hproxy_keys.c"
+KEY = re.compile(
+    r"C\('((?:\\.|[^'\\]))', (\d+)\)"  # C('q', 0)
+    r"|\{HproxyKey(\w+), ('(?:\\.|[^'\\])'|0), (\d+), (\d+)\}"  # {HproxyKeyDelete, 0, 11, 2}
+)
+
+
+def key_pages():
+    """The two pages, row by row: (kind, character, first slot, slots), as hproxy_keys.c has them."""
+    source = KEYS_SOURCE.read_text(encoding="utf-8")
+    arrays = {}
+    for name, body in re.findall(r"static const HproxyKey (\w+)\[\] = \{(.*?)\n\};", source, re.S):
+        keys = []
+        for m in KEY.finditer(body):
+            if m.group(1) is not None:
+                ch = m.group(1)
+                keys.append(("Char", ch[1] if ch.startswith("\\") else ch, int(m.group(2)), 1))
+            else:
+                kind = m.group(3)
+                keys.append((kind, " " if kind == "Space" else "", int(m.group(5)), int(m.group(6))))
+        arrays[name] = keys
+    table = re.search(r"PAGES\[2\]\[HPROXY_KEY_ROWS\] = \{(.*?)\n\};", source, re.S).group(1)
+    return [[arrays[name] for name in re.findall(r"ROW\((\w+)\)", page)] for page in re.findall(r"\{(ROW.*?)\}", table)]
+
+
+def field_text(c: Canvas, text):
+    """keyboard.c, draw_text: the end of the text that fits, "..." in front, the cursor after it."""
+    left = 3
+    room = 128 - left - 6
+    start, width = len(text), 0
+    while start > 0:
+        w = c.advance(text[start - 1])
+        if width + w > room:
+            break
+        width += w
+        start -= 1
+    x = left
+    if start > 0:
+        dots = c.width("...") + 2
+        while start < len(text) and width > room - dots:
+            width -= c.advance(text[start])
+            start += 1
+        c.text(left, 18, "...")
+        x += dots
+    c.text(x, 18, text[start:])
+    c.box(x + width + 1, 11, 1, 9)
+
+
+def keyboard(fonts, header, text, page=0, row=0, index=0, caps=False, message="") -> Canvas:
+    """keyboard.c, keyboard_draw."""
+    c = Canvas()
+    c.font = fonts["secondary"]
+    c.text(2, 7, header)
+    c.rframe(0, 9, 128, 13, 1)
+    if message:
+        c.box(1, 10, 126, 11)
+        c.color = WHITE
+        c.text(3, 18, message)
+        c.color = BLACK
+    else:
+        field_text(c, text)
+    c.font = fonts["keyboard"]
+    for r, keys in enumerate(key_pages()[page]):
+        top = 23 + r * 10
+        for i, (kind, ch, slot, slots) in enumerate(keys):
+            x = 5 + slot * 9
+            w = slots * 9 - 1
+            c.color = BLACK
+            if r == row and i == index:
+                c.box(x, top, w, 10)
+                c.color = WHITE
+            if kind == "Char":
+                shown = ch.upper() if caps and "a" <= ch <= "z" else ch
+                c.glyph(x + 2, top + (5 if shown == "_" else 7), ord(shown))  # '_' two up, as keyboard.c
+            elif kind == "Space":
+                c.box(x + 4, top + 7, w - 8, 1)
+                c.box(x + 4, top + 5, 1, 2)
+                c.box(x + w - 5, top + 5, 1, 2)
+            elif kind == "Shift":
+                cx = x + 4
+                c.box(cx, top + 2, 1, 1)
+                c.box(cx - 1, top + 3, 3, 1)
+                c.box(cx - 2, top + 4, 5, 1)
+                c.box(cx - 1, top + 5, 3, 2)
+                if caps:
+                    c.box(cx - 2, top + 8, 5, 1)
+            elif kind == "Delete":
+                cx, cy = x + w // 2, top + 5
+                c.box(cx - 4, cy, 1, 1)
+                c.box(cx - 3, cy - 1, 1, 3)
+                c.box(cx - 2, cy - 2, 1, 5)
+                c.box(cx - 1, cy - 1, 6, 3)
+            else:  # Page, Done: a word in the small font
+                c.font = fonts["secondary"]
+                word = "OK" if kind == "Done" else ("#+" if page == 0 else "abc")
+                c.text_aligned(x + w // 2 + 1, top + 8, "center", "bottom", word)
+                c.font = fonts["keyboard"]
+    c.color = BLACK
+    return c
+
+
 # ---- the screens, as the app shows them ----------------------------------------------------------
+#
+# The words are the app's own: the result and connector texts are the strings tests/test_hproxy_api.c
+# checks hproxy_api.c produces.
+
+MY_LIST = [
+    "Check all 12",
+    "Add one",
+    "Add from a link",
+    "Add from a file",
+    "Send logins: off",
+    "socks5 203.0.113.24:1080",
+    "alice@gate.example.com:7000",
+    "198.51.100.7:8080",
+]
 
 
 def screens(fonts):
+    """(file, caption, picture, on the sheet)."""
     return [
+        ("menu", "The menu", submenu(fonts, "HProxy", ["My proxies", "Last results", "My connector", "Setup and help"]), True),
+        ("my-proxies", "Your list: check it, add to it", submenu(fonts, "My proxies", MY_LIST), True),
         (
-            "menu",
-            "The menu",
-            submenu(fonts, "HProxy", ["Free proxies", "Check my list", "Check the free list", "Last results", "Setup and help"]),
-        ),
-        (
-            "free-options",
-            "What the free list holds",
-            option_list(
-                fonts,
-                [
-                    ("Protocol", 5, 2, "HTTPS"),
-                    ("Country", 14, 1, "US"),
-                    ("How many", 5, 1, "10"),
-                    ("Get the list", 0, 0, ""),
-                ],
-                position=0,
-            ),
-        ),
-        (
-            "free-list",
-            "The free list from hproxy.com",
-            submenu(fonts, "10 HTTPS US", ["Check these 10 now", "203.0.113.24:8443", "198.51.100.7:3128", "203.0.113.91:8080"]),
-        ),
-        (
-            "checking",
-            "Checking, live",
-            progress(fonts, "Checking proxies", "20 of 30 checked", 20 / 30, (12, 5, 3)),
+            "keyboard",
+            "A keyboard with every character",
+            keyboard(fonts, "A proxy, in any shape", "gate.example.com:7000:alice:s3c", row=3, index=3),
+            True,
         ),
         (
             "results",
-            "The ones that work, fastest first",
-            submenu(fonts, "18 of 30 work", ["+ 203.0.113.24:1080", "+ 198.51.100.7:1080", "+ 203.0.113.91:1080", "? 198.51.100.44:1080"]),
+            "The protocol that answered, fastest first",
+            submenu(
+                fonts,
+                "9 of 12 work",
+                ["socks5 203.0.113.24:1080", "https 198.51.100.7:8080", "https+socks5 203.0.113.91:3128", "slow 198.51.100.44:1080"],
+            ),
+            True,
         ),
         (
             "detail",
-            "One proxy, in detail",
+            "One proxy, in detail, never its password",
+            text_box(fonts, "gate.example.com:7000\nLogin: alice\n\nWorks, answered in 182 ms\nProtocols: http, https\nCountry: US\nAnonymity: elite\n"),
+            True,
+        ),
+        (
+            "new-ip",
+            "New IP, from the Flipper",
             text_box(
                 fonts,
-                "203.0.113.24:1080\n\nWorks, answered in 182 ms\nCountry: US\nAnonymity: elite\nProtocols: socks5",
+                "Switched.\n\nProxy 4 of 10, http\ngw.example.com:7777\nLogin: alice\n\nConnections: 1234, 3 open\n"
+                "Traffic: 12.3 MB up, 456.0 MB down\nRunning for 3 h 12 min\nhproxy 0.4.9\n",
             ),
+            True,
+        ),
+        ("my-list", "The proxies on your list", submenu(fonts, "My proxies", MY_LIST, position=5, window=4), False),
+        (
+            "symbols",
+            "The keyboard's second page",
+            keyboard(fonts, "Its login, name:password", "alice:p@ss", page=1, row=1, index=2),
+            False,
+        ),
+        ("checking", "Checking, live", progress(fonts, "Checking proxies", "20 of 30 checked", 20 / 30, (12, 5, 3)), False),
+        (
+            "connector",
+            "Your connector",
+            submenu(fonts, "My connector", ["New IP", "What it uses now", "Use proxy number...", "Address: 192.168.1.20:8080", "Login: none"]),
+            False,
         ),
     ]
 
@@ -511,23 +662,24 @@ def main():
     fonts = {
         "primary": Font("helvB08", font_bytes(source, "u8g2_font_helvB08_tr")),
         "secondary": Font("haxrcorp4089", font_bytes(source, "u8g2_font_haxrcorp4089_tr")),
+        "keyboard": Font("profont11", font_bytes(source, "u8g2_font_profont11_mr")),
     }
     OUT.mkdir(exist_ok=True)
-    shots = screens(fonts)
-    pictures = []
-    for name, caption, canvas in shots:
+    sheet_pictures = []
+    for name, caption, canvas, on_sheet in screens(fonts):
         img = picture(canvas)
         img.save(OUT / f"{name}.png", optimize=True)
-        pictures.append(img)
+        if on_sheet:
+            sheet_pictures.append(img)
         print(f"screenshots/{name}.png  {caption}")
     gap = 16
     cols, rows = 3, 2
-    w, h = pictures[0].size
+    w, h = sheet_pictures[0].size
     sheet = Image.new("RGB", (cols * w + (cols - 1) * gap, rows * h + (rows - 1) * gap), (255, 255, 255))
-    for i, img in enumerate(pictures):
+    for i, img in enumerate(sheet_pictures):
         sheet.paste(img, ((i % cols) * (w + gap), (i // cols) * (h + gap)))
     sheet.save(OUT / "all.png", optimize=True)
-    print("screenshots/all.png  all six")
+    print(f"screenshots/all.png  the first {len(sheet_pictures)}, on one sheet")
 
 
 if __name__ == "__main__":
