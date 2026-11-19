@@ -1,3 +1,9 @@
+## 1.2
+
+- The app lives in [proxy-all-in-one-tool](https://github.com/hproxy-com/proxy-all-in-one-tool),
+  in `flipper-zero/`, beside the HProxy apps and the `hproxy` command-line tool; its link on the
+  Flipper points there. It works as 1.1 did.
+
 ## 1.1
 
 - Built around your own proxies. The free proxies are gone, and `free.txt` from 1.0 is no longer

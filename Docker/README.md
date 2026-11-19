@@ -165,7 +165,7 @@ Synology (Container Manager), QNAP (Container Station), Unraid, TrueNAS SCALE, o
 Raspberry Pi: create a container from `ghcr.io/hproxy-com/hproxy:latest` with your list mounted at
 `/proxies.txt` and the command `connect --file /proxies.txt --listen 0.0.0.0:8080 --allow-lan`
 (`free --listen 0.0.0.0:8080 --allow-lan` for the free pool), map port 8080, and keep that port
-inside your home network. A [Flipper Zero](https://github.com/hproxy-com/flipper-zero-app) on the same
+inside your home network. A [Flipper Zero](../flipper-zero/) on the same
 network can then switch it to the next proxy.
 
 ## For AI assistants

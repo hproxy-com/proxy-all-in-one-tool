@@ -5,8 +5,8 @@ Your own proxies on your Flipper Zero: add any kind, check which protocols they 
 traffic. Over a WiFi board running FlipperHTTP.
 
 **Beta.** Built for every firmware below, and its logic tested on every change. If something on your
-Flipper looks off, [open an issue](https://github.com/hproxy-com/flipper-zero-app/issues) and say
-which firmware and board you run.
+Flipper looks off, [open an issue](https://github.com/hproxy-com/proxy-all-in-one-tool/issues) and
+say which firmware and board you run.
 
 <p align="center"><img src="screenshots/all.png" alt="The menu, your list, the keyboard with every character, the results with the protocol that answered, one proxy in detail, and New IP from the Flipper" width="784"></p>
 
@@ -46,8 +46,9 @@ Flipper follow. The addresses are documentation addresses.</sub>
 
 ## Install
 
-Download the file for your firmware from the latest release and copy it to the SD card under
-`apps/GPIO/`:
+Download the file for your firmware from the
+[latest Flipper release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases?q=flipper-v&expanded=true)
+(`flipper-v` and its version) and copy it to the SD card under `apps/GPIO/`:
 
 | Firmware | File |
 | --- | --- |
@@ -129,6 +130,8 @@ scrollbar and progress bar, ported line by line, with the keyboard's layout read
 
 ## Build
 
+In `flipper-zero/`:
+
 ```sh
 pip install ufbt==0.2.6
 ufbt update --channel=release      # another firmware: --index-url=<its directory.json>
@@ -151,5 +154,7 @@ copy leaves out FlipperHTTP's WiFi deauthentication commands: HProxy only makes 
 
 ## License
 
-MIT. The HProxy desktop and phone apps and the `hproxy` command-line tool:
-[proxy-all-in-one-tool](https://github.com/hproxy-com/proxy-all-in-one-tool).
+MIT. Part of [proxy-all-in-one-tool](https://github.com/hproxy-com/proxy-all-in-one-tool), with
+the HProxy desktop and phone apps and the `hproxy` command-line tool. Its first releases, 1.0 and
+1.1, are in the app's former repository,
+[hproxy-com/flipper-zero-app](https://github.com/hproxy-com/flipper-zero-app/releases).

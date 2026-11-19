@@ -36,11 +36,11 @@
 
 ## Made for every tool
 
-<p align="center"><a href="https://github.com/hproxy-com/flipper-zero-app"><img src="assets/flipper-zero.png" alt="HProxy on a Flipper Zero: the menu, your list, a keyboard with every character, the results with the protocol that answered, one proxy in detail, and New IP from the Flipper" width="784"></a></p>
+<p align="center"><a href="flipper-zero/"><img src="flipper-zero/screenshots/all.png" alt="HProxy on a Flipper Zero: the menu, your list, a keyboard with every character, the results with the protocol that answered, one proxy in detail, and New IP from the Flipper" width="784"></a></p>
 
 | Where | What you get |
 | --- | --- |
-| **[Flipper Zero](https://github.com/hproxy-com/flipper-zero-app)** | Your own proxies on the Flipper: add any kind (typed, from a link, from a file), see which protocols answer, and New IP on your rotator, over a WiFi board running FlipperHTTP. Above: its screens, drawn pixel for pixel by the firmware's own fonts and code |
+| **[Flipper Zero](flipper-zero/)** | Your own proxies on the Flipper: add any kind (typed, from a link, from a file), see which protocols answer, and New IP on your rotator, over a WiFi board running FlipperHTTP. Above: its screens, drawn pixel for pixel by the firmware's own fonts and code |
 | **[Home Assistant](https://github.com/hproxy-com/home-assistant-addons)** | A rotating proxy for your whole home network, with a New IP button on the dashboard |
 | **[GitHub Actions](https://github.com/hproxy-com/setup-hproxy)** | A rotating proxy for a CI job, which a later step switches with one `curl` |
 | **[Docker, Kubernetes, AWS](Docker/)** | The rotator beside your app on `127.0.0.1`, on six processor types, with the proxy kept in a secret |
@@ -131,6 +131,7 @@ by the gigabyte, and the app checks and connects them like any other list.
 Everything HProxy is made of is in [source-code](source-code/): the app for Windows, macOS and
 Linux (Tauri: Rust and React), the Android app (Kotlin and Jetpack Compose), the command-line tool,
 the engine and the Chrome extension.
-[source-code/README.md](source-code/README.md) says how to build and test each part.
+[source-code/README.md](source-code/README.md) says how to build and test each part. The Flipper
+Zero app (C, built with Flipper's own ufbt) is in [flipper-zero](flipper-zero/).
 
 <p align="center"><sub>Built by <a href="https://hproxy.com">HProxy</a> · <a href="LICENSE">MIT license</a></sub></p>

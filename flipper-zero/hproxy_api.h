@@ -14,7 +14,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define HPROXY_APP_VERSION "1.1"
+#define HPROXY_APP_VERSION "1.2"
 
 #define HPROXY_CHECK_URL "https://hproxy.com/api/free-proxy/check"
 
