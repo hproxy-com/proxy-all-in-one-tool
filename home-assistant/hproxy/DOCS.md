@@ -1,17 +1,16 @@
 # HProxy rotating proxy
 
-A proxy for your home network that sends every connection through your own proxies, one after
-another, or through the free HProxy pool. Phones, computers and apps use it with no username or
-password.
+Your own proxies as one proxy for your home network: every connection goes through them, one after
+another. Phones, computers and apps use it with no username or password.
 
 ## Set it up
 
-1. In the **Configuration** tab, choose the `source`:
-   - `free`: the free HProxy pool, with a new exit whenever one stops answering. `country` picks
-     one (US, DE, ...); leave it empty for any.
-   - `own`: your proxies under `proxies`, one per entry, in any shape your provider prints
-     (`host:port:user:pass`, `http://user:pass@host:port`, `socks5://...`). `rotate` sets how they
-     take turns.
+1. In the **Configuration** tab, put your proxies under `proxies`, one per entry, in any shape your
+   provider prints (`host:port:user:pass`, `http://user:pass@host:port`, `socks5://...`). `rotate`
+   sets how they take turns. `source` stays on `own`.
+
+   With no proxies of your own, `source: free` uses the free HProxy pool instead: public proxies, a
+   new exit whenever one stops answering, `country` for one country (US, DE, ...).
 2. **Start** the add-on and look at the **Log** tab: it says what it uses.
 3. Point a device or an app at your Home Assistant's address, port **8080**, as an HTTP proxy, or
    as SOCKS5 where only that is offered.

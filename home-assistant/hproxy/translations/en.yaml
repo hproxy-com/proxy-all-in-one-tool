@@ -1,7 +1,7 @@
 configuration:
   source:
     name: Where the proxies come from
-    description: "free: the free HProxy pool, with a new exit whenever one stops answering. own: your proxies below."
+    description: "own: your proxies below. free: the free HProxy pool of public proxies, a new exit whenever one stops answering."
   country:
     name: Country
     description: With the free pool, a two-letter country such as US or DE. Empty for any.

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 options=/data/options.json
-source=$(jq -r '.source // "free"' "${options}")
+source=$(jq -r '.source // "own"' "${options}")
 rotate=$(jq -r '.rotate // "every"' "${options}")
 country=$(jq -r '.country // ""' "${options}")
 socks5=$(jq -r '.socks5 // false' "${options}")
@@ -34,7 +34,7 @@ else
     jq -r '.proxies[]? // empty' "${options}" > "${list}"
     count=$(grep -c . "${list}" || true)
     if [ "${count}" -eq 0 ]; then
-        echo "[HProxy] No proxies yet: add them in the Configuration tab, or choose source: free." >&2
+        echo "[HProxy] No proxies yet: add yours under Your proxies in the Configuration tab, one per entry, in any shape your provider prints." >&2
         exit 1
     fi
     args+=(--file "${list}" --rotate "${rotate}")
