@@ -124,7 +124,7 @@ jobs:
               unzip -q -o "$RUNNER_TEMP/kotlin.zip" -d "$RUNNER_TEMP" && echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"; }
             # Maven Central now and then answers a GitHub machine with "absent" for a package it has,
             # and the resolver keeps that answer in ~/.m2: one more try after forgetting it.
-            run: kotlin example.main.kts || { rm -rf "$HOME/.m2/repository/com/squareup"; sleep 10; kotlin example.main.kts; }
+            run: "{ kotlin example.main.kts || { rm -rf \"$HOME/.m2/repository/com/squareup\"; sleep 10; kotlin example.main.kts; }; }"
           - name: Swift (macOS)
             os: macos-latest
             dir: examples/swift
