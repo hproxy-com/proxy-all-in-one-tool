@@ -33,7 +33,21 @@
 | **Android** 7 and later | **[Get it on Google Play](https://play.google.com/store/apps/details?id=com.hproxy.app)** | [Android](Android/) |
 | **Command line and AI assistants** on macOS, Linux, Windows and FreeBSD: x64, ARM and RISC-V, routers and Android phones (Termux) included | **[Install in one line](#command-line)** | [all the commands](source-code/README.md#command-line) |
 | **Containers**: Docker, Kubernetes, Amazon ECS and EKS, NAS, on six processor types | **[ghcr.io/hproxy-com/hproxy](Docker/)** | [how to run it](Docker/) |
-| **GitHub Actions** and **Home Assistant** | **[setup-hproxy](https://github.com/hproxy-com/setup-hproxy)** and the **[add-on](https://github.com/hproxy-com/home-assistant-addons)** | a rotating proxy for a job, or for your home network |
+
+## Made for every tool
+
+<p align="center"><a href="https://github.com/hproxy-com/flipper-zero-app"><img src="assets/flipper-zero.png" alt="HProxy on a Flipper Zero: the menu, the free-list options, a free list from hproxy.com, a check in progress, the results fastest first, one proxy in detail" width="780"></a></p>
+
+| Where | What you get |
+| --- | --- |
+| **[Flipper Zero](https://github.com/hproxy-com/flipper-zero-app)** | Free proxies from hproxy.com and a checker on the Flipper, over a WiFi board running FlipperHTTP. Above: its screens, drawn pixel for pixel by the firmware's own fonts and code |
+| **[Home Assistant](https://github.com/hproxy-com/home-assistant-addons)** | A rotating proxy for your whole home network, with a New IP button on the dashboard |
+| **[GitHub Actions](https://github.com/hproxy-com/setup-hproxy)** | A rotating proxy for a CI job, which a later step switches with one `curl` |
+| **[Docker, Kubernetes, AWS](Docker/)** | The rotator beside your app on `127.0.0.1`, on six processor types, with the proxy kept in a secret |
+| **Homebrew, Scoop** | `brew install hproxy-com/tap/hproxy`, `scoop install hproxy/hproxy` |
+| **[Routers, FreeBSD, RISC-V, Android phones](Linux/)** | One line installs it: OpenWrt with `wget`, FreeBSD with `fetch`, Termux with `curl` |
+| **[AI assistants](source-code/README.md#for-ai-assistants-mcp)** | `hproxy mcp`: an assistant checks, connects and switches proxies itself |
+| **[Your own code](examples/)** | 31 tested examples, Python to Rust, browsers included, and a new IP in one HTTP call |
 
 ## Command line
 
