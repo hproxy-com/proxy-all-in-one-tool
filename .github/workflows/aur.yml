@@ -115,7 +115,11 @@ jobs:
             cmp /usr/bin/hproxy "hproxy-$VERSION-x86_64"
             hproxy --help > /dev/null
             pacman -R --noconfirm hproxy-bin
-            if command -v hproxy; then echo "hproxy is still there"; exit 1; fi
+            # bash remembers where it found a command: forget that first, then look at the files themselves.
+            hash -r
+            if [ -e /usr/bin/hproxy ] || [ -e /usr/share/licenses/hproxy-bin ] || command -v hproxy; then
+              echo "hproxy is still there"; exit 1
+            fi
             echo "removed: nothing left"
             cp .SRCINFO /pkg/.SRCINFO
           '
