@@ -1,0 +1,39 @@
+name: HProxy rotating proxy
+version: "0.4.9"
+slug: hproxy
+description: Your own proxies, any kind your provider sells, as one rotating proxy for your home network.
+url: https://github.com/hproxy-com/home-assistant-addons/tree/main/hproxy
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+init: false
+startup: services
+boot: auto
+ports:
+  8080/tcp: 8080
+ports_description:
+  8080/tcp: The proxy, HTTP and SOCKS5 on one port
+options:
+  source: own
+  country: ""
+  socks5: false
+  proxies: []
+  rotate: every
+  skip: []
+  only: []
+  log_requests: false
+schema:
+  source: list(own|free)
+  country: match(^([A-Za-z]{2})?$)
+  socks5: bool
+  proxies:
+    - password
+  rotate: match(^(every|every:[0-9]+|every:[0-9]+m|random|on-failure)$)
+  skip:
+    - str
+  only:
+    - str
+  via: password?
+  log_requests: bool
