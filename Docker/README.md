@@ -9,6 +9,8 @@ themselves:
 | `linux/amd64` | PCs and servers with Intel or AMD processors |
 | `linux/arm64` | AWS Graviton and other ARM servers, Docker on Apple Silicon Macs, Raspberry Pi 3, 4 and 5 with a 64-bit system |
 | `linux/arm/v7`, `linux/arm/v6` | every Raspberry Pi with a 32-bit system, Pi Zero and Pi 1 included |
+| `linux/386` | older 32-bit PCs and thin clients |
+| `linux/riscv64` | RISC-V boards and servers |
 
 The image holds one file, the program, and nothing else: no operating system to patch, no shell. It
 runs as an unprivileged user. [A workflow in this repository](../.github/workflows/docker-release.yml)
@@ -60,6 +62,11 @@ connections, `every:10m` every ten minutes, `random` picks one at random, and `o
 with one until it stops answering. Add `-v` to log one line per request (`docker logs hproxy`).
 `docker stop hproxy` ends it at once.
 
+Your own scripts switch it when they decide, over plain HTTP on the same port (`on-failure` keeps one
+proxy until then): `curl -X POST http://127.0.0.1:8080/hproxy/new-ip` for the next proxy,
+`curl http://127.0.0.1:8080/hproxy/status` for the one in use and the counts. Every answer is JSON.
+Any language does the same: [examples](../examples/new-ip/).
+
 ### Who can reach it
 
 The proxy asks for no password, so anyone who can reach its port can spend your traffic. Inside a
@@ -73,7 +80,7 @@ address and let a firewall admit only your own machines. Never publish it on a p
 ```yaml
 services:
   hproxy:
-    image: ghcr.io/hproxy-com/hproxy:0.4.8
+    image: ghcr.io/hproxy-com/hproxy:0.4.9
     command: connect --file /proxies.txt --rotate every --listen 0.0.0.0:8080 --allow-lan
     volumes:
       - ./proxies.txt:/proxies.txt:ro
@@ -112,7 +119,7 @@ spec:
         - name: HTTPS_PROXY
           value: http://127.0.0.1:8080
     - name: hproxy
-      image: ghcr.io/hproxy-com/hproxy:0.4.8
+      image: ghcr.io/hproxy-com/hproxy:0.4.9
       args: ["connect", "--file", "/etc/hproxy/proxies.txt", "--rotate", "every"]
       volumeMounts:
         - name: proxies
@@ -130,14 +137,29 @@ Amazon ECS and Fargate, in the task definition's `containerDefinitions`, beside 
 ```json
 {
   "name": "hproxy",
-  "image": "ghcr.io/hproxy-com/hproxy:0.4.8",
+  "image": "ghcr.io/hproxy-com/hproxy:0.4.9",
   "essential": true,
   "command": ["free", "--country", "US"]
 }
 ```
 
-For a proxy of your own: `"command": ["connect", "http://user:pass@host:port"]`. A task on Graviton
-(`"runtimePlatform": {"cpuArchitecture": "ARM64"}`) pulls the arm64 image by itself.
+For a proxy of your own, keep its line in AWS Secrets Manager and hand it over as `HPROXY_PROXY`:
+`connect` takes it from there when its command names no proxy, so the password never appears in the
+task definition.
+
+```json
+{
+  "name": "hproxy",
+  "image": "ghcr.io/hproxy-com/hproxy:0.4.9",
+  "essential": true,
+  "command": ["connect"],
+  "secrets": [{ "name": "HPROXY_PROXY", "valueFrom": "arn:aws:secretsmanager:<region>:<account>:secret:<name>" }]
+}
+```
+
+A whole list works the same way with `HPROXY_PROXY_FILE`, the path of a mounted file. Your app,
+beside it on `127.0.0.1`, can switch it with `POST http://127.0.0.1:8080/hproxy/new-ip`. A task on
+Graviton (`"runtimePlatform": {"cpuArchitecture": "ARM64"}`) pulls the arm64 image by itself.
 
 On an Amazon EC2 instance, or any Linux server without containers, one line installs the same
 program, on Intel, AMD and Graviton alike:
@@ -174,9 +196,9 @@ the container.
 
 ## Details
 
-- **Tags.** A version tag (`0.4.8`) never changes once it is pushed. `latest` follows the newest
+- **Tags.** A version tag (`0.4.9`) never changes once it is pushed. `latest` follows the newest
   release. Pin a version where it matters, and pull the next one when it is out.
-- **Where it came from.** `gh attestation verify oci://ghcr.io/hproxy-com/hproxy:0.4.8 --owner hproxy-com`
+- **Where it came from.** `gh attestation verify oci://ghcr.io/hproxy-com/hproxy:0.4.9 --owner hproxy-com`
   checks the image's build record: this repository's workflow built it.
 - **User and home.** It runs as user 65532, with its home in `/home/hproxy`. A background connection
   (`docker exec hproxy hproxy connect ... --background`, then `hproxy status` and `hproxy stop` the
@@ -187,9 +209,7 @@ the container.
   ([what they hold](https://hproxy.com/privacy)), keep the home in a volume and answer once:
   `docker run --rm -it -e HPROXY_NO_USAGE=0 -v hproxy:/home/hproxy ghcr.io/hproxy-com/hproxy usage on`,
   then run it with the same `-e` and `-v`.
-- **Stopping.** `docker stop` and Ctrl+C end `connect` and `free` at once and cleanly: the image's
-  stop signal is SIGINT, the relay's Ctrl+C. In 0.4.8 the other commands (a long `check`, `mcp`)
-  ignore both inside a container, where the program is process 1 and the kernel drops every signal
-  it has no handler for. Run them with `--init` (`docker run --rm -it --init ...`) and both work.
-  Versions after 0.4.8 handle both themselves.
+- **Stopping.** `docker stop` and Ctrl+C end every command at once and cleanly, also as process 1,
+  where the kernel drops every signal a program has no handler for: hproxy handles SIGINT and
+  SIGTERM itself. With 0.4.8, run the commands other than `connect` and `free` with `--init`.
 - **Podman.** The same commands, with `podman` in place of `docker`.
