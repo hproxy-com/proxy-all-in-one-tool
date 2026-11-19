@@ -1,6 +1,9 @@
 ## 0.4.9
 
-- hproxy 0.4.9 inside.
+- hproxy 0.4.9 inside. Home Assistant and your scripts switch the proxy over HTTP:
+  `POST http://localhost:8080/hproxy/new-ip` for the next proxy, `/hproxy/status` for the one in
+  use. The Documentation tab shows a New IP button and a sensor.
+- Next IP on a fresh start moves to the second proxy, where it used to stay on the first.
 
 ## 0.4.8.1
 
