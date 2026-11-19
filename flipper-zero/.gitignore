@@ -2,4 +2,6 @@ dist/
 *.fap
 test_hproxy_api
 test_hproxy_api_san
+test_hproxy_keys
+test_hproxy_keys_san
 .vscode/

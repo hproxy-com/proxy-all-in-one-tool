@@ -28,12 +28,14 @@ jobs:
 
       - name: Strict, then again under the address and undefined-behaviour sanitizers
         run: |
-          gcc -std=c11 -Wall -Wextra -Werror -Wshadow -Wconversion -O2 -I. \
-            tests/test_hproxy_api.c hproxy_api.c -o test_hproxy_api
-          ./test_hproxy_api
-          gcc -std=c11 -g -fsanitize=address,undefined -fno-omit-frame-pointer -I. \
-            tests/test_hproxy_api.c hproxy_api.c -o test_hproxy_api_san
-          ./test_hproxy_api_san
+          for part in api keys; do
+            gcc -std=c11 -Wall -Wextra -Werror -Wshadow -Wconversion -O2 -I. \
+              "tests/test_hproxy_$part.c" "hproxy_$part.c" -o "test_hproxy_$part"
+            "./test_hproxy_$part"
+            gcc -std=c11 -g -fsanitize=address,undefined -fno-omit-frame-pointer -I. \
+              "tests/test_hproxy_$part.c" "hproxy_$part.c" -o "test_hproxy_${part}_san"
+            "./test_hproxy_${part}_san"
+          done
 
   app:
     name: ${{ matrix.name }}
