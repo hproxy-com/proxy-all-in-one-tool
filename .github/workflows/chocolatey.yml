@@ -1,0 +1,209 @@
+name: Chocolatey package
+
+# hproxy for Chocolatey, in Windows/chocolatey/: a package of the hproxy command-line tool that downloads the
+# program of a command-line release (cli-v<version>) for the machine's processor and checks it against the
+# release's SHA-256. The release's Windows files are checked here first, against its SHA256SUMS and against
+# GitHub's signed record of how each was built; their sums go into the package. The package is then installed
+# with choco, run and uninstalled on Windows x64, on 32-bit (choco --x86) and on Windows on ARM.
+#
+# It runs when Windows/chocolatey/ changes, with the newest command-line release. Started by hand, it takes a
+# version, and with "publish" ticked it pushes the package to community.chocolatey.org with the key of the
+# account hproxy (the repository secret CHOCOLATEY_API_KEY). Chocolatey's moderators review every version
+# before it is listed.
+#
+# Only GitHub's own actions, each pinned to a commit.
+
+on:
+  push:
+    branches: [main]
+    paths: [Windows/chocolatey/**, .github/workflows/chocolatey.yml]
+  pull_request:
+    paths: [Windows/chocolatey/**, .github/workflows/chocolatey.yml]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "A released version of the command-line tool, e.g. 0.4.9 (empty: the newest)"
+        required: false
+        type: string
+      publish:
+        description: "Push the package to community.chocolatey.org (unticked: build and prove it only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: The package, from the release's own files
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      attestations: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: The release's Windows files, checked against its sums and its build records
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          version="$VERSION"
+          if [ -z "$version" ]; then
+            tag=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --exclude-drafts --json tagName \
+              --jq '[.[].tagName | select(startswith("cli-v"))][0]')
+            version="${tag#cli-v}"
+          fi
+          echo "hproxy $version"
+          gh release download "cli-v$version" --repo "$GITHUB_REPOSITORY" --dir release \
+            --pattern 'hproxy-cli-windows-*' --pattern SHA256SUMS
+          ls release
+          test -f release/hproxy-cli-windows-x86_64.exe
+          test -f release/hproxy-cli-windows-x86.exe
+          test -f release/hproxy-cli-windows-arm64.exe
+          (cd release && sha256sum --check --ignore-missing SHA256SUMS)
+          for f in release/hproxy-cli-windows-*; do
+            gh attestation verify "$f" --repo "$GITHUB_REPOSITORY" > /dev/null
+            echo "build record checked: ${f#release/}"
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Fill the templates
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          sum() { awk -v f="$1" '{ name = $2; sub(/^\*/, "", name) } name == f { print $1 }' release/SHA256SUMS; }
+          x64=$(sum hproxy-cli-windows-x86_64.exe)
+          x86=$(sum hproxy-cli-windows-x86.exe)
+          arm64=$(sum hproxy-cli-windows-arm64.exe)
+          for s in "$x64" "$x86" "$arm64"; do
+            echo "$s" | grep -Eqx '[0-9a-f]{64}' || { echo "no SHA-256 for a Windows file in SHA256SUMS"; exit 1; }
+          done
+          mkdir -p package/tools
+          sed "s/@VERSION@/$VERSION/g" Windows/chocolatey/hproxy.nuspec > package/hproxy.nuspec
+          sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHA_X64@/$x64/g" -e "s/@SHA_X86@/$x86/g" \
+            -e "s/@SHA_ARM64@/$arm64/g" Windows/chocolatey/tools/chocolateyinstall.ps1 \
+            > package/tools/chocolateyinstall.ps1
+          if grep -n '@[[:upper:][:digit:]_]*@' package/hproxy.nuspec package/tools/chocolateyinstall.ps1; then
+            echo "a placeholder was left unfilled"; exit 1
+          fi
+          cat package/tools/chocolateyinstall.ps1
+
+      - name: Pack
+        shell: pwsh
+        run: |
+          choco --version
+          choco pack package/hproxy.nuspec --output-directory dist --limit-output
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: chocolatey
+          path: |
+            dist/*.nupkg
+            release/SHA256SUMS
+          if-no-files-found: error
+
+  install:
+    name: choco on ${{ matrix.name }}
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            runner: windows-latest
+            flags: ""
+            file: hproxy-cli-windows-x86_64.exe
+          - name: Windows 32-bit (--x86)
+            runner: windows-latest
+            flags: "--x86"
+            file: hproxy-cli-windows-x86.exe
+          - name: Windows on ARM
+            runner: windows-11-arm
+            flags: ""
+            file: hproxy-cli-windows-arm64.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: chocolatey
+
+      - name: Chocolatey on this machine
+        shell: pwsh
+        run: |
+          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+            # Not every image carries it: Chocolatey's own installer, on this throwaway machine only.
+            Set-ExecutionPolicy Bypass -Scope Process -Force
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+            Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+            "$env:ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+
+      - name: Installed with choco, from the package, and run
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.package.outputs.version }}
+          FLAGS: ${{ matrix.flags }}
+          FILE: ${{ matrix.file }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $choco = if (Get-Command choco -ErrorAction SilentlyContinue) { 'choco' } else { "$env:ProgramData\chocolatey\bin\choco.exe" }
+          $flags = @($env:FLAGS -split ' ' | Where-Object { $_ })
+          & $choco install hproxy --version $env:VERSION --source "$PWD\dist" --yes --no-progress @flags
+          if ($LASTEXITCODE -ne 0) { throw "choco install ended with $LASTEXITCODE" }
+
+          # The program in the package folder is the release's file for this choice, byte for byte.
+          $exe = "$env:ProgramData\chocolatey\lib\hproxy\tools\hproxy.exe"
+          $want = (Get-Content release/SHA256SUMS | Where-Object { ($_ -split '\s+')[1].TrimStart('*') -eq $env:FILE }) -split '\s+' | Select-Object -First 1
+          $have = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          "want $env:FILE $want"
+          "have hproxy.exe $have"
+          if ($have -ne $want) { throw "the package installed another file than $env:FILE" }
+
+          # The command Chocolatey puts on the PATH runs it.
+          $shim = "$env:ProgramData\chocolatey\bin\hproxy.exe"
+          if (-not (Test-Path $shim)) { throw "no hproxy command in Chocolatey's bin folder" }
+          $said = & $shim --version
+          "hproxy --version: $said"
+          if ($said -ne "hproxy $env:VERSION") { throw "hproxy --version said '$said'" }
+          & $shim --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "hproxy --help ended with $LASTEXITCODE" }
+
+      - name: Uninstalled with choco, nothing left behind
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $choco = if (Get-Command choco -ErrorAction SilentlyContinue) { 'choco' } else { "$env:ProgramData\chocolatey\bin\choco.exe" }
+          & $choco uninstall hproxy --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "choco uninstall ended with $LASTEXITCODE" }
+          if (Test-Path "$env:ProgramData\chocolatey\bin\hproxy.exe") { throw "the hproxy command is still there" }
+          if (Test-Path "$env:ProgramData\chocolatey\lib\hproxy") { throw "the package folder is still there" }
+          "removed: the command and the package folder"
+
+  publish:
+    name: To community.chocolatey.org
+    needs: [package, install]
+    if: inputs.publish
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: chocolatey
+
+      - name: Push
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.package.outputs.version }}
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:CHOCOLATEY_API_KEY) { throw "the repository secret CHOCOLATEY_API_KEY is missing" }
+          choco push "dist/hproxy.$env:VERSION.nupkg" --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY
+          if ($LASTEXITCODE -ne 0) { throw "choco push ended with $LASTEXITCODE" }
+          "pushed hproxy $env:VERSION: https://community.chocolatey.org/packages/hproxy/$env:VERSION"

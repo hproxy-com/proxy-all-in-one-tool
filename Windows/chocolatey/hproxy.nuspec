@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Chocolatey package of the hproxy command-line tool. .github/workflows/chocolatey.yml fills @VERSION@ here
+     and the release's sums in tools/chocolateyinstall.ps1 for each command-line release (cli-v<version>), proves
+     the package on Windows x64, 32-bit and ARM64, and pushes it. Edit the template here, never a version by hand. -->
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>hproxy</id>
+    <version>@VERSION@</version>
+    <packageSourceUrl>https://github.com/hproxy-com/proxy-all-in-one-tool/tree/main/Windows/chocolatey</packageSourceUrl>
+    <owners>hproxy</owners>
+    <title>HProxy command-line tool</title>
+    <authors>HProxy</authors>
+    <projectUrl>https://github.com/hproxy-com/proxy-all-in-one-tool</projectUrl>
+    <iconUrl>https://raw.githubusercontent.com/hproxy-com/proxy-all-in-one-tool/main/source-code/desktop-app/src-tauri/icons/128x128.png</iconUrl>
+    <copyright>2026 HProxy</copyright>
+    <licenseUrl>https://github.com/hproxy-com/proxy-all-in-one-tool/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/hproxy-com/proxy-all-in-one-tool/tree/main/source-code</projectSourceUrl>
+    <docsUrl>https://github.com/hproxy-com/proxy-all-in-one-tool/blob/main/source-code/README.md#command-line</docsUrl>
+    <bugTrackerUrl>https://github.com/hproxy-com/proxy-all-in-one-tool/issues</bugTrackerUrl>
+    <tags>hproxy proxy proxy-checker rotating-proxy socks5 http-proxy cli mcp portable</tags>
+    <summary>Check proxies in any shape a provider prints, run a rotating proxy on your machine over your own list, and switch it to a new IP from any script.</summary>
+    <description><![CDATA[The `hproxy` command-line tool: check proxies in any shape a provider prints, run a rotating proxy on your
+machine over your own list, and switch it to a new IP from any script. One program, with no runtime to install
+beside it.
+
+## Use it
+
+```
+hproxy check --file proxies.txt --alive          # which of your proxies work, from here
+hproxy connect --file proxies.txt --rotate every --background
+curl -x http://127.0.0.1:8080 https://example.com
+hproxy new-ip                                    # the next proxy, now
+hproxy status                                    # what runs, and through which proxy
+```
+
+`hproxy connect` gives every program on your machine one proxy at `127.0.0.1:8080`, HTTP and SOCKS5 on the same
+port, with no login: the next of your proxies for every connection, or by the rule you pick (`every:25`,
+`every:10m`, `random`, `on-failure`). Your proxies can be `host:port:user:pass`, `user:pass@host:port`,
+`socks5://...`, or any other shape a provider prints. Scripts switch it with one HTTP call to
+`http://127.0.0.1:8080/hproxy/new-ip`, and `hproxy mcp` gives AI assistants the same tools.
+
+## The package
+
+It downloads the program of the GitHub release with the same version for your processor (x64, ARM64 or 32-bit)
+and checks it against the SHA-256 published with that release. The release's files are built in public by
+[the repository's workflow](https://github.com/hproxy-com/proxy-all-in-one-tool/actions/workflows/cli-release.yml),
+each with a signed record of how it was built.
+
+The desktop app for Windows is on the [Microsoft Store](https://apps.microsoft.com/detail/9NPDSV0K3J1X).
+]]></description>
+    <releaseNotes>https://github.com/hproxy-com/proxy-all-in-one-tool/releases/tag/cli-v@VERSION@</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>
