@@ -1,0 +1,87 @@
+name: Nix flake
+
+# hproxy for Nix, in nix/: a flake whose package is the very file of a command-line release (cli-v<version>) for
+# each system, fetched by its SHA-256. Its version and hashes are rewritten for every release from the release's
+# SHA256SUMS. Here Nix itself checks the flake for every system, builds and runs it on Linux (x86_64, ARM64) and
+# macOS (Apple Silicon), compares the program with the release's file, and on a push runs it once more the way
+# people do: from GitHub, by the commit's address.
+#
+# The flake takes only stdenvNoCC, fetchurl and lib from nixpkgs, pinned in nix/flake.lock. A run without that file
+# writes one and keeps it as the run's artifact "flake-lock" (Linux x86_64), to be committed.
+#
+# Nix comes from nixos.org's own installer; otherwise only GitHub's own actions, each pinned to a commit.
+
+on:
+  push:
+    branches: [main]
+    paths: [nix/**, .github/workflows/nix.yml]
+  pull_request:
+    paths: [nix/**, .github/workflows/nix.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flake:
+    name: nix on ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            runner: ubuntu-24.04
+            file: hproxy-cli-linux-x86_64
+          - name: Linux ARM64
+            runner: ubuntu-24.04-arm
+            file: hproxy-cli-linux-arm64
+          - name: macOS, Apple Silicon
+            runner: macos-latest
+            file: hproxy-cli-macos-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Nix, from nixos.org's installer
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL https://nixos.org/nix/install -o "$RUNNER_TEMP/install-nix"
+          printf 'experimental-features = nix-command flakes\n' > "$RUNNER_TEMP/nix.conf"
+          sh "$RUNNER_TEMP/install-nix" --daemon --yes --nix-extra-conf-file "$RUNNER_TEMP/nix.conf" > "$RUNNER_TEMP/install-nix.log" 2>&1 \
+            || { tail -40 "$RUNNER_TEMP/install-nix.log"; exit 1; }
+          echo /nix/var/nix/profiles/default/bin >> "$GITHUB_PATH"
+
+      - name: Checked for every system, built, compared with the release's file and run
+        env:
+          FILE: ${{ matrix.file }}
+        run: |
+          nix --version
+          if [ ! -f nix/flake.lock ]; then
+            nix flake lock ./nix
+            git add nix/flake.lock  # Nix sees only the files git knows
+            echo "a new nix/flake.lock, kept as this run's artifact"
+          fi
+          # From here on the lock file must be complete: Nix may not change it.
+          lock=--no-update-lock-file
+          nix flake check ./nix --all-systems $lock
+          nix build ./nix $lock --print-build-logs
+          version=$(sed -n 's/^ *version = "\([0-9.]*\)";$/\1/p' nix/flake.nix)
+          said=$(./result/bin/hproxy --version)
+          echo "hproxy --version: $said"
+          test "$said" = "hproxy $version"
+          curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/download/cli-v$version/$FILE" -o "$RUNNER_TEMP/release-file"
+          cmp ./result/bin/hproxy "$RUNNER_TEMP/release-file"
+          echo "the same bytes as $FILE of cli-v$version"
+          nix run ./nix $lock -- --help > /dev/null
+
+      - name: From GitHub, the way people run it
+        if: github.event_name == 'push'
+        run: |
+          said=$(nix run "github:$GITHUB_REPOSITORY/$GITHUB_SHA?dir=nix" -- --version)
+          echo "nix run github:$GITHUB_REPOSITORY?dir=nix -- --version: $said"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.runner == 'ubuntu-24.04'
+        with:
+          name: flake-lock
+          path: nix/flake.lock
+          if-no-files-found: error
