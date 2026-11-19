@@ -40,6 +40,28 @@ A site is a name (`example.com` covers everything under it, like `www.example.co
 or a range (`10.0.0.0/8`). Fill in `skip` or `only`; the add-on stops with a note when both are
 filled in.
 
+## A "New IP" button in Home Assistant
+
+The proxy switches when asked, over plain HTTP on its own port: set `rotate` to `on-failure` so it
+stays on one proxy until then, and add to your `configuration.yaml`:
+
+```yaml
+rest_command:
+  hproxy_new_ip:
+    url: http://localhost:8080/hproxy/new-ip
+    method: post
+
+sensor:
+  - platform: rest
+    name: HProxy in use
+    resource: http://localhost:8080/hproxy/status
+    value_template: "{{ value_json.upstream }}"
+    scan_interval: 60
+```
+
+Then a dashboard button, an automation or a script calls the action `rest_command.hproxy_new_ip`,
+and the sensor shows which proxy is in use (never its password).
+
 ## Who can reach it
 
 Port 8080 on Home Assistant's address is open to your home network, and the proxy asks for no
