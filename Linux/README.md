@@ -39,7 +39,11 @@ wget -qO- https://hproxy.com/install.sh | sh
 
 Routers with an ARM or x86 processor run it, which covers most new ones; the older MIPS routers have
 no file of their own. Where the flash is small, `HPROXY_INSTALL_DIR=/tmp` puts it in memory until the
-next restart. The same line works on FreeBSD (14.4 and newer, x86_64), with its own `fetch`.
+next restart. On FreeBSD (14.4 and newer, x86_64), its own `fetch` does the same:
+
+```sh
+fetch -qo - https://hproxy.com/install.sh | sh
+```
 
 In a container, for Docker, Podman, Kubernetes and the clouds' container services (Amazon ECS,
 Fargate and EKS on Intel and Graviton), on x86_64 and ARM:
