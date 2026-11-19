@@ -161,7 +161,7 @@ jobs:
       DOTNET_NOLOGO: "1"
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: hproxy, installed the way the README says
         env:
@@ -238,7 +238,7 @@ jobs:
       HPROXY_NO_UPDATE_CHECK: "1"
       HPROXY_NO_USAGE: "1"
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: hproxy, two test proxies, and the rotating proxy on one of them until asked
         run: |
