@@ -39,6 +39,10 @@ jobs:
             runner: macos-latest
             file: hproxy-cli-macos-arm64
     runs-on: ${{ matrix.runner }}
+    env:
+      # Nix finds nixpkgs through GitHub's API, which refuses GitHub's own machines without a login (403): the
+      # run's read-only token.
+      NIX_CONFIG: access-tokens = github.com=${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -76,12 +80,17 @@ jobs:
       - name: From GitHub, the way people run it
         if: github.event_name == 'push'
         run: |
-          said=$(nix run "github:$GITHUB_REPOSITORY/$GITHUB_SHA?dir=nix" -- --version)
-          echo "nix run github:$GITHUB_REPOSITORY?dir=nix -- --version: $said"
+          version=$(sed -n 's/^ *version = "\([0-9.]*\)";$/\1/p' nix/flake.nix)
+          # Nix runs a flake from GitHub only with its lock file in the commit; a commit before the first
+          # lock file is run once without one.
+          if git cat-file -e "$GITHUB_SHA:nix/flake.lock" 2> /dev/null; then lock=; else lock=--no-write-lock-file; fi
+          said=$(nix run "github:$GITHUB_REPOSITORY/$GITHUB_SHA?dir=nix" $lock -- --version)
+          echo "nix run 'github:$GITHUB_REPOSITORY?dir=nix' -- --version: $said"
+          test "$said" = "hproxy $version"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: matrix.runner == 'ubuntu-24.04'
+        if: always() && matrix.runner == 'ubuntu-24.04'
         with:
           name: flake-lock
           path: nix/flake.lock
-          if-no-files-found: error
+          if-no-files-found: warn
