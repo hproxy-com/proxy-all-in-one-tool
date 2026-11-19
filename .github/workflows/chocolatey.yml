@@ -206,4 +206,5 @@ jobs:
           if (-not $env:CHOCOLATEY_API_KEY) { throw "the repository secret CHOCOLATEY_API_KEY is missing" }
           choco push "dist/hproxy.$env:VERSION.nupkg" --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY
           if ($LASTEXITCODE -ne 0) { throw "choco push ended with $LASTEXITCODE" }
-          "pushed hproxy $env:VERSION: https://community.chocolatey.org/packages/hproxy/$env:VERSION"
+          # $(...) around the name: a colon right after it would make PowerShell read "VERSION:" as the name.
+          "pushed hproxy $($env:VERSION), listed once Chocolatey's moderators pass it: https://community.chocolatey.org/packages/hproxy/$($env:VERSION)"
