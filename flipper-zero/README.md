@@ -7,7 +7,7 @@ WiFi board running FlipperHTTP.
 Flipper looks off, [open an issue](https://github.com/hproxy-com/flipper-zero-app/issues) and say
 which firmware and board you run.
 
-<p align="center"><img src="screenshots/all.png" alt="The menu, the free-list options, a free list from hproxy.com, a check in progress with live counts, the results fastest first, and one proxy in detail" width="780"></p>
+<p align="center"><img src="screenshots/all.png" alt="The menu, the free-list options, a free list from hproxy.com, a check in progress with live counts, the results fastest first, and one proxy in detail" width="784"></p>
 
 <sub>The screens, drawn pixel for pixel by [tools/screens.py](tools/screens.py) with the firmware's own
 fonts and drawing code (release 1.5.1): there is no Flipper Zero emulator, and photos from a real
