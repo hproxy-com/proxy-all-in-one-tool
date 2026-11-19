@@ -486,8 +486,10 @@ static void settings_load(App* app) {
         if(hproxy_setting(s, "connector", value, sizeof(value))) {
             hproxy_connector_address(value, app->connector, sizeof(app->connector));
         }
-        if(hproxy_setting(s, "connector_login", value, sizeof(value))) {
-            snprintf(app->connector_login, sizeof(app->connector_login), "%s", value);
+        /* Whole or not at all: a login cut short is a wrong login. */
+        if(hproxy_setting(s, "connector_login", value, sizeof(value)) &&
+           strlen(value) < sizeof(app->connector_login)) {
+            memcpy(app->connector_login, value, strlen(value) + 1);
         }
         if(hproxy_setting(s, "member", value, sizeof(value))) {
             long member = strtol(value, NULL, 10);
