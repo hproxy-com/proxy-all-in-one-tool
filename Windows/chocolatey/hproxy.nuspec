@@ -11,7 +11,7 @@
     <title>HProxy command-line tool</title>
     <authors>HProxy</authors>
     <projectUrl>https://github.com/hproxy-com/proxy-all-in-one-tool</projectUrl>
-    <iconUrl>https://raw.githubusercontent.com/hproxy-com/proxy-all-in-one-tool/main/source-code/desktop-app/src-tauri/icons/128x128.png</iconUrl>
+    <iconUrl>https://cdn.jsdelivr.net/gh/hproxy-com/proxy-all-in-one-tool@main/source-code/desktop-app/src-tauri/icons/128x128.png</iconUrl>
     <copyright>2026 HProxy</copyright>
     <licenseUrl>https://github.com/hproxy-com/proxy-all-in-one-tool/blob/main/LICENSE</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
