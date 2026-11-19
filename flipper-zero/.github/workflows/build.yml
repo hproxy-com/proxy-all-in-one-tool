@@ -1,0 +1,128 @@
+name: Build
+
+# Tests the app's logic on Linux, then builds the app for every firmware people run on their
+# Flipper Zero: the official release, the release before it, its release candidate and its
+# development channel, and Momentum and Unleashed, each in their release and development channels.
+# An app is built against one firmware's interface, so each gets its own file. A pushed tag
+# v<version> also makes a release with all of them and their SHA-256 sums.
+#
+# The build uses ufbt, Flipper's own SDK tool, from PyPI at a fixed version, and only GitHub's own
+# actions, each pinned to a commit.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  logic:
+    name: The logic, tested on Linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Strict, then again under the address and undefined-behaviour sanitizers
+        run: |
+          for part in api keys; do
+            gcc -std=c11 -Wall -Wextra -Werror -Wshadow -Wconversion -O2 -I. \
+              "tests/test_hproxy_$part.c" "hproxy_$part.c" -o "test_hproxy_$part"
+            "./test_hproxy_$part"
+            gcc -std=c11 -g -fsanitize=address,undefined -fno-omit-frame-pointer -I. \
+              "tests/test_hproxy_$part.c" "hproxy_$part.c" -o "test_hproxy_${part}_san"
+            "./test_hproxy_${part}_san"
+          done
+
+  app:
+    name: ${{ matrix.name }}
+    needs: logic
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Official, release
+            update: --index-url=https://update.flipperzero.one/firmware/directory.json --channel=release
+            file: hproxy-official.fap
+          - name: Official 1.4.3, the release before
+            update: --url=https://update.flipperzero.one/builds/firmware/1.4.3/flipper-z-f7-sdk-1.4.3.zip --hw-target=f7
+            file: hproxy-official-1.4.3.fap
+          - name: Official, release candidate
+            update: --index-url=https://update.flipperzero.one/firmware/directory.json --channel=rc
+            file: hproxy-official-rc.fap
+          - name: Official, development
+            update: --index-url=https://update.flipperzero.one/firmware/directory.json --channel=dev
+            file: hproxy-official-dev.fap
+          - name: Momentum, release
+            update: --index-url=https://up.momentum-fw.dev/firmware/directory.json --channel=release
+            file: hproxy-momentum.fap
+          - name: Momentum, development
+            update: --index-url=https://up.momentum-fw.dev/firmware/directory.json --channel=dev
+            file: hproxy-momentum-dev.fap
+          - name: Unleashed, release
+            update: --index-url=https://up.unleashedflip.com/directory.json --channel=release
+            file: hproxy-unleashed.fap
+          - name: Unleashed, development
+            update: --index-url=https://up.unleashedflip.com/directory.json --channel=dev
+            file: hproxy-unleashed-dev.fap
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: ufbt, Flipper's SDK tool
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ufbt"
+          "$RUNNER_TEMP/ufbt/bin/pip" install --quiet ufbt==0.2.6
+          echo "$RUNNER_TEMP/ufbt/bin" >> "$GITHUB_PATH"
+
+      - name: The SDK of ${{ matrix.name }}
+        env:
+          UPDATE: ${{ matrix.update }}
+        run: |
+          # shellcheck disable=SC2086 # two options in one variable, split on purpose
+          ufbt update $UPDATE
+
+      - name: Build
+        env:
+          FILE: ${{ matrix.file }}
+        run: |
+          ufbt
+          ls -l dist
+          cp dist/hproxy.fap "$FILE"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.file }}
+          path: ${{ matrix.file }}
+          if-no-files-found: error
+
+  release:
+    name: The release
+    needs: app
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Every firmware's file and the sums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          sha256sum hproxy-*.fap > SHA256SUMS
+          cat SHA256SUMS
+          # A tag with a dash (v1.0-beta) is a pre-release.
+          kind=()
+          case "$TAG" in *-*) kind=(--prerelease) ;; esac
+          gh release create "$TAG" "${kind[@]}" --repo "$GITHUB_REPOSITORY" --title "HProxy for Flipper Zero ${TAG#v}" \
+            --notes "One file per firmware: hproxy-official.fap for the official release, hproxy-official-1.4.3.fap for 1.4.3, -rc and -dev for its release candidate and development channel, hproxy-momentum.fap and hproxy-unleashed.fap (and their -dev files) for Momentum and Unleashed. Copy yours to the SD card under apps/GPIO/. It needs a WiFi board flashed with FlipperHTTP 2.2 or newer; see the README." \
+            hproxy-*.fap SHA256SUMS
