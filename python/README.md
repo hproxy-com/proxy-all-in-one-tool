@@ -5,6 +5,12 @@ prints, run a rotating proxy on your machine over your own list, and switch it t
 script. The package carries the tool itself, one program for your system, and installs it as the
 command `hproxy` beside your environment's other scripts. It needs no other Python package.
 
+## Install
+
+```sh
+pip install hproxy-cli          # or: pipx install hproxy-cli, uv tool install hproxy-cli
+```
+
 ## Use it
 
 ```sh
