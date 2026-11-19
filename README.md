@@ -36,7 +36,7 @@
 
 ## Made for every tool
 
-<p align="center"><a href="https://github.com/hproxy-com/flipper-zero-app"><img src="assets/flipper-zero.png" alt="HProxy on a Flipper Zero: the menu, the free-list options, a free list from hproxy.com, a check in progress, the results fastest first, one proxy in detail" width="780"></a></p>
+<p align="center"><a href="https://github.com/hproxy-com/flipper-zero-app"><img src="assets/flipper-zero.png" alt="HProxy on a Flipper Zero: the menu, the free-list options, a free list from hproxy.com, a check in progress, the results fastest first, one proxy in detail" width="784"></a></p>
 
 | Where | What you get |
 | --- | --- |
