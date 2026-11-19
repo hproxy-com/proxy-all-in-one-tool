@@ -31,13 +31,15 @@
 | **macOS** 12 and later, Apple Silicon and Intel | **[Download the .dmg](https://hproxy.com/downloads/desktop/hproxy-macos-universal.dmg)** | [how to open it the first time](macOS/) |
 | **Linux** x86_64 | **[AppImage](https://hproxy.com/downloads/desktop/hproxy-linux-x86_64.AppImage)** or **[.deb](https://hproxy.com/downloads/desktop/hproxy-linux-x86_64.deb)** | [how to install](Linux/) |
 | **Android** 7 and later | **[Get it on Google Play](https://play.google.com/store/apps/details?id=com.hproxy.app)** | [Android](Android/) |
-| **Command line and AI assistants** on macOS, Linux and Windows, x64 and ARM | **[Install in one line](#command-line)** | [all the commands](source-code/README.md#command-line) |
-| **Containers**: Docker, Kubernetes, Amazon ECS and EKS, NAS, x64 and ARM | **[ghcr.io/hproxy-com/hproxy](Docker/)** | [how to run it](Docker/) |
+| **Command line and AI assistants** on macOS, Linux, Windows and FreeBSD: x64, ARM and RISC-V, routers and Android phones (Termux) included | **[Install in one line](#command-line)** | [all the commands](source-code/README.md#command-line) |
+| **Containers**: Docker, Kubernetes, Amazon ECS and EKS, NAS, on six processor types | **[ghcr.io/hproxy-com/hproxy](Docker/)** | [how to run it](Docker/) |
+| **GitHub Actions** and **Home Assistant** | **[setup-hproxy](https://github.com/hproxy-com/setup-hproxy)** and the **[add-on](https://github.com/hproxy-com/home-assistant-addons)** | a rotating proxy for a job, or for your home network |
 
 ## Command line
 
-`hproxy` is the same engine without a window, in one file, on x64 and ARM: Apple Silicon and Intel
-Macs, any Linux (Raspberry Pi included) and Windows. On macOS and Linux:
+`hproxy` is the same engine without a window, in one file: Apple Silicon and Intel Macs, any Linux
+(Raspberry Pi, 32-bit PCs, RISC-V boards and ARM or x86 routers included), Windows on x64, ARM and
+32-bit, FreeBSD, and Android phones in Termux. On macOS and Linux:
 
 ```sh
 curl -fsSL https://hproxy.com/install.sh | sh
@@ -70,8 +72,19 @@ hproxy mcp                                                      # the same tools
 From your own code: `hproxy connect --file proxies.txt --background` gives every language one
 proxy with no login at `127.0.0.1:8080`, the next of your proxies for every connection. Tested
 [examples](examples/): Python (requests, httpx, aiohttp, Scrapy), Node.js (fetch, axios, got,
-Crawlee), Deno, Bun, Go, Rust, Java, Kotlin, C#, Swift, C, PHP, Ruby, Perl, R, PowerShell, the
-browsers through Playwright, Puppeteer and Selenium, and curl, wget and other tools.
+Crawlee), Deno, Bun, Go (and Colly), Rust, Java, Kotlin, C#, Swift, C, PHP (and Guzzle), Ruby,
+Perl, R, PowerShell, the browsers through Playwright, Puppeteer and Selenium, and curl, wget and
+other tools.
+
+A new IP when your script decides, with one HTTP call to the proxy's own port, from any language:
+
+```sh
+curl -X POST http://127.0.0.1:8080/hproxy/new-ip   # the next proxy (hproxy new-ip in a terminal)
+curl http://127.0.0.1:8080/hproxy/status           # the one in use, and the counts
+```
+
+[More about it](examples/#a-new-ip-when-your-script-decides), with the same in Python, Node.js,
+Go and PowerShell.
 
 ## What it does
 

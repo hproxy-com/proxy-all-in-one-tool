@@ -206,6 +206,8 @@ hproxy connect host:port --skip bank.example,10.0.0.0/8    # these sites go stra
 hproxy connect host:port --only shop.example               # only this site uses the proxy
 hproxy connect host:port --via first.example:8080          # two proxies in a row
 hproxy free --country DE                                    # a free exit, swapped when it dies
+hproxy new-ip                                               # the running connection's next proxy
+HPROXY_PROXY=host:port:user:pass hproxy connect            # the proxy from the environment
 hproxy places california                                    # what you saved in the app, no passwords
 hproxy connect --place "US sessions" --member 3             # one of them, by name
 hproxy ip 8.8.8.8                                           # where an address is
@@ -249,6 +251,45 @@ file is what `hproxy status` lists and what `hproxy stop` removes: no process is
 ever killed, nothing needs privileges, and a file wiped by a restart cleans up
 after itself. It carries the address, the source and the masked upstream, never
 a password. `HPROXY_STATE_DIR` moves the directory, which is what the tests use.
+
+### A new IP on demand
+
+A running connection takes its orders over plain HTTP on its own port, so a
+script in any language switches it without a library, a wrapper or a
+subprocess. Every answer is one line of JSON with `ok`, and `error` when it is
+false:
+
+```bash
+curl -X POST http://127.0.0.1:8080/hproxy/new-ip            # the next proxy (GET works too)
+curl -X POST "http://127.0.0.1:8080/hproxy/new-ip?member=3" # proxy 3 of the list
+curl http://127.0.0.1:8080/hproxy/status                    # the one in use, member N of M, the counts
+curl http://127.0.0.1:8080/hproxy                           # every page, with what it does
+hproxy new-ip --probe                                       # the same from a terminal, then the exit address
+```
+
+A switch ends the connections that were open, so the next request goes out
+through the new proxy even over a kept-alive connection. One proxy answers
+409 (nothing to switch to), a member the list lacks or a parameter the page
+does not know answers 400, and a free pool with no exit to give answers 502.
+Started with `--rotate on-failure`, a list stays on one proxy until asked.
+
+The pages are as reachable as the connection itself: a connection for the
+other devices of a network asks for its login there too (as `Authorization`,
+`curl -u name:password`, or `Proxy-Authorization`). A request a web page makes
+is refused, and so is a browser's prefetch, so a site someone visits can
+neither switch their IP nor read which proxy they use. A request sent through
+the connection to its own address (HTTP_PROXY set and 127.0.0.1 not exempted)
+is answered there and never goes upstream. `hproxy status` reads the same
+page, so it shows the proxy a connection is on right now. Examples in every
+language: [examples/new-ip](https://github.com/hproxy-com/proxy-all-in-one-tool/tree/main/examples/new-ip).
+
+### The proxy from the environment
+
+With no proxy, list, free pool or saved place on its command line, `connect`
+takes `HPROXY_PROXY` (one proxy line), then `HPROXY_PROXY_FILE` (the path of a
+list). A password given this way stays out of the list of running processes,
+which is what containers, services and CI secrets want. Every command ends
+cleanly on Ctrl+C and on SIGTERM, also as process 1 in a container.
 
 Built for scripts: rows go to stdout the moment they settle, words for people go
 to stderr, `--json` leaves out empty fields, `--fields input,alive,latency_ms`
