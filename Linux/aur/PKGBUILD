@@ -1,0 +1,40 @@
+# Maintainer: HProxy <support at hproxy dot com>
+#
+# The template of the AUR package hproxy-bin: .github/workflows/aur.yml fills @VERSION@ and the sums from the
+# SHA256SUMS of the command-line release cli-v<version> (after checking every file against them and against its
+# signed build record), builds and installs the package in an Arch Linux container, and pushes PKGBUILD and
+# .SRCINFO to aur.archlinux.org. Edit the template here, never a version by hand.
+
+pkgname=hproxy-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Proxy checker and rotating local proxy over your own proxy list, with a new IP from any script'
+arch=('x86_64' 'aarch64' 'armv7h' 'armv6h' 'i686' 'pentium4' 'riscv64')
+url='https://github.com/hproxy-com/proxy-all-in-one-tool'
+license=('MIT')
+provides=('hproxy')
+conflicts=('hproxy')
+# The release's files are static programs, used exactly as built and checked.
+options=('!strip' '!debug')
+_release="https://github.com/hproxy-com/proxy-all-in-one-tool/releases/download/cli-v${pkgver}"
+source=("LICENSE-${pkgver}::https://raw.githubusercontent.com/hproxy-com/proxy-all-in-one-tool/cli-v${pkgver}/LICENSE")
+source_x86_64=("hproxy-${pkgver}-x86_64::${_release}/hproxy-cli-linux-x86_64")
+source_aarch64=("hproxy-${pkgver}-aarch64::${_release}/hproxy-cli-linux-arm64")
+source_armv7h=("hproxy-${pkgver}-armv7h::${_release}/hproxy-cli-linux-armv6")
+source_armv6h=("hproxy-${pkgver}-armv6h::${_release}/hproxy-cli-linux-armv6")
+source_i686=("hproxy-${pkgver}-i686::${_release}/hproxy-cli-linux-i686")
+source_pentium4=("hproxy-${pkgver}-pentium4::${_release}/hproxy-cli-linux-i686")
+source_riscv64=("hproxy-${pkgver}-riscv64::${_release}/hproxy-cli-linux-riscv64")
+sha256sums=('@SHA_LICENSE@')
+sha256sums_x86_64=('@SHA_X86_64@')
+sha256sums_aarch64=('@SHA_ARM64@')
+sha256sums_armv7h=('@SHA_ARMV6@')
+sha256sums_armv6h=('@SHA_ARMV6@')
+sha256sums_i686=('@SHA_I686@')
+sha256sums_pentium4=('@SHA_I686@')
+sha256sums_riscv64=('@SHA_RISCV64@')
+
+package() {
+  install -Dm755 "hproxy-${pkgver}-${CARCH}" "${pkgdir}/usr/bin/hproxy"
+  install -Dm644 "LICENSE-${pkgver}" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

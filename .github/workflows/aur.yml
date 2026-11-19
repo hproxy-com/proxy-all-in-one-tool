@@ -1,0 +1,166 @@
+name: AUR package
+
+# hproxy-bin for Arch Linux, in Linux/aur/: the PKGBUILD of the hproxy command-line tool for the Arch User
+# Repository, made from a command-line release (cli-v<version>). The release's Linux files are checked first,
+# against its SHA256SUMS and against GitHub's signed record of how each was built; their sums go into the PKGBUILD.
+# The package is then built with makepkg in an Arch Linux container, checked with namcap, installed with pacman,
+# run and removed again, and makepkg writes the .SRCINFO the AUR asks for beside it.
+#
+# It runs when Linux/aur/ changes, with the newest command-line release. Started by hand, it takes a version, and
+# with "publish" ticked it pushes PKGBUILD and .SRCINFO to aur.archlinux.org/hproxy-bin.git with the SSH key of the
+# AUR account hproxy (the repository secret AUR_SSH_PRIVATE_KEY), checking the AUR's host key against the
+# fingerprint it publishes. The AUR lists a push at once; it has no review.
+#
+# Only GitHub's own actions, each pinned to a commit.
+
+on:
+  push:
+    branches: [main]
+    paths: [Linux/aur/**, .github/workflows/aur.yml]
+  pull_request:
+    paths: [Linux/aur/**, .github/workflows/aur.yml]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "A released version of the command-line tool, e.g. 0.4.9 (empty: the newest)"
+        required: false
+        type: string
+      publish:
+        description: "Push the package to aur.archlinux.org (unticked: build and prove it only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: The package, built, installed and run on Arch Linux
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      attestations: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: The release's Linux files, checked against its sums and its build records
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          version="$VERSION"
+          if [ -z "$version" ]; then
+            tag=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --exclude-drafts --json tagName \
+              --jq '[.[].tagName | select(startswith("cli-v"))][0]')
+            version="${tag#cli-v}"
+          fi
+          echo "hproxy $version"
+          gh release download "cli-v$version" --repo "$GITHUB_REPOSITORY" --dir release \
+            --pattern 'hproxy-cli-linux-*' --pattern SHA256SUMS
+          ls release
+          for f in x86_64 arm64 armv6 i686 riscv64; do test -f "release/hproxy-cli-linux-$f"; done
+          (cd release && sha256sum --check --ignore-missing SHA256SUMS)
+          for f in release/hproxy-cli-linux-*; do
+            gh attestation verify "$f" --repo "$GITHUB_REPOSITORY" > /dev/null
+            echo "build record checked: ${f#release/}"
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Fill the template
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          sum() { awk -v f="$1" '{ name = $2; sub(/^\*/, "", name) } name == f { print $1 }' release/SHA256SUMS; }
+          x86_64=$(sum hproxy-cli-linux-x86_64)
+          arm64=$(sum hproxy-cli-linux-arm64)
+          armv6=$(sum hproxy-cli-linux-armv6)
+          i686=$(sum hproxy-cli-linux-i686)
+          riscv64=$(sum hproxy-cli-linux-riscv64)
+          # The license as the release's tag has it: the address the PKGBUILD downloads it from.
+          license=$(curl -fsSL "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/cli-v$VERSION/LICENSE" | sha256sum | cut -d' ' -f1)
+          for s in "$x86_64" "$arm64" "$armv6" "$i686" "$riscv64" "$license"; do
+            echo "$s" | grep -Eqx '[0-9a-f]{64}' || { echo "a SHA-256 is missing"; exit 1; }
+          done
+          mkdir -p aur
+          sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHA_LICENSE@/$license/g" -e "s/@SHA_X86_64@/$x86_64/g" \
+            -e "s/@SHA_ARM64@/$arm64/g" -e "s/@SHA_ARMV6@/$armv6/g" -e "s/@SHA_I686@/$i686/g" \
+            -e "s/@SHA_RISCV64@/$riscv64/g" Linux/aur/PKGBUILD > aur/PKGBUILD
+          if grep -n '@[[:upper:][:digit:]_]*@' aur/PKGBUILD; then echo "a placeholder was left unfilled"; exit 1; fi
+          cat aur/PKGBUILD
+
+      - name: Built with makepkg, checked with namcap, installed with pacman, run and removed
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          docker run --rm -v "$PWD/aur:/pkg" -e VERSION archlinux:base-devel bash -euo pipefail -c '
+            pacman -Syu --noconfirm --needed namcap > /dev/null
+            useradd -m builder
+            cp -r /pkg /home/builder/pkg
+            chown -R builder /home/builder/pkg
+            cd /home/builder/pkg
+            su builder -c "makepkg --printsrcinfo > .SRCINFO"
+            su builder -c "makepkg --noconfirm"
+            echo "== namcap"
+            namcap PKGBUILD
+            namcap hproxy-bin-*.pkg.tar.zst
+            echo "== pacman"
+            pacman -U --noconfirm hproxy-bin-*.pkg.tar.zst
+            pacman -Ql hproxy-bin
+            said=$(hproxy --version)
+            echo "hproxy --version: $said"
+            test "$said" = "hproxy $VERSION"
+            cmp /usr/bin/hproxy "hproxy-$VERSION-x86_64"
+            hproxy --help > /dev/null
+            pacman -R --noconfirm hproxy-bin
+            if command -v hproxy; then echo "hproxy is still there"; exit 1; fi
+            echo "removed: nothing left"
+            cp .SRCINFO /pkg/.SRCINFO
+          '
+          cat aur/.SRCINFO
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: aur
+          path: |
+            aur/PKGBUILD
+            aur/.SRCINFO
+          include-hidden-files: true
+          if-no-files-found: error
+
+  publish:
+    name: To aur.archlinux.org
+    needs: package
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: aur
+          path: aur
+
+      - name: Push PKGBUILD and .SRCINFO
+        env:
+          VERSION: ${{ needs.package.outputs.version }}
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          test -n "$AUR_SSH_PRIVATE_KEY" || { echo "the repository secret AUR_SSH_PRIVATE_KEY is missing"; exit 1; }
+          test -f aur/PKGBUILD && test -f aur/.SRCINFO
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          # The AUR's host key, pinned to the Ed25519 fingerprint aur.archlinux.org publishes on its front page.
+          ssh-keyscan -t ed25519 aur.archlinux.org 2> /dev/null > ~/.ssh/known_hosts
+          seen=$(ssh-keygen -lf ~/.ssh/known_hosts | awk '{ print $2 }')
+          test "$seen" = "SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4" || { echo "the AUR's host key is $seen"; exit 1; }
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          git clone -q ssh://aur@aur.archlinux.org/hproxy-bin.git aur-repo
+          cp aur/PKGBUILD aur/.SRCINFO aur-repo/
+          cd aur-repo
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then echo "the AUR has hproxy-bin $VERSION already"; exit 0; fi
+          git -c user.name=HProxy -c user.email=support@hproxy.com commit -q -m "hproxy-bin $VERSION, from the SHA256SUMS of cli-v$VERSION"
+          git push -q origin HEAD:master
+          echo "pushed hproxy-bin $VERSION: https://aur.archlinux.org/packages/hproxy-bin"
