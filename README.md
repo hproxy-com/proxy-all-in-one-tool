@@ -36,11 +36,11 @@
 
 ## Made for every tool
 
-<p align="center"><a href="https://github.com/hproxy-com/flipper-zero-app"><img src="assets/flipper-zero.png" alt="HProxy on a Flipper Zero: the menu, the free-list options, a free list from hproxy.com, a check in progress, the results fastest first, one proxy in detail" width="784"></a></p>
+<p align="center"><a href="https://github.com/hproxy-com/flipper-zero-app"><img src="assets/flipper-zero.png" alt="HProxy on a Flipper Zero: the menu, your list, a keyboard with every character, the results with the protocol that answered, one proxy in detail, and New IP from the Flipper" width="784"></a></p>
 
 | Where | What you get |
 | --- | --- |
-| **[Flipper Zero](https://github.com/hproxy-com/flipper-zero-app)** | Free proxies from hproxy.com and a checker on the Flipper, over a WiFi board running FlipperHTTP. Above: its screens, drawn pixel for pixel by the firmware's own fonts and code |
+| **[Flipper Zero](https://github.com/hproxy-com/flipper-zero-app)** | Your own proxies on the Flipper: add any kind (typed, from a link, from a file), see which protocols answer, and New IP on your rotator, over a WiFi board running FlipperHTTP. Above: its screens, drawn pixel for pixel by the firmware's own fonts and code |
 | **[Home Assistant](https://github.com/hproxy-com/home-assistant-addons)** | A rotating proxy for your whole home network, with a New IP button on the dashboard |
 | **[GitHub Actions](https://github.com/hproxy-com/setup-hproxy)** | A rotating proxy for a CI job, which a later step switches with one `curl` |
 | **[Docker, Kubernetes, AWS](Docker/)** | The rotator beside your app on `127.0.0.1`, on six processor types, with the proxy kept in a secret |
@@ -75,10 +75,10 @@ its version), built by this repository's own workflow from [source-code](source-
 The same tool with Homebrew (`brew install hproxy-com/tap/hproxy`), with Scoop
 (`scoop bucket add hproxy https://github.com/hproxy-com/scoop-bucket`, then
 `scoop install hproxy/hproxy`), and as a container for Docker, Kubernetes and the clouds
-(`docker run --rm ghcr.io/hproxy-com/hproxy list`, [more](Docker/)). Then:
+(`docker run --rm ghcr.io/hproxy-com/hproxy check "host:port:user:pass"`, [more](Docker/)). Then:
 
 ```sh
-hproxy list --protocol socks5 | hproxy check --first 5 --alive   # 5 free SOCKS5 that work here
+hproxy check --file proxies.txt --alive                         # which of your proxies work, from here
 hproxy ip 8.8.8.8                                               # where an address is
 hproxy mcp                                                      # the same tools for an AI assistant
 ```

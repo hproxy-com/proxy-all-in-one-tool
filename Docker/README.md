@@ -132,20 +132,9 @@ spec:
 ```
 
 Amazon ECS and Fargate, in the task definition's `containerDefinitions`, beside your app, whose
-`HTTPS_PROXY` is then `http://127.0.0.1:8080`:
-
-```json
-{
-  "name": "hproxy",
-  "image": "ghcr.io/hproxy-com/hproxy:0.4.9",
-  "essential": true,
-  "command": ["free", "--country", "US"]
-}
-```
-
-For a proxy of your own, keep its line in AWS Secrets Manager and hand it over as `HPROXY_PROXY`:
-`connect` takes it from there when its command names no proxy, so the password never appears in the
-task definition.
+`HTTPS_PROXY` is then `http://127.0.0.1:8080`. Keep your proxy's line in AWS Secrets Manager and
+hand it over as `HPROXY_PROXY`: `connect` takes it from there when its command names no proxy, so the
+password never appears in the task definition.
 
 ```json
 {
@@ -156,6 +145,8 @@ task definition.
   "secrets": [{ "name": "HPROXY_PROXY", "valueFrom": "arn:aws:secretsmanager:<region>:<account>:secret:<name>" }]
 }
 ```
+
+The free HProxy pool needs no secret: `"command": ["free", "--country", "US"]`.
 
 A whole list works the same way with `HPROXY_PROXY_FILE`, the path of a mounted file. Your app,
 beside it on `127.0.0.1`, can switch it with `POST http://127.0.0.1:8080/hproxy/new-ip`. A task on
@@ -171,9 +162,11 @@ curl -fsSL https://hproxy.com/install.sh | sh
 ## NAS and home servers
 
 Synology (Container Manager), QNAP (Container Station), Unraid, TrueNAS SCALE, or Docker on a
-Raspberry Pi: create a container from `ghcr.io/hproxy-com/hproxy:latest` with the command
-`free --listen 0.0.0.0:8080 --allow-lan` (or your own list, as above), map port 8080, and keep that
-port inside your home network.
+Raspberry Pi: create a container from `ghcr.io/hproxy-com/hproxy:latest` with your list mounted at
+`/proxies.txt` and the command `connect --file /proxies.txt --listen 0.0.0.0:8080 --allow-lan`
+(`free --listen 0.0.0.0:8080 --allow-lan` for the free pool), map port 8080, and keep that port
+inside your home network. A [Flipper Zero](https://github.com/hproxy-com/flipper-zero-app) on the same
+network can then switch it to the next proxy.
 
 ## For AI assistants
 
