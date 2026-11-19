@@ -6,9 +6,12 @@ name: Command-line tool
 # cli-v<version>.
 #
 # Started by hand (Actions, Command-line tool, Run workflow): unticked, "publish" only builds and
-# proves every file; ticked, or on a pushed tag cli-v<version>, it also makes the release. A version
-# is built once: hproxy.com's installers check every file against the sum published here, so the
-# files of a release never change.
+# proves every file; ticked, it also makes the release and its tag cli-v<version>. Never push that
+# tag by hand: this repository's releases are immutable, and GitHub's token may not take over a tag
+# a person pushed (2026-11-19: HTTP 403 "Resource not accessible by integration" at the release,
+# after a 40-minute build). So a pushed tag starts nothing here. A version is built once:
+# hproxy.com's installers check every file against the sum published here, so the files of a
+# release never change.
 #
 # Every file stands alone: a Linux file carries its own C library (musl), a Windows file its own C
 # runtime, so nothing has to be installed beside it. It uses no secret: only this repository's own
@@ -22,8 +25,6 @@ on:
         description: "Make the release (unticked: build and prove every file only)"
         type: boolean
         default: false
-  push:
-    tags: ["cli-v*"]
 
 permissions:
   contents: read
@@ -259,7 +260,7 @@ jobs:
 
   release:
     needs: [build, windows-arm, freebsd]
-    if: github.event_name == 'push' || inputs.publish
+    if: inputs.publish
     runs-on: ubuntu-22.04
     permissions:
       contents: write
