@@ -168,6 +168,26 @@ Raspberry Pi: create a container from `ghcr.io/hproxy-com/hproxy:latest` with yo
 inside your home network. A [Flipper Zero](../flipper-zero/) on the same
 network can then switch it to the next proxy.
 
+Where your system takes a Compose file (a project in Synology's Container Manager, an application
+in QNAP's Container Station, Install via YAML on TrueNAS SCALE, a stack in Portainer, a custom app
+in CasaOS), this is all of it; only the path of your list changes:
+
+```yaml
+services:
+  hproxy:
+    image: ghcr.io/hproxy-com/hproxy:latest
+    command: connect --file /proxies.txt --rotate every --listen 0.0.0.0:8080 --allow-lan
+    volumes:
+      - /path/to/proxies.txt:/proxies.txt:ro
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+```
+
+Every device in your home network then sets its proxy to the NAS's address, port 8080, HTTP or
+SOCKS5, with no login. `http://<the NAS's address>:8080/hproxy/new-ip` switches it to the next
+proxy, from any script or a Home Assistant button.
+
 ## For AI assistants
 
 An assistant that starts its MCP servers with Docker runs this one the same way:
