@@ -9,8 +9,9 @@ Or by hand: **Settings → Add-ons → Add-on store → ⋮ → Repositories**, 
 
 A proxy for your home network that sends every connection through your own proxies, one after
 another, or through the free HProxy pool, on port 8080 (HTTP and SOCKS5). For 64-bit and 32-bit ARM
-(Raspberry Pi, Home Assistant Green and Yellow) and for x86_64. How to set it up:
-[hproxy/DOCS.md](hproxy/DOCS.md).
+(Raspberry Pi, Home Assistant Green and Yellow) and for x86_64. Sites can skip it, a proxy can sit in
+front of yours, and Home Assistant itself can switch it to the next proxy with a "New IP" button.
+How to set it up: [hproxy/DOCS.md](hproxy/DOCS.md).
 
 The program inside is the `hproxy` command-line tool from
 [ghcr.io/hproxy-com/hproxy](https://github.com/hproxy-com/proxy-all-in-one-tool/tree/main/Docker),
