@@ -23,7 +23,8 @@ curl -fsSL https://hproxy.com/install.sh | sh
 
 It picks the file for the processor and lands in `~/.local/bin` (or `$HPROXY_INSTALL_DIR`) after a
 check against its SHA-256, without sudo. Or with [Homebrew](https://brew.sh):
-`brew install hproxy-com/tap/hproxy`. The files themselves (`hproxy-cli-linux-x86_64`,
+`brew install hproxy-com/tap/hproxy`, or with [Nix](../nix/):
+`nix profile install 'github:hproxy-com/proxy-all-in-one-tool?dir=nix'`. The files themselves (`hproxy-cli-linux-x86_64`,
 `hproxy-cli-linux-arm64`, `hproxy-cli-linux-armv6`, `hproxy-cli-linux-i686`,
 `hproxy-cli-linux-riscv64`) are attached to every
 [command-line release](https://github.com/hproxy-com/proxy-all-in-one-tool/releases) (`cli-v` and

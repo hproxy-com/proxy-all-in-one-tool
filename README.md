@@ -47,7 +47,7 @@
 | **[n8n](https://github.com/hproxy-com/n8n-nodes-hproxy)** | The same as nodes for your n8n workflows, and as a tool for n8n's AI agents: `@hproxy/n8n-nodes-hproxy` |
 | **[GitHub Actions](https://github.com/hproxy-com/setup-hproxy)** | A rotating proxy for a CI job, which a later step switches with one `curl` |
 | **[Docker, Kubernetes, AWS](Docker/)** | The rotator beside your app on `127.0.0.1`, on six processor types, with the proxy kept in a secret |
-| **Homebrew, Scoop** | `brew install hproxy-com/tap/hproxy`, `scoop install hproxy/hproxy` |
+| **Homebrew, Scoop, [Nix](nix/)** | `brew install hproxy-com/tap/hproxy`, `scoop install hproxy/hproxy`, `nix run 'github:hproxy-com/proxy-all-in-one-tool?dir=nix'` |
 | **[Python](python/)** | `pip install hproxy-cli`: the same program in any Python environment, on Linux, macOS and Windows, with `find_hproxy_bin()` for your scripts |
 | **[Routers, FreeBSD, RISC-V, Android phones](Linux/)** | One line installs it: OpenWrt with `wget`, FreeBSD with `fetch`, Termux with `curl` |
 | **[AI assistants](source-code/README.md#for-ai-assistants-mcp)** | `hproxy mcp`: an assistant checks, connects and switches proxies itself. Or [the hosted server](https://github.com/hproxy-com/hproxy-mcp) at `https://mcp.hproxy.com/mcp`, nothing to install: Claude, ChatGPT, Cursor, VS Code, a Claude Code plugin |
