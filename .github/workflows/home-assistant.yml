@@ -1,18 +1,25 @@
-name: Test
+name: Home Assistant add-on
 
-# The add-on built the way Home Assistant builds it on the device (its Dockerfile on Home
-# Assistant's base image for that processor), then run with the settings Home Assistant would hand
-# it in /data/options.json: with two test proxies on this machine, requests go through both in
-# turn, as HTTP and as SOCKS5; with no proxies yet, it says what to do and stops.
+# The add-on in home-assistant/hproxy/, built as Home Assistant builds it on the device (its
+# Dockerfile on Home Assistant's base image for that processor), then run with the settings Home
+# Assistant would hand it in /data/options.json: with two test proxies on this machine, requests go
+# through both in turn, as HTTP and as SOCKS5; a skipped site goes straight out; with no proxies
+# yet, it says what to do and stops. It runs whenever the add-on or repository.yaml changes.
 
 on:
   push:
     branches: [main]
+    paths: [home-assistant/**, repository.yaml, .github/workflows/home-assistant.yml]
   pull_request:
+    paths: [home-assistant/**, repository.yaml, .github/workflows/home-assistant.yml]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    working-directory: home-assistant
 
 jobs:
   addon:
@@ -28,6 +35,14 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Home Assistant finds exactly this one app here
+        working-directory: .
+        run: |
+          grep -q '^name: ' repository.yaml
+          apps=$(find . -path ./.git -prune -o -path '*/.*' -prune -o -name 'config.yaml' -print -o -name 'config.json' -print -o -name 'config.yml' -print)
+          echo "$apps"
+          test "$apps" = "./home-assistant/hproxy/config.yaml"
 
       - name: Built as Home Assistant builds it
         env:

@@ -75,4 +75,4 @@ and never into the log.
 ## Help
 
 [hproxy.com](https://hproxy.com), or an issue at
-[github.com/hproxy-com/home-assistant-addons](https://github.com/hproxy-com/home-assistant-addons/issues).
+[github.com/hproxy-com/proxy-all-in-one-tool](https://github.com/hproxy-com/proxy-all-in-one-tool/issues).

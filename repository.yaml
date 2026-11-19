@@ -1,0 +1,5 @@
+# This file makes the repository a Home Assistant add-on repository: Home Assistant reads it here,
+# at the root, and finds the add-on in home-assistant/hproxy/.
+name: HProxy add-ons
+url: https://github.com/hproxy-com/proxy-all-in-one-tool/tree/main/home-assistant
+maintainer: HProxy <support@hproxy.com>

@@ -2,7 +2,7 @@ name: HProxy rotating proxy
 version: "0.4.9"
 slug: hproxy
 description: Your own proxies, any kind your provider sells, as one rotating proxy for your home network.
-url: https://github.com/hproxy-com/home-assistant-addons/tree/main/hproxy
+url: https://github.com/hproxy-com/proxy-all-in-one-tool/tree/main/home-assistant/hproxy
 arch:
   - aarch64
   - amd64
