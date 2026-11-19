@@ -122,7 +122,9 @@ jobs:
             setup: >-
               command -v kotlin || { curl -fsSL -o "$RUNNER_TEMP/kotlin.zip" https://github.com/JetBrains/kotlin/releases/download/v2.1.0/kotlin-compiler-2.1.0.zip &&
               unzip -q -o "$RUNNER_TEMP/kotlin.zip" -d "$RUNNER_TEMP" && echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"; }
-            run: kotlin example.main.kts
+            # Maven Central now and then answers a GitHub machine with "absent" for a package it has,
+            # and the resolver keeps that answer in ~/.m2: one more try after forgetting it.
+            run: kotlin example.main.kts || { rm -rf "$HOME/.m2/repository/com/squareup"; sleep 10; kotlin example.main.kts; }
           - name: Swift (macOS)
             os: macos-latest
             dir: examples/swift
