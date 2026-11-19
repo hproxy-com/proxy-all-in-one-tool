@@ -7,6 +7,12 @@ WiFi board running FlipperHTTP.
 Flipper looks off, [open an issue](https://github.com/hproxy-com/flipper-zero-app/issues) and say
 which firmware and board you run.
 
+<p align="center"><img src="screenshots/all.png" alt="The menu, the free-list options, a free list from hproxy.com, a check in progress with live counts, the results fastest first, and one proxy in detail" width="780"></p>
+
+<sub>The screens, drawn pixel for pixel by [tools/screens.py](tools/screens.py) with the firmware's own
+fonts and drawing code (release 1.5.1): there is no Flipper Zero emulator, and photos from a real
+Flipper follow. The addresses are documentation addresses.</sub>
+
 ## What it does
 
 - **Free proxies.** Pick a protocol (HTTP, HTTPS, SOCKS4, SOCKS5), a country and how many. The app
@@ -72,6 +78,13 @@ Lines with a username and password are never sent: they stay on your Flipper (se
   data. A proxy that has not answered by then shows as "no answer in time".
 - hproxy.com takes ten requests at once, then one every five seconds per address; when it asks for a
   pause, the app waits and tries once more.
+
+## Pictures of the screens
+
+`python tools/screens.py` draws every screen the way the Flipper does: the u8g2 fonts the firmware
+carries, u8g2's font decoder and shapes, and the firmware's menu, option list, text box, scrollbar
+and progress bar, ported line by line. It writes `screenshots/`. The firmware's font file is
+downloaded once into `tools/.cache/` and never committed.
 
 ## Build
 
