@@ -1,3 +1,7 @@
+## 0.4.9
+
+- hproxy 0.4.9 inside.
+
 ## 0.4.8.1
 
 - More settings: `skip` (sites that go straight out, past the proxy), `only` (the reverse),

@@ -2,7 +2,7 @@
 # ghcr.io/hproxy-com/hproxy (built only from the release's checked files); Home Assistant's own
 # base image adds bashio, which reads the add-on's settings.
 ARG BUILD_FROM
-FROM ghcr.io/hproxy-com/hproxy:0.4.8 AS hproxy
+FROM ghcr.io/hproxy-com/hproxy:0.4.9 AS hproxy
 
 FROM ${BUILD_FROM}
 COPY --from=hproxy /usr/local/bin/hproxy /usr/bin/hproxy

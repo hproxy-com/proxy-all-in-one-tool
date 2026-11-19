@@ -1,5 +1,5 @@
 name: HProxy rotating proxy
-version: "0.4.8.1"
+version: "0.4.9"
 slug: hproxy
 description: A proxy for your home network that rotates through your own proxies or the free HProxy pool.
 url: https://github.com/hproxy-com/home-assistant-addons/tree/main/hproxy
