@@ -71,6 +71,23 @@ Browsers, the whole computer, phones and apps with a proxy field of their own:
 This repository's tests run every example on each change, through two test proxies: the three
 requests of each one have to come out through both of them (Swift on a Mac, the rest on Linux).
 
+## A new IP when your script decides
+
+Started with `--rotate on-failure`, the proxy stays on one proxy until something asks for the next
+one. Your script asks over plain HTTP, on the proxy's own port, from any language, with nothing to
+install (hproxy 0.4.9 and newer):
+
+```sh
+curl -X POST http://127.0.0.1:8080/hproxy/new-ip           # the next proxy of your list
+curl -X POST "http://127.0.0.1:8080/hproxy/new-ip?member=3"   # proxy 3
+curl http://127.0.0.1:8080/hproxy/status                     # the one in use, and the counts
+```
+
+Every answer is one line of JSON with `ok`, and `error` when it is false. The connections that were
+open end with the switch, so the next request goes out the new way, also over a kept-alive
+connection. [new-ip/](new-ip/) has the same in Python, Node.js, Go and PowerShell, and the terminal
+has `hproxy new-ip`.
+
 ## Every program at once
 
 Most command-line tools and many libraries take the proxy from the environment:

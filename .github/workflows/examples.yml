@@ -210,3 +210,63 @@ jobs:
           fi
           test "$first" -ge 1
           test "$second" -ge 1
+
+  new-ip:
+    name: New IP on demand, ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: curl
+            run: sh new_ip.sh
+          - name: Python
+            run: python3 new_ip.py
+          - name: Node.js
+            run: node new_ip.mjs
+          - name: PowerShell
+            run: pwsh -NoProfile -File new_ip.ps1
+          - name: Go
+            run: go run main.go
+    defaults:
+      run:
+        shell: bash
+    env:
+      HPROXY_NO_UPDATE_CHECK: "1"
+      HPROXY_NO_USAGE: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: hproxy, two test proxies, and the rotating proxy on one of them until asked
+        run: |
+          curl -fsSL https://hproxy.com/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tinyproxy > /dev/null
+          sudo systemctl stop tinyproxy 2> /dev/null || true
+          for port in 3128 3129; do
+          printf 'Port %s\nListen 127.0.0.1\nTimeout 60\nAllow 127.0.0.1\nConnectPort 443\nLogFile "%s/tinyproxy-%s.log"\nLogLevel Connect\n' "$port" "$RUNNER_TEMP" "$port" > "$RUNNER_TEMP/tinyproxy-$port.conf"
+          tinyproxy -c "$RUNNER_TEMP/tinyproxy-$port.conf"
+          done
+          printf '127.0.0.1:3128\n127.0.0.1:3129\n' > "$RUNNER_TEMP/proxies.txt"
+          hproxy connect --file "$RUNNER_TEMP/proxies.txt" --rotate on-failure --background
+
+      - name: The example switches from proxy 1 to proxy 2, and traffic follows
+        working-directory: examples/new-ip
+        run: |
+          seen() { grep -c 'Request (file descriptor' "$RUNNER_TEMP/tinyproxy-$1.log" || true; }
+          curl -fsS -o /dev/null -x http://127.0.0.1:8080 https://hproxy.com/cdn-cgi/trace
+          ${{ matrix.run }} | tee "$RUNNER_TEMP/out.txt"
+          curl -fsS -o /dev/null -x http://127.0.0.1:8080 https://hproxy.com/cdn-cgi/trace
+          first=$(seen 3128); second=$(seen 3129)
+          echo "through the first test proxy: $first, through the second: $second"
+          if [ "${{ matrix.name }}" = curl ]; then
+            grep -q '"member":2' "$RUNNER_TEMP/out.txt"
+          else
+            grep -q 'now:   proxy 1 of 2' "$RUNNER_TEMP/out.txt"
+            grep -q 'after: proxy 2 of 2' "$RUNNER_TEMP/out.txt"
+          fi
+          test "$first" -ge 1
+          test "$second" -ge 1
