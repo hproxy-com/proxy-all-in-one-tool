@@ -1,0 +1,233 @@
+name: Python package
+
+# hproxy-cli for pip, in python/: wheels of the hproxy command-line tool, each carrying one file of a
+# command-line release (cli-v<version>) unchanged. The files are checked twice before a wheel is
+# made: against the release's SHA256SUMS, and against GitHub's signed record of how each was built.
+# Every wheel is then installed with pip and run on a machine of its kind: Linux with glibc and with
+# musl (Alpine) on x86_64, ARM64, 32-bit ARM and 32-bit x86, macOS on Apple Silicon and Intel, and
+# Windows on x64, ARM64 and 32-bit.
+#
+# It runs when python/ changes, with the newest command-line release. Started by hand, it takes a
+# version, and with "publish" ticked it uploads the wheels to PyPI as hproxy-cli <version> through
+# PyPI's trusted publishing: no password or token is stored anywhere; PyPI trusts this workflow
+# of this repository (set up once on pypi.org, under the project's publishing settings). A version
+# is uploaded once: PyPI never takes the same file twice.
+#
+# Only GitHub's own actions, each pinned to a commit.
+
+on:
+  push:
+    branches: [main]
+    paths: [python/**, .github/workflows/python-package.yml]
+  pull_request:
+    paths: [python/**, .github/workflows/python-package.yml]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "A released version of the command-line tool, e.g. 0.4.9 (empty: the newest)"
+        required: false
+        type: string
+      publish:
+        description: "Upload the wheels to PyPI (unticked: build and prove them only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    name: The wheels, from the release's own files
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      attestations: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: The release's files, checked against its sums and its build records
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          version="$VERSION"
+          if [ -z "$version" ]; then
+            tag=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --exclude-drafts --json tagName \
+              --jq '[.[].tagName | select(startswith("cli-v"))][0]')
+            version="${tag#cli-v}"
+          fi
+          echo "hproxy-cli $version"
+          gh release download "cli-v$version" --repo "$GITHUB_REPOSITORY" --dir release \
+            --pattern 'hproxy-cli-*' --pattern SHA256SUMS
+          (cd release && sha256sum --check --ignore-missing SHA256SUMS)
+          for f in release/hproxy-cli-*; do
+            gh attestation verify "$f" --repo "$GITHUB_REPOSITORY" > /dev/null
+            echo "build record checked: ${f#release/}"
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: python3 python/build_wheels.py "$VERSION" release dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheels
+          path: dist/*.whl
+          if-no-files-found: error
+
+  install:
+    name: pip on ${{ matrix.name }}
+    needs: wheels
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            runner: ubuntu-24.04
+            arch: x64
+          - name: Linux ARM64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+          - name: macOS, Apple Silicon
+            runner: macos-latest
+            arch: arm64
+          - name: Windows x64
+            runner: windows-latest
+            arch: x64
+          - name: Windows 32-bit
+            runner: windows-latest
+            arch: x86
+          - name: Windows ARM64
+            runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels
+          path: dist
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          architecture: ${{ matrix.arch }}
+
+      - name: Installed with pip, and run
+        shell: bash
+        env:
+          VERSION: ${{ needs.wheels.outputs.version }}
+        run: |
+          python -m pip install --no-index --find-links dist hproxy-cli
+          python -m pip show hproxy-cli | head -2
+          hproxy --version
+          hproxy --version | grep -qx "hproxy $VERSION"
+          python -m hproxy_cli --version | grep -qx "hproxy $VERSION"
+          python -c "import hproxy_cli; print(hproxy_cli.__version__, hproxy_cli.find_hproxy_bin())"
+
+  intel-mac:
+    name: pip on macOS, Intel (under Rosetta)
+    needs: wheels
+    runs-on: macos-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels
+          path: dist
+
+      - name: Installed with an Intel Python, and run
+        env:
+          VERSION: ${{ needs.wheels.outputs.version }}
+        run: |
+          # macOS's own Python is universal: started as x86_64, pip picks the Intel wheel.
+          arch -x86_64 /usr/bin/python3 -m venv intel
+          arch -x86_64 intel/bin/python -m pip install --no-index --find-links dist hproxy-cli
+          arch -x86_64 intel/bin/python -c "import platform; print(platform.machine())"
+          file intel/bin/hproxy
+          file intel/bin/hproxy | grep -q x86_64
+          arch -x86_64 intel/bin/hproxy --version | grep -qx "hproxy $VERSION"
+
+  containers:
+    name: pip in ${{ matrix.name }}
+    needs: wheels
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Alpine (musl), x86_64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            image: python:3.13-alpine
+          - name: Alpine (musl), ARM64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            image: python:3.13-alpine
+          - name: Debian, 32-bit x86
+            runner: ubuntu-24.04
+            platform: linux/386
+            image: python:3.13-slim
+          - name: Debian, 32-bit ARM
+            runner: ubuntu-24.04
+            platform: linux/arm/v7
+            image: python:3.13-slim
+          - name: Alpine (musl), 32-bit ARM
+            runner: ubuntu-24.04
+            platform: linux/arm/v7
+            image: python:3.13-alpine
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels
+          path: dist
+
+      - name: An ARM machine emulated, where the runner has none
+        if: startsWith(matrix.platform, 'linux/arm/')
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static > /dev/null
+
+      - name: Installed with pip, and run
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ needs.wheels.outputs.version }}
+        run: |
+          docker run --rm --platform "$PLATFORM" -v "$PWD/dist:/dist:ro" -e VERSION "$IMAGE" sh -c '
+            python -c "import platform; print(platform.machine())"
+            pip install -q --root-user-action=ignore --no-index --find-links /dist hproxy-cli
+            pip show hproxy-cli | head -2
+            hproxy --version
+            test "$(hproxy --version)" = "hproxy $VERSION"'
+
+  publish:
+    name: To PyPI
+    needs: [wheels, install, intel-mac, containers]
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels
+          path: dist
+
+      - name: Upload, through PyPI's trusted publishing
+        run: |
+          # GitHub vouches for this run with a short-lived token; PyPI trades it for an upload key that
+          # works for this project only, for a few minutes.
+          audience=$(curl -fsS https://pypi.org/_/oidc/audience | python3 -c 'import json,sys; print(json.load(sys.stdin)["audience"])')
+          oidc=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$audience" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')
+          key=$(curl -fsS -X POST https://pypi.org/_/oidc/mint-token -d "{\"token\":\"$oidc\"}" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+          echo "::add-mask::$key"
+          python3 -m venv "$RUNNER_TEMP/twine"
+          "$RUNNER_TEMP/twine/bin/pip" install --quiet twine==6.1.0
+          "$RUNNER_TEMP/twine/bin/twine" check dist/*.whl
+          TWINE_USERNAME=__token__ TWINE_PASSWORD="$key" "$RUNNER_TEMP/twine/bin/twine" upload --non-interactive dist/*.whl
